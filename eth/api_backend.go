@@ -37,6 +37,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/contracts"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/bloombits"
+	"github.com/XinFinOrg/XDPoSChain/core/filtermaps"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
@@ -448,6 +449,11 @@ func (b *EthAPIBackend) ServiceFilter(ctx context.Context, session *bloombits.Ma
 	for i := 0; i < bloomFilterThreads; i++ {
 		go session.Multiplex(bloomRetrievalBatch, bloomRetrievalWait, b.eth.bloomRequests)
 	}
+}
+
+// NewMatcherBackend returns a matcher backend for the log index.
+func (b *EthAPIBackend) NewMatcherBackend() filtermaps.MatcherBackend {
+	return b.eth.filterMaps.NewMatcherBackend()
 }
 
 func (b *EthAPIBackend) Engine() consensus.Engine {

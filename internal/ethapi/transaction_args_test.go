@@ -35,6 +35,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/bloombits"
+	"github.com/XinFinOrg/XDPoSChain/core/filtermaps"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
@@ -393,15 +394,19 @@ func (b *backendMock) BlobBaseFee(ctx context.Context) *big.Int {
 	return new(big.Int)
 }
 
-func (b *backendMock) ChainDb() ethdb.Database           { return nil }
-func (b *backendMock) AccountManager() *accounts.Manager { return nil }
-func (b *backendMock) ExtRPCEnabled() bool               { return false }
-func (b *backendMock) RPCGasCap() uint64                 { return 0 }
-func (b *backendMock) RPCEVMTimeout() time.Duration      { return time.Second }
-func (b *backendMock) RPCTxFeeCap() float64              { return 0 }
-func (b *backendMock) UnprotectedAllowed() bool          { return false }
-func (b *backendMock) SetHead(number uint64)             {}
-func (b *backendMock) GetPeer() int                      { return 0 }
+func (b *backendMock) ChainDb() ethdb.Database                                              { return nil }
+func (b *backendMock) AccountManager() *accounts.Manager                                    { return nil }
+func (b *backendMock) BloomStatus() (uint64, uint64)                                        { return 0, 0 }
+func (b *backendMock) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {}
+func (b *backendMock) NewMatcherBackend() filtermaps.MatcherBackend                         { return nil }
+
+func (b *backendMock) ExtRPCEnabled() bool          { return false }
+func (b *backendMock) RPCGasCap() uint64            { return 0 }
+func (b *backendMock) RPCEVMTimeout() time.Duration { return time.Second }
+func (b *backendMock) RPCTxFeeCap() float64         { return 0 }
+func (b *backendMock) UnprotectedAllowed() bool     { return false }
+func (b *backendMock) SetHead(number uint64)        {}
+func (b *backendMock) GetPeer() int                 { return 0 }
 
 func (b *backendMock) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
 	return nil, nil
@@ -475,12 +480,10 @@ func (b *backendMock) TxPoolContentFrom(addr common.Address) ([]*types.Transacti
 	return nil, nil
 }
 func (b *backendMock) SubscribeNewTxsEvent(chan<- core.NewTxsEvent) event.Subscription { return nil }
-func (b *backendMock) BloomStatus() (uint64, uint64)                                   { return 0, 0 }
 func (b *backendMock) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
 	return nil, nil
 }
-func (b *backendMock) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {}
-func (b *backendMock) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription         { return nil }
+func (b *backendMock) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription { return nil }
 func (b *backendMock) SubscribePendingLogsEvent(ch chan<- []*types.Log) event.Subscription {
 	return nil
 }

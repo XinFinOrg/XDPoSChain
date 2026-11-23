@@ -42,6 +42,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/bloombits"
+	"github.com/XinFinOrg/XDPoSChain/core/filtermaps"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -94,6 +95,7 @@ type Backend struct {
 
 	events       *filters.EventSystem  // for filtering log events live
 	filterSystem *filters.FilterSystem // for filtering database logs
+	filterMaps   *filtermaps.FilterMaps
 
 	config *params.ChainConfig
 }
@@ -196,9 +198,19 @@ func newXDCSimulatedBackend(alloc types.GenesisAlloc, gasLimit uint64, chainConf
 		config:     genesis.Config,
 	}
 
+	head := blockchain.CurrentBlock()
+	chainView := filtermaps.NewChainView(blockchain, head.Number.Uint64(), head.Hash())
+	fm, err := filtermaps.NewFilterMaps(database, chainView, 0, 0, filtermaps.DefaultParams, filtermaps.Config{Disabled: true, HashScheme: true})
+	if err != nil {
+		panic(err)
+	}
+	fm.Start()
+	fm.WaitIdle()
+	backend.filterMaps = fm
+
 	filterBackend := &filterBackend{database, blockchain, backend}
 	backend.filterSystem = filters.NewFilterSystem(filterBackend, filters.Config{})
-	backend.events = filters.NewEventSystem(backend.filterSystem, false)
+	backend.events = filters.NewEventSystem(backend.filterSystem)
 
 	blockchain.Client = backend
 
@@ -235,9 +247,19 @@ func newEthashSimulatedBackendWithConfig(alloc types.GenesisAlloc, gasLimit uint
 		config:     genesis.Config,
 	}
 
+	head := blockchain.CurrentBlock()
+	chainView := filtermaps.NewChainView(blockchain, head.Number.Uint64(), head.Hash())
+	fm, err := filtermaps.NewFilterMaps(database, chainView, 0, 0, filtermaps.DefaultParams, filtermaps.Config{Disabled: true, HashScheme: true})
+	if err != nil {
+		panic(err)
+	}
+	fm.Start()
+	fm.WaitIdle()
+	backend.filterMaps = fm
+
 	filterBackend := &filterBackend{database, blockchain, backend}
 	backend.filterSystem = filters.NewFilterSystem(filterBackend, filters.Config{})
-	backend.events = filters.NewEventSystem(backend.filterSystem, false)
+	backend.events = filters.NewEventSystem(backend.filterSystem)
 
 	header := backend.blockchain.CurrentBlock()
 	block := backend.blockchain.GetBlock(header.Hash(), header.Number.Uint64())
@@ -251,6 +273,9 @@ func newEthashSimulatedBackendWithConfig(alloc types.GenesisAlloc, gasLimit uint
 // Close terminates the underlying blockchain's update loop.
 func (b *Backend) Close() error {
 	b.blockchain.Stop()
+	if b.filterMaps != nil {
+		b.filterMaps.Stop()
+	}
 	return nil
 }
 
@@ -1347,12 +1372,16 @@ func (fb *filterBackend) ServiceFilter(ctx context.Context, ms *bloombits.Matche
 	panic("not supported")
 }
 
+func (fb *filterBackend) NewMatcherBackend() filtermaps.MatcherBackend {
+	return fb.backend.filterMaps.NewMatcherBackend()
+}
+
 func (fb *filterBackend) ChainConfig() *params.ChainConfig {
-	panic("not supported")
+	return fb.bc.Config()
 }
 
 func (fb *filterBackend) CurrentHeader() *types.Header {
-	panic("not supported")
+	return fb.bc.CurrentHeader()
 }
 
 func nullSubscription() event.Subscription {

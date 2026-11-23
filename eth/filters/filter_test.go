@@ -19,7 +19,6 @@ package filters
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"math/big"
 	"strings"
 	"testing"
@@ -29,6 +28,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/filtermaps"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
@@ -46,16 +46,27 @@ func makeReceipt(addr common.Address) *types.Receipt {
 	return receipt
 }
 
-// BenchmarkFilters benchmarks filters.
-func BenchmarkFilters(b *testing.B) {
+func BenchmarkFiltersIndexed(b *testing.B) {
+	benchmarkFilters(b, 0, false)
+}
+
+func BenchmarkFiltersHalfIndexed(b *testing.B) {
+	benchmarkFilters(b, 50000, false)
+}
+
+func BenchmarkFiltersUnindexed(b *testing.B) {
+	benchmarkFilters(b, 0, true)
+}
+
+func benchmarkFilters(b *testing.B, history uint64, noHistory bool) {
 	var (
-		db, _   = rawdb.NewLevelDBDatabase(b.TempDir(), 0, 0, "", false)
-		_, sys  = newTestFilterSystem(b, db, Config{})
-		key1, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
-		addr1   = crypto.PubkeyToAddress(key1.PublicKey)
-		addr2   = common.BytesToAddress([]byte("jeff"))
-		addr3   = common.BytesToAddress([]byte("ethereum"))
-		addr4   = common.BytesToAddress([]byte("random addresses please"))
+		db           = rawdb.NewMemoryDatabase()
+		backend, sys = newTestFilterSystem(db, Config{})
+		key1, _      = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		addr1        = crypto.PubkeyToAddress(key1.PublicKey)
+		addr2        = common.BytesToAddress([]byte("jeff"))
+		addr3        = common.BytesToAddress([]byte("ethereum"))
+		addr4        = common.BytesToAddress([]byte("random addresses please"))
 
 		gspec = &core.Genesis{
 			Alloc:   types.GenesisAlloc{addr1: {Balance: big.NewInt(1000000)}},
@@ -64,34 +75,46 @@ func BenchmarkFilters(b *testing.B) {
 		}
 	)
 	defer db.Close()
-
 	_, chain, receipts := core.GenerateChainWithGenesis(gspec, ethash.NewFaker(), 100010, func(i int, gen *core.BlockGen) {
 		switch i {
 		case 2403:
 			receipt := makeReceipt(addr1)
 			gen.AddUncheckedReceipt(receipt)
+			gen.AddUncheckedTx(types.NewTransaction(999, common.HexToAddress("0x999"), big.NewInt(999), 999, gen.BaseFee(), nil))
 		case 1034:
 			receipt := makeReceipt(addr2)
 			gen.AddUncheckedReceipt(receipt)
+			gen.AddUncheckedTx(types.NewTransaction(999, common.HexToAddress("0x999"), big.NewInt(999), 999, gen.BaseFee(), nil))
 		case 34:
 			receipt := makeReceipt(addr3)
 			gen.AddUncheckedReceipt(receipt)
+			gen.AddUncheckedTx(types.NewTransaction(999, common.HexToAddress("0x999"), big.NewInt(999), 999, gen.BaseFee(), nil))
 		case 99999:
 			receipt := makeReceipt(addr4)
 			gen.AddUncheckedReceipt(receipt)
+			gen.AddUncheckedTx(types.NewTransaction(999, common.HexToAddress("0x999"), big.NewInt(999), 999, gen.BaseFee(), nil))
 		}
 	})
+	// The test txs are not properly signed, can't simply create a chain
+	// and then import blocks. TODO(rjl493456442) try to get rid of the
+	// manual database writes.
+	gspec.MustCommit(db)
+
 	for i, block := range chain {
 		rawdb.WriteBlock(db, block)
 		rawdb.WriteCanonicalHash(db, block.Hash(), block.NumberU64())
 		rawdb.WriteHeadBlockHash(db, block.Hash())
 		rawdb.WriteReceipts(db, block.Hash(), block.NumberU64(), receipts[i])
 	}
+	backend.startFilterMaps(history, noHistory, filtermaps.DefaultParams)
+	defer backend.stopFilterMaps()
+
 	b.ResetTimer()
 
-	filter := sys.NewRangeFilter(0, -1, []common.Address{addr1, addr2, addr3, addr4}, nil, 0)
+	filter := sys.NewRangeFilter(0, int64(rpc.LatestBlockNumber), []common.Address{addr1, addr2, addr3, addr4}, nil, 0)
 
 	for i := 0; i < b.N; i++ {
+		filter.begin = 0
 		logs, _ := filter.Logs(context.Background())
 		if len(logs) != 4 {
 			b.Fatal("expected 4 logs, got", len(logs))
@@ -99,17 +122,22 @@ func BenchmarkFilters(b *testing.B) {
 	}
 }
 
-// TestFilters tests filters.
-func TestFilters(t *testing.T) {
-	config := *params.TestChainConfig
-	config.CancunBlock = nil
-	config.PragueBlock = nil
-	config.OsakaBlock = nil
-	config.AmsterdamBlock = nil
+func TestFiltersIndexed(t *testing.T) {
+	testFilters(t, 0, false)
+}
 
+func TestFiltersHalfIndexed(t *testing.T) {
+	testFilters(t, 500, false)
+}
+
+func TestFiltersUnindexed(t *testing.T) {
+	testFilters(t, 0, true)
+}
+
+func testFilters(t *testing.T, history uint64, noHistory bool) {
 	var (
-		db     = rawdb.NewMemoryDatabase()
-		_, sys = newTestFilterSystem(t, db, Config{})
+		db           = rawdb.NewMemoryDatabase()
+		backend, sys = newTestFilterSystem(db, Config{})
 		// Sender account
 		key1, _ = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 		addr    = crypto.PubkeyToAddress(key1.PublicKey)
@@ -123,35 +151,35 @@ func TestFilters(t *testing.T) {
 			pragma solidity >=0.7.0 <0.9.0;
 
 			contract Logger {
-			    function log0() external {
-			        assembly {
-			            log0(0, 0)
-			        }
-			    }
+				function log0() external {
+					assembly {
+						log0(0, 0)
+					}
+				}
 
-			    function log1(uint t1) external {
-			        assembly {
-			            log1(0, 0, t1)
-			        }
-			    }
+				function log1(uint t1) external {
+					assembly {
+						log1(0, 0, t1)
+					}
+				}
 
-			    function log2(uint t1, uint t2) external {
-			        assembly {
-			            log2(0, 0, t1, t2)
-			        }
-			    }
+				function log2(uint t1, uint t2) external {
+					assembly {
+						log2(0, 0, t1, t2)
+					}
+				}
 
-			    function log3(uint t1, uint t2, uint t3) external {
-			        assembly {
-			            log3(0, 0, t1, t2, t3)
-			        }
-			    }
+				function log3(uint t1, uint t2, uint t3) external {
+					assembly {
+						log3(0, 0, t1, t2, t3)
+					}
+				}
 
-			    function log4(uint t1, uint t2, uint t3, uint t4) external {
-			        assembly {
-			            log4(0, 0, t1, t2, t3, t4)
-			        }
-			    }
+				function log4(uint t1, uint t2, uint t3, uint t4) external {
+					assembly {
+						log4(0, 0, t1, t2, t3, t4)
+					}
+				}
 			}
 		*/
 		bytecode = common.FromHex("608060405234801561001057600080fd5b50600436106100575760003560e01c80630aa731851461005c5780632a4c08961461006657806378b9a1f314610082578063c670f8641461009e578063c683d6a3146100ba575b600080fd5b6100646100d6565b005b610080600480360381019061007b9190610143565b6100dc565b005b61009c60048036038101906100979190610196565b6100e8565b005b6100b860048036038101906100b391906101d6565b6100f2565b005b6100d460048036038101906100cf9190610203565b6100fa565b005b600080a0565b808284600080a3505050565b8082600080a25050565b80600080a150565b80828486600080a450505050565b600080fd5b6000819050919050565b6101208161010d565b811461012b57600080fd5b50565b60008135905061013d81610117565b92915050565b60008060006060848603121561015c5761015b610108565b5b600061016a8682870161012e565b935050602061017b8682870161012e565b925050604061018c8682870161012e565b9150509250925092565b600080604083850312156101ad576101ac610108565b5b60006101bb8582860161012e565b92505060206101cc8582860161012e565b9150509250929050565b6000602082840312156101ec576101eb610108565b5b60006101fa8482850161012e565b91505092915050565b6000806000806080858703121561021d5761021c610108565b5b600061022b8782880161012e565b945050602061023c8782880161012e565b935050604061024d8782880161012e565b925050606061025e8782880161012e565b9150509295919450925056fea264697066735822122073a4b156f487e59970dc1ef449cc0d51467268f676033a17188edafcee861f9864736f6c63430008110033")
@@ -163,7 +191,7 @@ func TestFilters(t *testing.T) {
 		hash5 = common.BytesToHash([]byte("topic5"))
 
 		gspec = &core.Genesis{
-			Config: &config,
+			Config: params.TestChainConfig,
 			Alloc: types.GenesisAlloc{
 				addr:      {Balance: big.NewInt(0).Mul(big.NewInt(100), big.NewInt(params.Ether))},
 				contract:  {Balance: big.NewInt(0), Code: bytecode},
@@ -172,6 +200,15 @@ func TestFilters(t *testing.T) {
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
 	)
+
+	// The chain is built with the pre-Cancun forks only, matching the log
+	// fixtures used by the expectations below.
+	config := *params.TestChainConfig
+	config.CancunBlock = nil
+	config.PragueBlock = nil
+	config.OsakaBlock = nil
+	config.AmsterdamBlock = nil
+	gspec.Config = &config
 
 	contractABI, err := abi.JSON(strings.NewReader(abiStr))
 	if err != nil {
@@ -257,10 +294,6 @@ func TestFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// TODO(daniel): ref PR #27135
-	// Set block 998 as Finalized (-3)
-	// bc.SetFinalized(chain[998].Header())
-
 	// Generate pending block
 	pchain, preceipts := core.GenerateChain(gspec.Config, chain[len(chain)-1], ethash.NewFaker(), db, 1, func(i int, gen *core.BlockGen) {
 		data, err := contractABI.Pack("log1", hash5.Big())
@@ -276,8 +309,10 @@ func TestFilters(t *testing.T) {
 		}), signer, key1)
 		gen.AddTx(tx)
 	})
-	sys.backend.(*testBackend).pendingBlock = pchain[0]
-	sys.backend.(*testBackend).pendingReceipts = preceipts[0]
+	backend.setPending(pchain[0], preceipts[0])
+
+	backend.startFilterMaps(history, noHistory, filtermaps.DefaultParams)
+	defer backend.stopFilterMaps()
 
 	for i, tc := range []struct {
 		f    *Filter
@@ -287,47 +322,50 @@ func TestFilters(t *testing.T) {
 		{
 			f:    sys.NewBlockFilter(chain[2].Hash(), []common.Address{contract}, nil),
 			want: `[{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696332","0x0000000000000000000000000000000000000000000000000000746f70696331"],"data":"0x","blockNumber":"0x3","transactionHash":"0xac8b8343d69a5c46fef5af7158f42a389bc84093a88e97e184cc4263cf85dc54","transactionIndex":"0x0","blockHash":"0x6dca03904b22bf701dae59c7135dc3e0b578bd4c577d1c111d9d97776090ae09","logIndex":"0x0","removed":false}]`,
-		}, {
+		},
+		{
 			f:    sys.NewRangeFilter(0, int64(rpc.LatestBlockNumber), []common.Address{contract}, [][]common.Hash{{hash1, hash2, hash3, hash4}}, 0),
 			want: `[{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696331"],"data":"0x","blockNumber":"0x2","transactionHash":"0x3ebf3c1ea6e0282cfe845f273b2cc7e97f02145e6d0577641cd1a82d532a19c1","transactionIndex":"0x0","blockHash":"0x0f4dea85fc816b6fd5eb4a0ba86eb00cc7d3397785336870bebd27f181a722da","logIndex":"0x0","removed":false},{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696332","0x0000000000000000000000000000000000000000000000000000746f70696331"],"data":"0x","blockNumber":"0x3","transactionHash":"0xac8b8343d69a5c46fef5af7158f42a389bc84093a88e97e184cc4263cf85dc54","transactionIndex":"0x0","blockHash":"0x6dca03904b22bf701dae59c7135dc3e0b578bd4c577d1c111d9d97776090ae09","logIndex":"0x0","removed":false},{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696334"],"data":"0x","blockNumber":"0x3e8","transactionHash":"0x21fd39694cbcc8cc5046b3b7d5200101edf9c85218da613a8851eb5e3d195241","transactionIndex":"0x0","blockHash":"0x8a956d79ca6468ff23c97615a4aa24a55bdaff78767ee28d3e2e02ecb407a0de","logIndex":"0x0","removed":false}]`,
-		}, {
+		},
+		{
 			f: sys.NewRangeFilter(900, 999, []common.Address{contract}, [][]common.Hash{{hash3}}, 0),
-		}, {
+		},
+		{
 			f:    sys.NewRangeFilter(990, int64(rpc.LatestBlockNumber), []common.Address{contract2}, [][]common.Hash{{hash3}}, 0),
 			want: `[{"address":"0xff00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696333"],"data":"0x","blockNumber":"0x3e7","transactionHash":"0x7c42465b2bd34fb8e87bab0001ab97c47b6d57c65f17efe43e81461fef2f05a4","transactionIndex":"0x0","blockHash":"0x5112c98f7517100552d30734c46356db10494c90bb3bd0af90ef9ace2e692ad2","logIndex":"0x0","removed":false}]`,
-		}, {
+		},
+		{
 			f:    sys.NewRangeFilter(1, 10, []common.Address{contract}, [][]common.Hash{{hash2}, {hash1}}, 0),
 			want: `[{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696332","0x0000000000000000000000000000000000000000000000000000746f70696331"],"data":"0x","blockNumber":"0x3","transactionHash":"0xac8b8343d69a5c46fef5af7158f42a389bc84093a88e97e184cc4263cf85dc54","transactionIndex":"0x0","blockHash":"0x6dca03904b22bf701dae59c7135dc3e0b578bd4c577d1c111d9d97776090ae09","logIndex":"0x0","removed":false}]`,
-		}, {
+		},
+		{
 			f:    sys.NewRangeFilter(1, 10, nil, [][]common.Hash{{hash1, hash2}}, 0),
 			want: `[{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696331"],"data":"0x","blockNumber":"0x2","transactionHash":"0x3ebf3c1ea6e0282cfe845f273b2cc7e97f02145e6d0577641cd1a82d532a19c1","transactionIndex":"0x0","blockHash":"0x0f4dea85fc816b6fd5eb4a0ba86eb00cc7d3397785336870bebd27f181a722da","logIndex":"0x0","removed":false},{"address":"0xff00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696331"],"data":"0x","blockNumber":"0x2","transactionHash":"0x55b3a22ae885f9441ff8bd98fbfe54cc1b84799606aca159fac8d7a56551e426","transactionIndex":"0x1","blockHash":"0x0f4dea85fc816b6fd5eb4a0ba86eb00cc7d3397785336870bebd27f181a722da","logIndex":"0x1","removed":false},{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696332","0x0000000000000000000000000000000000000000000000000000746f70696331"],"data":"0x","blockNumber":"0x3","transactionHash":"0xac8b8343d69a5c46fef5af7158f42a389bc84093a88e97e184cc4263cf85dc54","transactionIndex":"0x0","blockHash":"0x6dca03904b22bf701dae59c7135dc3e0b578bd4c577d1c111d9d97776090ae09","logIndex":"0x0","removed":false}]`,
-		}, {
+		},
+		{
 			f: sys.NewRangeFilter(0, int64(rpc.LatestBlockNumber), nil, [][]common.Hash{{common.BytesToHash([]byte("fail"))}}, 0),
-		}, {
+		},
+		{
 			f: sys.NewRangeFilter(0, int64(rpc.LatestBlockNumber), []common.Address{common.BytesToAddress([]byte("failmenow"))}, nil, 0),
-		}, {
+		},
+		{
 			f: sys.NewRangeFilter(0, int64(rpc.LatestBlockNumber), nil, [][]common.Hash{{common.BytesToHash([]byte("fail"))}, {hash1}}, 0),
-		}, {
+		},
+		{
 			f:    sys.NewRangeFilter(int64(rpc.LatestBlockNumber), int64(rpc.LatestBlockNumber), nil, nil, 0),
 			want: `[{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696334"],"data":"0x","blockNumber":"0x3e8","transactionHash":"0x21fd39694cbcc8cc5046b3b7d5200101edf9c85218da613a8851eb5e3d195241","transactionIndex":"0x0","blockHash":"0x8a956d79ca6468ff23c97615a4aa24a55bdaff78767ee28d3e2e02ecb407a0de","logIndex":"0x0","removed":false}]`,
-		}, {
-			f:   sys.NewRangeFilter(int64(rpc.FinalizedBlockNumber), int64(rpc.LatestBlockNumber), nil, nil, 0),
-			err: "committed header not found",
-		}, {
-			f:   sys.NewRangeFilter(int64(rpc.FinalizedBlockNumber), int64(rpc.FinalizedBlockNumber), nil, nil, 0),
-			err: "committed header not found",
-		}, {
-			f:   sys.NewRangeFilter(int64(rpc.LatestBlockNumber), int64(rpc.FinalizedBlockNumber), nil, nil, 0),
-			err: "committed header not found",
-		}, {
-			f:    sys.NewRangeFilter(int64(rpc.PendingBlockNumber), int64(rpc.PendingBlockNumber), nil, nil, 0),
-			want: `[{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696335"],"data":"0x","blockNumber":"0x3e9","transactionHash":"0x87d02f2dddb1941ff179ae5d5fbb123afb9c5f71220045bc1c48f3872be24d4a","transactionIndex":"0x0","blockHash":"0x6fbdfb9ce0a3c8bb4a0683bc68e30b32cbd9f60e08174054f3d1c3e676a1eb00","logIndex":"0x0","removed":false}]`,
-		}, {
-			f:    sys.NewRangeFilter(int64(rpc.LatestBlockNumber), int64(rpc.PendingBlockNumber), nil, nil, 0),
-			want: `[{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696334"],"data":"0x","blockNumber":"0x3e8","transactionHash":"0x21fd39694cbcc8cc5046b3b7d5200101edf9c85218da613a8851eb5e3d195241","transactionIndex":"0x0","blockHash":"0x8a956d79ca6468ff23c97615a4aa24a55bdaff78767ee28d3e2e02ecb407a0de","logIndex":"0x0","removed":false},{"address":"0xfe00000000000000000000000000000000000000","topics":["0x0000000000000000000000000000000000000000000000000000746f70696335"],"data":"0x","blockNumber":"0x3e9","transactionHash":"0x87d02f2dddb1941ff179ae5d5fbb123afb9c5f71220045bc1c48f3872be24d4a","transactionIndex":"0x0","blockHash":"0x6fbdfb9ce0a3c8bb4a0683bc68e30b32cbd9f60e08174054f3d1c3e676a1eb00","logIndex":"0x0","removed":false}]`,
-		}, {
+		},
+		{
+			f:   sys.NewRangeFilter(int64(rpc.PendingBlockNumber), int64(rpc.PendingBlockNumber), nil, nil, 0),
+			err: errPendingLogsUnsupported.Error(),
+		},
+		{
+			f:   sys.NewRangeFilter(int64(rpc.LatestBlockNumber), int64(rpc.PendingBlockNumber), nil, nil, 0),
+			err: errPendingLogsUnsupported.Error(),
+		},
+		{
 			f:   sys.NewRangeFilter(int64(rpc.PendingBlockNumber), int64(rpc.LatestBlockNumber), nil, nil, 0),
-			err: "invalid block range",
+			err: errPendingLogsUnsupported.Error(),
 		},
 	} {
 		logs, err := tc.f.Logs(context.Background())
@@ -349,7 +387,7 @@ func TestFilters(t *testing.T) {
 	}
 
 	t.Run("timeout", func(t *testing.T) {
-		f := sys.NewRangeFilter(0, -1, nil, nil, 0)
+		f := sys.NewRangeFilter(0, rpc.LatestBlockNumber.Int64(), nil, nil, 0)
 		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Hour))
 		defer cancel()
 		_, err := f.Logs(ctx)
@@ -362,47 +400,144 @@ func TestFilters(t *testing.T) {
 	})
 }
 
-// TestRangeLimit tests range limit.
-func TestRangeLimit(t *testing.T) {
-	db := rawdb.NewMemoryDatabase()
-	_, sys := newTestFilterSystem(t, db, Config{})
-	defer db.Close()
-
-	gspec := &core.Genesis{
-		Alloc:   types.GenesisAlloc{},
-		BaseFee: big.NewInt(params.InitialBaseFee),
-		Config:  params.TestChainConfig,
-	}
+func TestRangeLogs(t *testing.T) {
+	var (
+		db           = rawdb.NewMemoryDatabase()
+		backend, sys = newTestFilterSystem(db, Config{})
+		gspec        = &core.Genesis{
+			Config:  params.TestChainConfig,
+			Alloc:   types.GenesisAlloc{},
+			BaseFee: big.NewInt(params.InitialBaseFee),
+		}
+	)
 	_, err := gspec.Commit(db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	chain, _ := core.GenerateChain(gspec.Config, gspec.ToBlock(), ethash.NewFaker(), db, 10, func(i int, gen *core.BlockGen) {})
+	chain, _ := core.GenerateChain(gspec.Config, gspec.ToBlock(), ethash.NewFaker(), db, 1000, func(i int, gen *core.BlockGen) {})
 	bc, err := core.NewBlockChain(db, nil, gspec, ethash.NewFaker(), vm.Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = bc.InsertChain(chain)
+	_, err = bc.InsertChain(chain[:600])
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// Set rangeLimit to 5, but request a range of 9 (end - begin = 9, from 0 to 9)
-	filter := sys.NewRangeFilter(0, 9, nil, nil, 5)
-	_, err = filter.Logs(context.Background())
-	if err == nil {
-		t.Fatal("expected range limit error, got nil")
+	backend.startFilterMaps(200, false, filtermaps.RangeTestParams)
+	defer backend.stopFilterMaps()
+
+	var (
+		testCase, event int
+		filter          *Filter
+		addresses       = []common.Address{{}}
+	)
+
+	expEvent := func(exp rangeLogsTestEvent) {
+		event++
+		ev := <-filter.rangeLogsTestHook
+		if ev != exp {
+			t.Fatalf("Test case #%d: wrong test event #%d received (got %v, expected %v)", testCase, event, ev, exp)
+		}
 	}
 
-	var re rpc.Error
-	if errors.As(err, &re) {
-		if re.ErrorCode() != -32602 {
-			t.Fatalf("expected error code -32602, got %d", re.ErrorCode())
-		}
-		if re.Error() != "exceed maximum block range 5" {
-			t.Fatalf("expected error message 'exceed maximum block range 5', got %q", re.Error())
-		}
-	} else {
-		t.Fatalf("expected rpc error, got %v", err)
+	newFilter := func(begin, end int64) {
+		testCase++
+		event = 0
+		filter = sys.NewRangeFilter(begin, end, addresses, nil, 0)
+		filter.rangeLogsTestHook = make(chan rangeLogsTestEvent)
+		go func(filter *Filter) {
+			filter.Logs(context.Background())
+			// ensure that filter will not be blocked if we exit early
+			for range filter.rangeLogsTestHook {
+			}
+		}(filter)
+		expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 0, 0})
 	}
+
+	updateHead := func() {
+		head := bc.CurrentBlock()
+		backend.fm.SetTarget(filtermaps.NewChainView(backend, head.Number.Uint64(), head.Hash()), 0, 0)
+		backend.fm.WaitIdle()
+	}
+
+	// test case #1
+	newFilter(300, 500)
+	expEvent(rangeLogsTestEvent{rangeLogsTestIndexed, 401, 500})
+	expEvent(rangeLogsTestEvent{rangeLogsTestSync, 401, 500})
+	expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 401, 500})
+	expEvent(rangeLogsTestEvent{rangeLogsTestUnindexed, 300, 400})
+	if _, err := bc.InsertChain(chain[600:700]); err != nil {
+		t.Fatal(err)
+	}
+	updateHead()
+	expEvent(rangeLogsTestEvent{rangeLogsTestSync, 300, 500})
+	expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 300, 500}) // unindexed search is not affected by trimmed tail
+	expEvent(rangeLogsTestEvent{rangeLogsTestDone, 0, 0})
+
+	// test case #2
+	newFilter(400, int64(rpc.LatestBlockNumber))
+	expEvent(rangeLogsTestEvent{rangeLogsTestIndexed, 501, 700})
+	if _, err := bc.InsertChain(chain[700:800]); err != nil {
+		t.Fatal(err)
+	}
+	updateHead()
+	expEvent(rangeLogsTestEvent{rangeLogsTestSync, 501, 700})
+	expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 601, 698})
+	expEvent(rangeLogsTestEvent{rangeLogsTestUnindexed, 400, 600})
+	expEvent(rangeLogsTestEvent{rangeLogsTestSync, 400, 698})
+	expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 400, 698})
+	expEvent(rangeLogsTestEvent{rangeLogsTestIndexed, 699, 800})
+	if err := bc.SetHead(750); err != nil {
+		t.Fatal(err)
+	}
+	updateHead()
+	expEvent(rangeLogsTestEvent{rangeLogsTestSync, 400, 800})
+	expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 400, 748})
+	expEvent(rangeLogsTestEvent{rangeLogsTestIndexed, 749, 750})
+	expEvent(rangeLogsTestEvent{rangeLogsTestSync, 400, 750})
+	expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 400, 750})
+	expEvent(rangeLogsTestEvent{rangeLogsTestDone, 0, 0})
+
+	// test case #3
+	newFilter(int64(rpc.LatestBlockNumber), int64(rpc.LatestBlockNumber))
+	expEvent(rangeLogsTestEvent{rangeLogsTestIndexed, 750, 750})
+	if err := bc.SetHead(740); err != nil {
+		t.Fatal(err)
+	}
+	updateHead()
+	expEvent(rangeLogsTestEvent{rangeLogsTestSync, 750, 750})
+	expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 0, 0})
+	expEvent(rangeLogsTestEvent{rangeLogsTestIndexed, 740, 740})
+	if _, err := bc.InsertChain(chain[740:750]); err != nil {
+		t.Fatal(err)
+	}
+	updateHead()
+	expEvent(rangeLogsTestEvent{rangeLogsTestSync, 740, 740})
+	expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 0, 0})
+	expEvent(rangeLogsTestEvent{rangeLogsTestIndexed, 750, 750})
+	expEvent(rangeLogsTestEvent{rangeLogsTestSync, 750, 750})
+	expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 750, 750})
+	expEvent(rangeLogsTestEvent{rangeLogsTestDone, 0, 0})
+
+	// test case #4
+	newFilter(400, int64(rpc.LatestBlockNumber))
+	expEvent(rangeLogsTestEvent{rangeLogsTestIndexed, 551, 750})
+	expEvent(rangeLogsTestEvent{rangeLogsTestSync, 551, 750})
+	expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 551, 750})
+	expEvent(rangeLogsTestEvent{rangeLogsTestUnindexed, 400, 550})
+	if _, err := bc.InsertChain(chain[750:1000]); err != nil {
+		t.Fatal(err)
+	}
+	updateHead()
+	expEvent(rangeLogsTestEvent{rangeLogsTestSync, 400, 750})
+	// indexed range affected by tail pruning so we have to discard the entire
+	// match set
+	expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 0, 0})
+	expEvent(rangeLogsTestEvent{rangeLogsTestIndexed, 801, 1000})
+	expEvent(rangeLogsTestEvent{rangeLogsTestSync, 801, 1000})
+	expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 801, 1000})
+	expEvent(rangeLogsTestEvent{rangeLogsTestUnindexed, 400, 800})
+	expEvent(rangeLogsTestEvent{rangeLogsTestSync, 400, 1000})
+	expEvent(rangeLogsTestEvent{rangeLogsTestTrimmed, 400, 1000})
 }

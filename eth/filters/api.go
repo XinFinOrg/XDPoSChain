@@ -29,41 +29,32 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/internal/ethapi"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
 
 var (
-	errInvalidTopic        = invalidParamsErr("invalid topic(s)")
-	errInvalidBlockRange   = invalidParamsErr("invalid block range params")
-	errBlockHashWithRange  = invalidParamsErr("can't specify fromBlock/toBlock with blockHash")
-	errUnknownBlock        = errors.New("unknown block")
-	errFilterNotFound      = errors.New("filter not found")
-	errExceedMaxTopics     = errors.New("exceed max topics")
-	errExceedLogQueryLimit = errors.New("exceed max addresses or topics per search position")
+	errInvalidTopic           = errors.New("invalid topic(s)")
+	errFilterNotFound         = errors.New("filter not found")
+	errInvalidBlockRange      = errors.New("invalid block range params")
+	errPendingLogsUnsupported = errors.New("pending logs are not supported")
+	errExceedMaxTopics        = errors.New("exceed max topics")
+	errExceedLogQueryLimit    = errors.New("exceed max addresses or topics per search position")
 )
 
-type invalidParamsError struct {
-	err error
-}
+// The maximum number of topic criteria allowed, vm.LOG4 - vm.LOG0
+const maxTopics = 4
 
-func (e invalidParamsError) Error() string  { return e.err.Error() }
-func (e invalidParamsError) ErrorCode() int { return -32602 }
-
-func invalidParamsErr(format string, args ...any) error {
-	return invalidParamsError{fmt.Errorf(format, args...)}
-}
-
-const (
-	// The maximum number of topic criteria allowed, vm.LOG4 - vm.LOG0
-	maxTopics = 4
-)
+// The maximum number of allowed topics within a topic criteria
+const maxSubTopics = 1000
 
 // filter is a helper struct that holds meta information over the filter type
 // and associated subscription in the event system.
 type filter struct {
 	typ      Type
-	deadline *time.Timer // filter is inactiv when deadline triggers
+	deadline *time.Timer // filter is inactive when deadline triggers
 	hashes   []common.Hash
+	fullTx   bool
 	txs      []*types.Transaction
 	crit     FilterCriteria
 	logs     []*types.Log
@@ -71,7 +62,7 @@ type filter struct {
 }
 
 // FilterAPI offers support to create and manage filters. This will allow external clients to retrieve various
-// information related to the Ethereum protocol such als blocks, transactions and logs.
+// information related to the Ethereum protocol such as blocks, transactions and logs.
 type FilterAPI struct {
 	sys           *FilterSystem
 	events        *EventSystem
@@ -83,10 +74,10 @@ type FilterAPI struct {
 }
 
 // NewFilterAPI returns a new FilterAPI instance.
-func NewFilterAPI(system *FilterSystem, lightMode bool) *FilterAPI {
+func NewFilterAPI(system *FilterSystem) *FilterAPI {
 	api := &FilterAPI{
 		sys:           system,
-		events:        NewEventSystem(system, lightMode),
+		events:        NewEventSystem(system),
 		filters:       make(map[rpc.ID]*filter),
 		timeout:       system.cfg.Timeout,
 		logQueryLimit: system.cfg.LogQueryLimit,
@@ -97,13 +88,18 @@ func NewFilterAPI(system *FilterSystem, lightMode bool) *FilterAPI {
 	return api
 }
 
-// timeoutLoop runs every 5 minutes and deletes filters that have not been recently used.
-// Tt is started when the api is created.
+// timeoutLoop runs at the interval set by 'timeout' and deletes filters
+// that have not been recently used. It is started when the API is created.
 func (api *FilterAPI) timeoutLoop(timeout time.Duration) {
 	var toUninstall []*Subscription
 	ticker := time.NewTicker(timeout)
+	defer ticker.Stop()
 	for {
-		<-ticker.C
+		select {
+		case <-ticker.C:
+		case <-api.events.chainSub.Err():
+			return
+		}
 		api.filtersMu.Lock()
 		for id, f := range api.filters {
 			select {
@@ -131,16 +127,14 @@ func (api *FilterAPI) timeoutLoop(timeout time.Duration) {
 //
 // It is part of the filter package because this filter can be used through the
 // `eth_getFilterChanges` polling method that is also used for log filters.
-//
-// https://github.com/ethereum/wiki/wiki/JSON-RPC#eth_newpendingtransactionfilter
-func (api *FilterAPI) NewPendingTransactionFilter() rpc.ID {
+func (api *FilterAPI) NewPendingTransactionFilter(fullTx *bool) rpc.ID {
 	var (
 		pendingTxs   = make(chan []*types.Transaction)
 		pendingTxSub = api.events.SubscribePendingTxs(pendingTxs)
 	)
 
 	api.filtersMu.Lock()
-	api.filters[pendingTxSub.ID] = &filter{typ: PendingTransactionsSubscription, deadline: time.NewTimer(api.timeout), txs: make([]*types.Transaction, 0), s: pendingTxSub}
+	api.filters[pendingTxSub.ID] = &filter{typ: PendingTransactionsSubscription, fullTx: fullTx != nil && *fullTx, deadline: time.NewTimer(api.timeout), txs: make([]*types.Transaction, 0), s: pendingTxSub}
 	api.filtersMu.Unlock()
 
 	go func() {
@@ -156,7 +150,6 @@ func (api *FilterAPI) NewPendingTransactionFilter() rpc.ID {
 				api.filtersMu.Lock()
 				delete(api.filters, pendingTxSub.ID)
 				api.filtersMu.Unlock()
-				pendingTxSub.Unsubscribe()
 				return
 			}
 		}
@@ -174,27 +167,30 @@ func (api *FilterAPI) NewPendingTransactions(ctx context.Context, fullTx *bool) 
 		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
 	}
 
-	var (
-		rpcSub       = notifier.CreateSubscription()
-		txs          = make(chan []*types.Transaction, 128)
-		pendingTxSub = api.events.SubscribePendingTxs(txs)
-	)
+	rpcSub := notifier.CreateSubscription()
 
 	go func() {
+		txs := make(chan []*types.Transaction, 128)
+		pendingTxSub := api.events.SubscribePendingTxs(txs)
+		defer pendingTxSub.Unsubscribe()
+
+		chainConfig := api.sys.backend.ChainConfig()
+
 		for {
 			select {
 			case txs := <-txs:
 				// To keep the original behaviour, send a single tx hash in one notification.
 				// TODO(rjl493456442) Send a batch of tx hashes in one notification
+				latest := api.sys.backend.CurrentHeader()
 				for _, tx := range txs {
 					if fullTx != nil && *fullTx {
-						notifier.Notify(rpcSub.ID, tx)
+						rpcTx := ethapi.NewRPCPendingTransaction(tx, latest, chainConfig)
+						notifier.Notify(rpcSub.ID, rpcTx)
 					} else {
 						notifier.Notify(rpcSub.ID, tx.Hash())
 					}
 				}
 			case <-rpcSub.Err():
-				pendingTxSub.Unsubscribe()
 				return
 			}
 		}
@@ -205,8 +201,6 @@ func (api *FilterAPI) NewPendingTransactions(ctx context.Context, fullTx *bool) 
 
 // NewBlockFilter creates a filter that fetches blocks that are imported into the chain.
 // It is part of the filter package since polling goes with eth_getFilterChanges.
-//
-// https://github.com/ethereum/wiki/wiki/JSON-RPC#eth_newblockfilter
 func (api *FilterAPI) NewBlockFilter() rpc.ID {
 	var (
 		headers   = make(chan *types.Header)
@@ -245,19 +239,18 @@ func (api *FilterAPI) NewHeads(ctx context.Context) (*rpc.Subscription, error) {
 		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
 	}
 
-	var (
-		rpcSub     = notifier.CreateSubscription()
-		headers    = make(chan *types.Header)
-		headersSub = api.events.SubscribeNewHeads(headers)
-	)
+	rpcSub := notifier.CreateSubscription()
 
 	go func() {
+		headers := make(chan *types.Header)
+		headersSub := api.events.SubscribeNewHeads(headers)
+		defer headersSub.Unsubscribe()
+
 		for {
 			select {
 			case h := <-headers:
 				notifier.Notify(rpcSub.ID, h)
 			case <-rpcSub.Err():
-				headersSub.Unsubscribe()
 				return
 			}
 		}
@@ -284,6 +277,7 @@ func (api *FilterAPI) Logs(ctx context.Context, crit FilterCriteria) (*rpc.Subsc
 	}
 
 	go func() {
+		defer logsSub.Unsubscribe()
 		for {
 			select {
 			case logs := <-matchedLogs:
@@ -291,7 +285,6 @@ func (api *FilterAPI) Logs(ctx context.Context, crit FilterCriteria) (*rpc.Subsc
 					notifier.Notify(rpcSub.ID, &log)
 				}
 			case <-rpcSub.Err(): // client send an unsubscribe request
-				logsSub.Unsubscribe()
 				return
 			}
 		}
@@ -315,13 +308,31 @@ type FilterCriteria ethereum.FilterQuery
 // again but with the removed property set to true.
 //
 // In case "fromBlock" > "toBlock" an error is returned.
-//
-// https://github.com/ethereum/wiki/wiki/JSON-RPC#eth_newfilter
+// checkLogQueryLimit enforces the configured limit on the number of addresses
+// and topics allowed per search position.
+func (api *FilterAPI) checkLogQueryLimit(crit FilterCriteria) error {
+	if api.logQueryLimit == 0 {
+		return nil
+	}
+	if len(crit.Addresses) > api.logQueryLimit {
+		return errExceedLogQueryLimit
+	}
+	for _, topics := range crit.Topics {
+		if len(topics) > api.logQueryLimit {
+			return errExceedLogQueryLimit
+		}
+	}
+	return nil
+}
+
 func (api *FilterAPI) NewFilter(crit FilterCriteria) (rpc.ID, error) {
+	if err := api.checkLogQueryLimit(crit); err != nil {
+		return "", err
+	}
 	logs := make(chan []*types.Log)
 	logsSub, err := api.events.SubscribeLogs(ethereum.FilterQuery(crit), logs)
 	if err != nil {
-		return rpc.ID(""), err
+		return "", err
 	}
 
 	api.filtersMu.Lock()
@@ -350,29 +361,15 @@ func (api *FilterAPI) NewFilter(crit FilterCriteria) (rpc.ID, error) {
 }
 
 // GetLogs returns logs matching the given argument that are stored within the state.
-//
-// https://github.com/ethereum/wiki/wiki/JSON-RPC#eth_getlogs
 func (api *FilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([]*types.Log, error) {
 	if len(crit.Topics) > maxTopics {
 		return nil, errExceedMaxTopics
 	}
-	if api.logQueryLimit != 0 {
-		if len(crit.Addresses) > api.logQueryLimit {
-			return nil, errExceedLogQueryLimit
-		}
-		for _, topics := range crit.Topics {
-			if len(topics) > api.logQueryLimit {
-				return nil, errExceedLogQueryLimit
-			}
-		}
+	if err := api.checkLogQueryLimit(crit); err != nil {
+		return nil, err
 	}
-
 	var filter *Filter
 	if crit.BlockHash != nil {
-		if crit.FromBlock != nil || crit.ToBlock != nil {
-			return nil, errBlockHashWithRange
-		}
-
 		// Block filter requested, construct a single-shot filter
 		filter = api.sys.NewBlockFilter(*crit.BlockHash, crit.Addresses, crit.Topics)
 	} else {
@@ -391,7 +388,6 @@ func (api *FilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([]*type
 		// Construct the range filter
 		filter = api.sys.NewRangeFilter(begin, end, crit.Addresses, crit.Topics, api.rangeLimit)
 	}
-
 	// Run the filter and return all the logs
 	logs, err := filter.Logs(ctx)
 	if err != nil {
@@ -401,8 +397,6 @@ func (api *FilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([]*type
 }
 
 // UninstallFilter removes the filter with the given filter id.
-//
-// https://github.com/ethereum/wiki/wiki/JSON-RPC#eth_uninstallfilter
 func (api *FilterAPI) UninstallFilter(id rpc.ID) bool {
 	api.filtersMu.Lock()
 	f, found := api.filters[id]
@@ -419,8 +413,6 @@ func (api *FilterAPI) UninstallFilter(id rpc.ID) bool {
 
 // GetFilterLogs returns the logs for the filter with the given id.
 // If the filter could not be found an empty array of logs is returned.
-//
-// https://github.com/ethereum/wiki/wiki/JSON-RPC#eth_getfilterlogs
 func (api *FilterAPI) GetFilterLogs(ctx context.Context, id rpc.ID) ([]*types.Log, error) {
 	api.filtersMu.Lock()
 	f, found := api.filters[id]
@@ -460,11 +452,12 @@ func (api *FilterAPI) GetFilterLogs(ctx context.Context, id rpc.ID) ([]*types.Lo
 //
 // For pending transaction and block filters the result is []common.Hash.
 // (pending)Log filters return []Log.
-//
-// https://github.com/ethereum/wiki/wiki/JSON-RPC#eth_getfilterchanges
 func (api *FilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
 	api.filtersMu.Lock()
 	defer api.filtersMu.Unlock()
+
+	chainConfig := api.sys.backend.ChainConfig()
+	latest := api.sys.backend.CurrentHeader()
 
 	if f, found := api.filters[id]; found {
 		if !f.deadline.Stop() {
@@ -480,14 +473,22 @@ func (api *FilterAPI) GetFilterChanges(id rpc.ID) (interface{}, error) {
 			f.hashes = nil
 			return returnHashes(hashes), nil
 		case PendingTransactionsSubscription:
-			txs := f.txs
-			f.txs = nil
-			hashes := make([]common.Hash, len(txs))
-			for i, tx := range txs {
-				hashes[i] = tx.Hash()
+			if f.fullTx {
+				txs := make([]*ethapi.RPCTransaction, 0, len(f.txs))
+				for _, tx := range f.txs {
+					txs = append(txs, ethapi.NewRPCPendingTransaction(tx, latest, chainConfig))
+				}
+				f.txs = nil
+				return txs, nil
+			} else {
+				hashes := make([]common.Hash, 0, len(f.txs))
+				for _, tx := range f.txs {
+					hashes = append(hashes, tx.Hash())
+				}
+				f.txs = nil
+				return hashes, nil
 			}
-			return hashes, nil
-		case LogsSubscription, MinedAndPendingLogsSubscription:
+		case LogsSubscription:
 			logs := f.logs
 			f.logs = nil
 			return returnLogs(logs), nil
@@ -573,6 +574,9 @@ func (args *FilterCriteria) UnmarshalJSON(data []byte) error {
 			return errors.New("invalid addresses in query")
 		}
 	}
+	if len(raw.Topics) > maxTopics {
+		return errExceedMaxTopics
+	}
 
 	// topics is an array consisting of strings and/or arrays of strings.
 	// JSON null values are converted to common.Hash{} and ignored by the filter manager.
@@ -593,6 +597,9 @@ func (args *FilterCriteria) UnmarshalJSON(data []byte) error {
 
 			case []interface{}:
 				// or case e.g. [null, "topic0", "topic1"]
+				if len(topic) > maxSubTopics {
+					return errExceedMaxTopics
+				}
 				for _, rawTopic := range topic {
 					if rawTopic == nil {
 						// null component, match all
@@ -617,9 +624,11 @@ func (args *FilterCriteria) UnmarshalJSON(data []byte) error {
 
 	return nil
 }
+
 func hasXDCPrefix(str string) bool {
 	return len(str) >= 3 && (str[0] == 'x' || str[0] == 'X') && (str[1] == 'd' || str[1] == 'D') && (str[2] == 'c' || str[2] == 'C')
 }
+
 func decodeAddress(s string) (common.Address, error) {
 	if hasXDCPrefix(s) {
 		s = "0x" + s[3:]

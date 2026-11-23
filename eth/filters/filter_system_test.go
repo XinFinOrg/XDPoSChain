@@ -18,11 +18,8 @@ package filters
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"math/big"
-	"math/rand"
 	"reflect"
 	"runtime"
 	"testing"
@@ -32,39 +29,56 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
-	"github.com/XinFinOrg/XDPoSChain/core/bloombits"
+	"github.com/XinFinOrg/XDPoSChain/core/filtermaps"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
-	"github.com/XinFinOrg/XDPoSChain/core/vm"
-	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
+	"github.com/XinFinOrg/XDPoSChain/internal/ethapi"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
 
 type testBackend struct {
 	db              ethdb.Database
-	sections        uint64
+	fm              *filtermaps.FilterMaps
 	txFeed          event.Feed
 	logsFeed        event.Feed
 	rmLogsFeed      event.Feed
-	pendingLogsFeed event.Feed
 	chainFeed       event.Feed
 	pendingBlock    *types.Block
 	pendingReceipts types.Receipts
 }
 
 func (b *testBackend) ChainConfig() *params.ChainConfig {
-	panic("implement me")
+	return params.TestChainConfig
 }
 
 func (b *testBackend) CurrentHeader() *types.Header {
-	panic("implement me")
+	hdr, _ := b.HeaderByNumber(context.TODO(), rpc.LatestBlockNumber)
+	return hdr
+}
+
+func (b *testBackend) CurrentBlock() *types.Header {
+	return b.CurrentHeader()
 }
 
 func (b *testBackend) ChainDb() ethdb.Database {
 	return b.db
+}
+
+func (b *testBackend) GetCanonicalHash(number uint64) common.Hash {
+	return rawdb.ReadCanonicalHash(b.db, number)
+}
+
+func (b *testBackend) GetHeader(hash common.Hash, number uint64) *types.Header {
+	hdr, _ := b.HeaderByHash(context.Background(), hash)
+	return hdr
+}
+
+func (b *testBackend) GetReceiptsByHash(hash common.Hash) types.Receipts {
+	r, _ := b.GetReceipts(context.Background(), hash)
+	return r
 }
 
 func (b *testBackend) HeaderByNumber(ctx context.Context, blockNr rpc.BlockNumber) (*types.Header, error) {
@@ -80,8 +94,6 @@ func (b *testBackend) HeaderByNumber(ctx context.Context, blockNr rpc.BlockNumbe
 			return nil, nil
 		}
 		num = *number
-	case rpc.FinalizedBlockNumber:
-		return nil, nil
 	default:
 		num = uint64(blockNr)
 		hash = rawdb.ReadCanonicalHash(b.db, num)
@@ -89,12 +101,12 @@ func (b *testBackend) HeaderByNumber(ctx context.Context, blockNr rpc.BlockNumbe
 	return rawdb.ReadHeader(b.db, hash, num), nil
 }
 
-func (b *testBackend) HeaderByHash(ctx context.Context, blockHash common.Hash) (*types.Header, error) {
-	number := rawdb.ReadHeaderNumber(b.db, blockHash)
+func (b *testBackend) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
+	number := rawdb.ReadHeaderNumber(b.db, hash)
 	if number == nil {
 		return nil, nil
 	}
-	return rawdb.ReadHeader(b.db, blockHash, *number), nil
+	return rawdb.ReadHeader(b.db, hash, *number), nil
 }
 
 func (b *testBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
@@ -104,20 +116,22 @@ func (b *testBackend) GetBody(ctx context.Context, hash common.Hash, number rpc.
 	return nil, errors.New("block body not found")
 }
 
-func (b *testBackend) GetReceipts(ctx context.Context, blockHash common.Hash) (types.Receipts, error) {
-	if number := rawdb.ReadHeaderNumber(b.db, blockHash); number != nil {
-		return rawdb.ReadReceipts(b.db, blockHash, *number, params.TestChainConfig), nil
+func (b *testBackend) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
+	if number := rawdb.ReadHeaderNumber(b.db, hash); number != nil {
+		if header := rawdb.ReadHeader(b.db, hash, *number); header != nil {
+			return rawdb.ReadReceipts(b.db, hash, *number, params.TestChainConfig), nil
+		}
 	}
 	return nil, nil
+}
+
+func (b *testBackend) GetRawReceipts(hash common.Hash, number uint64) types.Receipts {
+	return rawdb.ReadRawReceipts(b.db, hash, number)
 }
 
 func (b *testBackend) GetLogs(ctx context.Context, hash common.Hash, number uint64) ([][]*types.Log, error) {
 	logs := rawdb.ReadLogs(b.db, hash, number)
 	return logs, nil
-}
-
-func (b *testBackend) PendingBlockAndReceipts() (*types.Block, types.Receipts) {
-	return b.pendingBlock, b.pendingReceipts
 }
 
 func (b *testBackend) SubscribeNewTxsEvent(ch chan<- core.NewTxsEvent) event.Subscription {
@@ -132,46 +146,38 @@ func (b *testBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscript
 	return b.logsFeed.Subscribe(ch)
 }
 
-func (b *testBackend) SubscribePendingLogsEvent(ch chan<- []*types.Log) event.Subscription {
-	return b.pendingLogsFeed.Subscribe(ch)
-}
-
 func (b *testBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription {
 	return b.chainFeed.Subscribe(ch)
 }
 
-func (b *testBackend) BloomStatus() (uint64, uint64) {
-	return params.BloomBitsBlocks, b.sections
+func (b *testBackend) NewMatcherBackend() filtermaps.MatcherBackend {
+	return b.fm.NewMatcherBackend()
 }
 
-func (b *testBackend) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {
-	requests := make(chan chan *bloombits.Retrieval)
-
-	go session.Multiplex(16, 0, requests)
-	go func() {
-		for {
-			// Wait for a service request or a shutdown
-			select {
-			case <-ctx.Done():
-				return
-
-			case request := <-requests:
-				task := <-request
-
-				task.Bitsets = make([][]byte, len(task.Sections))
-				for i, section := range task.Sections {
-					if rand.Int()%4 != 0 { // Handle occasional missing deliveries
-						head := rawdb.ReadCanonicalHash(b.db, (section+1)*params.BloomBitsBlocks-1)
-						task.Bitsets[i], _ = rawdb.ReadBloomBits(b.db, task.Bit, section, head)
-					}
-				}
-				request <- task
-			}
-		}
-	}()
+func (b *testBackend) startFilterMaps(history uint64, disabled bool, params filtermaps.Params) {
+	head := b.CurrentBlock()
+	chainView := filtermaps.NewChainView(b, head.Number.Uint64(), head.Hash())
+	config := filtermaps.Config{
+		History:        history,
+		Disabled:       disabled,
+		ExportFileName: "",
+	}
+	b.fm, _ = filtermaps.NewFilterMaps(b.db, chainView, 0, 0, params, config)
+	b.fm.Start()
+	b.fm.WaitIdle()
 }
 
-func newTestFilterSystem(t testing.TB, db ethdb.Database, cfg Config) (*testBackend, *FilterSystem) {
+func (b *testBackend) stopFilterMaps() {
+	b.fm.Stop()
+	b.fm = nil
+}
+
+func (b *testBackend) setPending(block *types.Block, receipts types.Receipts) {
+	b.pendingBlock = block
+	b.pendingReceipts = receipts
+}
+
+func newTestFilterSystem(db ethdb.Database, cfg Config) (*testBackend, *FilterSystem) {
 	backend := &testBackend{db: db}
 	sys := NewFilterSystem(backend, cfg)
 	return backend, sys
@@ -187,18 +193,18 @@ func TestBlockSubscription(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(t, db, Config{})
-		api          = NewFilterAPI(sys, false)
+		backend, sys = newTestFilterSystem(db, Config{})
+		api          = NewFilterAPI(sys)
 		genesis      = &core.Genesis{
-			BaseFee: big.NewInt(params.InitialBaseFee),
 			Config:  params.TestChainConfig,
+			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
 		_, chain, _ = core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 10, func(i int, gen *core.BlockGen) {})
-		chainEvents = []core.ChainEvent{}
+		chainEvents []core.ChainEvent
 	)
 
 	for _, blk := range chain {
-		chainEvents = append(chainEvents, core.ChainEvent{Hash: blk.Hash(), Block: blk})
+		chainEvents = append(chainEvents, core.ChainEvent{Block: blk})
 	}
 
 	chan0 := make(chan *types.Header)
@@ -211,13 +217,13 @@ func TestBlockSubscription(t *testing.T) {
 		for i1 != len(chainEvents) || i2 != len(chainEvents) {
 			select {
 			case header := <-chan0:
-				if chainEvents[i1].Hash != header.Hash() {
-					t.Errorf("sub0 received invalid hash on index %d, want %x, got %x", i1, chainEvents[i1].Hash, header.Hash())
+				if chainEvents[i1].Block.Hash() != header.Hash() {
+					t.Errorf("sub0 received invalid hash on index %d, want %x, got %x", i1, chainEvents[i1].Block.Hash(), header.Hash())
 				}
 				i1++
 			case header := <-chan1:
-				if chainEvents[i2].Hash != header.Hash() {
-					t.Errorf("sub1 received invalid hash on index %d, want %x, got %x", i2, chainEvents[i2].Hash, header.Hash())
+				if chainEvents[i2].Block.Hash() != header.Hash() {
+					t.Errorf("sub1 received invalid hash on index %d, want %x, got %x", i2, chainEvents[i2].Block.Hash(), header.Hash())
 				}
 				i2++
 			}
@@ -242,8 +248,8 @@ func TestPendingTxFilter(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(t, db, Config{})
-		api          = NewFilterAPI(sys, false)
+		backend, sys = newTestFilterSystem(db, Config{})
+		api          = NewFilterAPI(sys)
 
 		transactions = []*types.Transaction{
 			types.NewTransaction(0, common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268"), new(big.Int), 0, new(big.Int), nil),
@@ -253,10 +259,10 @@ func TestPendingTxFilter(t *testing.T) {
 			types.NewTransaction(4, common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268"), new(big.Int), 0, new(big.Int), nil),
 		}
 
-		txs []common.Hash
+		hashes []common.Hash
 	)
 
-	fid0 := api.NewPendingTransactionFilter()
+	fid0 := api.NewPendingTransactionFilter(nil)
 
 	time.Sleep(1 * time.Second)
 	backend.txFeed.Send(core.NewTxsEvent{Txs: transactions})
@@ -268,7 +274,64 @@ func TestPendingTxFilter(t *testing.T) {
 			t.Fatalf("Unable to retrieve logs: %v", err)
 		}
 
-		tx := results.([]common.Hash)
+		h := results.([]common.Hash)
+		hashes = append(hashes, h...)
+		if len(hashes) >= len(transactions) {
+			break
+		}
+		// check timeout
+		if time.Now().After(timeout) {
+			break
+		}
+
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if len(hashes) != len(transactions) {
+		t.Errorf("invalid number of transactions, want %d transactions(s), got %d", len(transactions), len(hashes))
+		return
+	}
+	for i := range hashes {
+		if hashes[i] != transactions[i].Hash() {
+			t.Errorf("hashes[%d] invalid, want %x, got %x", i, transactions[i].Hash(), hashes[i])
+		}
+	}
+}
+
+// TestPendingTxFilterFullTx tests whether pending tx filters retrieve all pending transactions that are posted to the event mux.
+func TestPendingTxFilterFullTx(t *testing.T) {
+	t.Parallel()
+
+	var (
+		db           = rawdb.NewMemoryDatabase()
+		backend, sys = newTestFilterSystem(db, Config{})
+		api          = NewFilterAPI(sys)
+
+		transactions = []*types.Transaction{
+			types.NewTransaction(0, common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268"), new(big.Int), 0, new(big.Int), nil),
+			types.NewTransaction(1, common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268"), new(big.Int), 0, new(big.Int), nil),
+			types.NewTransaction(2, common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268"), new(big.Int), 0, new(big.Int), nil),
+			types.NewTransaction(3, common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268"), new(big.Int), 0, new(big.Int), nil),
+			types.NewTransaction(4, common.HexToAddress("0xb794f5ea0ba39494ce83a213fffba74279579268"), new(big.Int), 0, new(big.Int), nil),
+		}
+
+		txs []*ethapi.RPCTransaction
+	)
+
+	fullTx := true
+	fid0 := api.NewPendingTransactionFilter(&fullTx)
+
+	time.Sleep(1 * time.Second)
+	backend.txFeed.Send(core.NewTxsEvent{Txs: transactions})
+
+	timeout := time.Now().Add(1 * time.Second)
+	for {
+		results, err := api.GetFilterChanges(fid0)
+		if err != nil {
+			t.Fatalf("Unable to retrieve logs: %v", err)
+		}
+
+		tx := results.([]*ethapi.RPCTransaction)
 		txs = append(txs, tx...)
 		if len(txs) >= len(transactions) {
 			break
@@ -286,8 +349,8 @@ func TestPendingTxFilter(t *testing.T) {
 		return
 	}
 	for i := range txs {
-		if txs[i] != transactions[i].Hash() {
-			t.Errorf("hashes[%d] invalid, want %x, got %x", i, transactions[i].Hash(), txs[i])
+		if txs[i].Hash != transactions[i].Hash() {
+			t.Errorf("hashes[%d] invalid, want %x, got %x", i, transactions[i].Hash(), txs[i].Hash)
 		}
 	}
 }
@@ -297,8 +360,8 @@ func TestPendingTxFilter(t *testing.T) {
 func TestLogFilterCreation(t *testing.T) {
 	var (
 		db     = rawdb.NewMemoryDatabase()
-		_, sys = newTestFilterSystem(t, db, Config{})
-		api    = NewFilterAPI(sys, false)
+		_, sys = newTestFilterSystem(db, Config{})
+		api    = NewFilterAPI(sys)
 
 		testCases = []struct {
 			crit    FilterCriteria
@@ -310,8 +373,6 @@ func TestLogFilterCreation(t *testing.T) {
 			{FilterCriteria{FromBlock: big.NewInt(1), ToBlock: big.NewInt(2)}, true},
 			// "mined" block range to pending
 			{FilterCriteria{FromBlock: big.NewInt(1), ToBlock: big.NewInt(rpc.LatestBlockNumber.Int64())}, true},
-			// new mined and pending blocks
-			{FilterCriteria{FromBlock: big.NewInt(rpc.LatestBlockNumber.Int64()), ToBlock: big.NewInt(rpc.PendingBlockNumber.Int64())}, true},
 			// from block "higher" than to block
 			{FilterCriteria{FromBlock: big.NewInt(2), ToBlock: big.NewInt(1)}, false},
 			// from block "higher" than to block
@@ -326,12 +387,15 @@ func TestLogFilterCreation(t *testing.T) {
 	)
 
 	for i, test := range testCases {
-		_, err := api.NewFilter(test.crit)
-		if test.success && err != nil {
+		id, err := api.NewFilter(test.crit)
+		if err != nil && test.success {
 			t.Errorf("expected filter creation for case %d to success, got %v", i, err)
 		}
-		if !test.success && err == nil {
-			t.Errorf("expected testcase %d to fail with an error", i)
+		if err == nil {
+			api.UninstallFilter(id)
+			if !test.success {
+				t.Errorf("expected testcase %d to fail with an error", i)
+			}
 		}
 	}
 }
@@ -343,8 +407,8 @@ func TestInvalidLogFilterCreation(t *testing.T) {
 
 	var (
 		db     = rawdb.NewMemoryDatabase()
-		_, sys = newTestFilterSystem(t, db, Config{LogQueryLimit: 1000})
-		api    = NewFilterAPI(sys, false)
+		_, sys = newTestFilterSystem(db, Config{})
+		api    = NewFilterAPI(sys)
 	)
 
 	// different situations where log filter creation should fail.
@@ -354,7 +418,6 @@ func TestInvalidLogFilterCreation(t *testing.T) {
 		1: {FromBlock: big.NewInt(rpc.PendingBlockNumber.Int64()), ToBlock: big.NewInt(100)},
 		2: {FromBlock: big.NewInt(rpc.LatestBlockNumber.Int64()), ToBlock: big.NewInt(100)},
 		3: {Topics: [][]common.Hash{{}, {}, {}, {}, {}}},
-		4: {Addresses: make([]common.Address, api.logQueryLimit+1)},
 	}
 
 	for i, test := range testCases {
@@ -364,70 +427,28 @@ func TestInvalidLogFilterCreation(t *testing.T) {
 	}
 }
 
-// TestLogFilterUninstall tests invalid getLogs requests
+// TestInvalidGetLogsRequest tests invalid getLogs requests
 func TestInvalidGetLogsRequest(t *testing.T) {
 	t.Parallel()
 
 	var (
-		genesis = &core.Genesis{
-			Config:  params.TestChainConfig,
-			BaseFee: big.NewInt(params.InitialBaseFee),
-		}
-		db, blocks, _    = core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 10, func(i int, gen *core.BlockGen) {})
-		_, sys           = newTestFilterSystem(t, db, Config{LogQueryLimit: 10})
-		api              = NewFilterAPI(sys, false)
-		blockHash        = blocks[0].Hash()
-		unknownBlockHash = common.HexToHash("0x1111111111111111111111111111111111111111111111111111111111111111")
+		db        = rawdb.NewMemoryDatabase()
+		_, sys    = newTestFilterSystem(db, Config{})
+		api       = NewFilterAPI(sys)
+		blockHash = common.HexToHash("0x1111111111111111111111111111111111111111111111111111111111111111")
 	)
 
-	// Insert the blocks into the chain so filter can look them up
-	blockchain, err := core.NewBlockChain(db, nil, genesis, ethash.NewFaker(), vm.Config{})
-	if err != nil {
-		t.Fatalf("failed to create tester chain: %v", err)
-	}
-	if n, err := blockchain.InsertChain(blocks); err != nil {
-		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
-	}
-
-	type testcase struct {
-		f   FilterCriteria
-		err error
-	}
-	testCases := []testcase{
-		{
-			f:   FilterCriteria{BlockHash: &blockHash, FromBlock: big.NewInt(100)},
-			err: errBlockHashWithRange,
-		},
-		{
-			f:   FilterCriteria{BlockHash: &blockHash, ToBlock: big.NewInt(500)},
-			err: errBlockHashWithRange,
-		},
-		{
-			f:   FilterCriteria{BlockHash: &blockHash, FromBlock: big.NewInt(rpc.LatestBlockNumber.Int64())},
-			err: errBlockHashWithRange,
-		},
-		{
-			f:   FilterCriteria{BlockHash: &unknownBlockHash},
-			err: errUnknownBlock,
-		},
-		{
-			f:   FilterCriteria{BlockHash: &blockHash, Topics: [][]common.Hash{{}, {}, {}, {}, {}}},
-			err: errExceedMaxTopics,
-		},
-		{
-			f:   FilterCriteria{BlockHash: &blockHash, Topics: [][]common.Hash{{}, {}, {}, {}, {}}},
-			err: errExceedMaxTopics,
-		},
-		{
-			f:   FilterCriteria{BlockHash: &blockHash, Addresses: make([]common.Address, api.logQueryLimit+1)},
-			err: errExceedLogQueryLimit,
-		},
+	// Reason: Cannot specify both BlockHash and FromBlock/ToBlock)
+	testCases := []FilterCriteria{
+		0: {BlockHash: &blockHash, FromBlock: big.NewInt(100)},
+		1: {BlockHash: &blockHash, ToBlock: big.NewInt(500)},
+		2: {BlockHash: &blockHash, FromBlock: big.NewInt(rpc.LatestBlockNumber.Int64())},
+		3: {BlockHash: &blockHash, Topics: [][]common.Hash{{}, {}, {}, {}, {}}},
 	}
 
 	for i, test := range testCases {
-		_, err := api.GetLogs(context.Background(), test.f)
-		if !errors.Is(err, test.err) {
-			t.Errorf("case %d: wrong error: %q\nwant: %q", i, err, test.err)
+		if _, err := api.GetLogs(context.Background(), test); err == nil {
+			t.Errorf("Expected Logs for case #%d to fail", i)
 		}
 	}
 }
@@ -438,8 +459,8 @@ func TestInvalidGetRangeLogsRequest(t *testing.T) {
 
 	var (
 		db     = rawdb.NewMemoryDatabase()
-		_, sys = newTestFilterSystem(t, db, Config{})
-		api    = NewFilterAPI(sys, false)
+		_, sys = newTestFilterSystem(db, Config{})
+		api    = NewFilterAPI(sys)
 	)
 
 	if _, err := api.GetLogs(context.Background(), FilterCriteria{FromBlock: big.NewInt(2), ToBlock: big.NewInt(1)}); err != errInvalidBlockRange {
@@ -453,8 +474,8 @@ func TestLogFilter(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(t, db, Config{})
-		api          = NewFilterAPI(sys, false)
+		backend, sys = newTestFilterSystem(db, Config{})
+		api          = NewFilterAPI(sys)
 
 		firstAddr      = common.HexToAddress("0x1111111111111111111111111111111111111111")
 		secondAddr     = common.HexToAddress("0x2222222222222222222222222222222222222222")
@@ -473,9 +494,6 @@ func TestLogFilter(t *testing.T) {
 			{Address: thirdAddress, Topics: []common.Hash{secondTopic}, BlockNumber: 3},
 		}
 
-		expectedCase7  = []*types.Log{allLogs[3], allLogs[4], allLogs[0], allLogs[1], allLogs[2], allLogs[3], allLogs[4]}
-		expectedCase11 = []*types.Log{allLogs[1], allLogs[2], allLogs[1], allLogs[2]}
-
 		testCases = []struct {
 			crit     FilterCriteria
 			expected []*types.Log
@@ -493,20 +511,14 @@ func TestLogFilter(t *testing.T) {
 			4: {FilterCriteria{Addresses: []common.Address{thirdAddress}, Topics: [][]common.Hash{{firstTopic, secondTopic}}}, allLogs[3:5], ""},
 			// match logs based on multiple addresses and "or" topics
 			5: {FilterCriteria{Addresses: []common.Address{secondAddr, thirdAddress}, Topics: [][]common.Hash{{firstTopic, secondTopic}}}, allLogs[2:5], ""},
-			// logs in the pending block
-			6: {FilterCriteria{Addresses: []common.Address{firstAddr}, FromBlock: big.NewInt(rpc.PendingBlockNumber.Int64()), ToBlock: big.NewInt(rpc.PendingBlockNumber.Int64())}, allLogs[:2], ""},
-			// mined logs with block num >= 2 or pending logs
-			7: {FilterCriteria{FromBlock: big.NewInt(2), ToBlock: big.NewInt(rpc.PendingBlockNumber.Int64())}, expectedCase7, ""},
 			// all "mined" logs with block num >= 2
-			8: {FilterCriteria{FromBlock: big.NewInt(2), ToBlock: big.NewInt(rpc.LatestBlockNumber.Int64())}, allLogs[3:], ""},
+			6: {FilterCriteria{FromBlock: big.NewInt(2), ToBlock: big.NewInt(rpc.LatestBlockNumber.Int64())}, allLogs[3:], ""},
 			// all "mined" logs
-			9: {FilterCriteria{ToBlock: big.NewInt(rpc.LatestBlockNumber.Int64())}, allLogs, ""},
+			7: {FilterCriteria{ToBlock: big.NewInt(rpc.LatestBlockNumber.Int64())}, allLogs, ""},
 			// all "mined" logs with 1>= block num <=2 and topic secondTopic
-			10: {FilterCriteria{FromBlock: big.NewInt(1), ToBlock: big.NewInt(2), Topics: [][]common.Hash{{secondTopic}}}, allLogs[3:4], ""},
-			// all "mined" and pending logs with topic firstTopic
-			11: {FilterCriteria{FromBlock: big.NewInt(rpc.LatestBlockNumber.Int64()), ToBlock: big.NewInt(rpc.PendingBlockNumber.Int64()), Topics: [][]common.Hash{{firstTopic}}}, expectedCase11, ""},
+			8: {FilterCriteria{FromBlock: big.NewInt(1), ToBlock: big.NewInt(2), Topics: [][]common.Hash{{secondTopic}}}, allLogs[3:4], ""},
 			// match all logs due to wildcard topic
-			12: {FilterCriteria{Topics: [][]common.Hash{nil}}, allLogs[1:], ""},
+			9: {FilterCriteria{Topics: [][]common.Hash{nil}}, allLogs[1:], ""},
 		}
 	)
 
@@ -520,9 +532,6 @@ func TestLogFilter(t *testing.T) {
 	if nsend := backend.logsFeed.Send(allLogs); nsend == 0 {
 		t.Fatal("Logs event not delivered")
 	}
-	if nsend := backend.pendingLogsFeed.Send(allLogs); nsend == 0 {
-		t.Fatal("Pending logs event not delivered")
-	}
 
 	for i, tt := range testCases {
 		var fetched []*types.Log
@@ -530,7 +539,7 @@ func TestLogFilter(t *testing.T) {
 		for { // fetch all expected logs
 			results, err := api.GetFilterChanges(tt.id)
 			if err != nil {
-				t.Fatalf("Unable to fetch logs: %v", err)
+				t.Fatalf("test %d: unable to fetch logs: %v", i, err)
 			}
 
 			fetched = append(fetched, results.([]*types.Log)...)
@@ -561,326 +570,113 @@ func TestLogFilter(t *testing.T) {
 	}
 }
 
-// TestPendingLogsSubscription tests if a subscription receives the correct pending logs that are posted to the event feed.
-func TestPendingLogsSubscription(t *testing.T) {
+// TestSubscribeLogsQueryLimit tests that live log subscriptions enforce the
+// configured log query limit before installing the filter.
+func TestSubscribeLogsQueryLimit(t *testing.T) {
 	t.Parallel()
 
 	var (
-		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(t, db, Config{})
-		api          = NewFilterAPI(sys, false)
-
-		firstAddr      = common.HexToAddress("0x1111111111111111111111111111111111111111")
-		secondAddr     = common.HexToAddress("0x2222222222222222222222222222222222222222")
-		thirdAddress   = common.HexToAddress("0x3333333333333333333333333333333333333333")
-		notUsedAddress = common.HexToAddress("0x9999999999999999999999999999999999999999")
-		firstTopic     = common.HexToHash("0x1111111111111111111111111111111111111111111111111111111111111111")
-		secondTopic    = common.HexToHash("0x2222222222222222222222222222222222222222222222222222222222222222")
-		thirdTopic     = common.HexToHash("0x3333333333333333333333333333333333333333333333333333333333333333")
-		fourthTopic    = common.HexToHash("0x4444444444444444444444444444444444444444444444444444444444444444")
-		notUsedTopic   = common.HexToHash("0x9999999999999999999999999999999999999999999999999999999999999999")
-
-		allLogs = [][]*types.Log{
-			{{Address: firstAddr, Topics: []common.Hash{}, BlockNumber: 0}},
-			{{Address: firstAddr, Topics: []common.Hash{firstTopic}, BlockNumber: 1}},
-			{{Address: secondAddr, Topics: []common.Hash{firstTopic}, BlockNumber: 2}},
-			{{Address: thirdAddress, Topics: []common.Hash{secondTopic}, BlockNumber: 3}},
-			{{Address: thirdAddress, Topics: []common.Hash{secondTopic}, BlockNumber: 4}},
-			{
-				{Address: thirdAddress, Topics: []common.Hash{firstTopic}, BlockNumber: 5},
-				{Address: thirdAddress, Topics: []common.Hash{thirdTopic}, BlockNumber: 5},
-				{Address: thirdAddress, Topics: []common.Hash{fourthTopic}, BlockNumber: 5},
-				{Address: firstAddr, Topics: []common.Hash{firstTopic}, BlockNumber: 5},
-			},
-		}
-
-		pendingBlockNumber = big.NewInt(rpc.PendingBlockNumber.Int64())
-
-		testCases = []struct {
-			crit     ethereum.FilterQuery
-			expected []*types.Log
-			c        chan []*types.Log
-			sub      *Subscription
-			err      chan error
-		}{
-			// match all
-			{
-				ethereum.FilterQuery{FromBlock: pendingBlockNumber, ToBlock: pendingBlockNumber},
-				flattenLogs(allLogs),
-				nil, nil, nil,
-			},
-			// match none due to no matching addresses
-			{
-				ethereum.FilterQuery{Addresses: []common.Address{{}, notUsedAddress}, Topics: [][]common.Hash{nil}, FromBlock: pendingBlockNumber, ToBlock: pendingBlockNumber},
-				nil,
-				nil, nil, nil,
-			},
-			// match logs based on addresses, ignore topics
-			{
-				ethereum.FilterQuery{Addresses: []common.Address{firstAddr}, FromBlock: pendingBlockNumber, ToBlock: pendingBlockNumber},
-				append(flattenLogs(allLogs[:2]), allLogs[5][3]),
-				nil, nil, nil,
-			},
-			// match none due to no matching topics (match with address)
-			{
-				ethereum.FilterQuery{Addresses: []common.Address{secondAddr}, Topics: [][]common.Hash{{notUsedTopic}}, FromBlock: pendingBlockNumber, ToBlock: pendingBlockNumber},
-				nil,
-				nil, nil, nil,
-			},
-			// match logs based on addresses and topics
-			{
-				ethereum.FilterQuery{Addresses: []common.Address{thirdAddress}, Topics: [][]common.Hash{{firstTopic, secondTopic}}, FromBlock: pendingBlockNumber, ToBlock: pendingBlockNumber},
-				append(flattenLogs(allLogs[3:5]), allLogs[5][0]),
-				nil, nil, nil,
-			},
-			// match logs based on multiple addresses and "or" topics
-			{
-				ethereum.FilterQuery{Addresses: []common.Address{secondAddr, thirdAddress}, Topics: [][]common.Hash{{firstTopic, secondTopic}}, FromBlock: pendingBlockNumber, ToBlock: pendingBlockNumber},
-				append(flattenLogs(allLogs[2:5]), allLogs[5][0]),
-				nil, nil, nil,
-			},
-			// multiple pending logs, should match only 2 topics from the logs in block 5
-			{
-				ethereum.FilterQuery{Addresses: []common.Address{thirdAddress}, Topics: [][]common.Hash{{firstTopic, fourthTopic}}, FromBlock: pendingBlockNumber, ToBlock: pendingBlockNumber},
-				[]*types.Log{allLogs[5][0], allLogs[5][2]},
-				nil, nil, nil,
-			},
-			// match none due to only matching new mined logs
-			{
-				ethereum.FilterQuery{},
-				nil,
-				nil, nil, nil,
-			},
-			// match none due to only matching mined logs within a specific block range
-			{
-				ethereum.FilterQuery{FromBlock: big.NewInt(1), ToBlock: big.NewInt(2)},
-				nil,
-				nil, nil, nil,
-			},
-			// match all due to matching mined and pending logs
-			{
-				ethereum.FilterQuery{FromBlock: big.NewInt(rpc.LatestBlockNumber.Int64()), ToBlock: big.NewInt(rpc.PendingBlockNumber.Int64())},
-				flattenLogs(allLogs),
-				nil, nil, nil,
-			},
-			// match none due to matching logs from a specific block number to new mined blocks
-			{
-				ethereum.FilterQuery{FromBlock: big.NewInt(1), ToBlock: big.NewInt(rpc.LatestBlockNumber.Int64())},
-				nil,
-				nil, nil, nil,
-			},
-		}
+		db     = rawdb.NewMemoryDatabase()
+		_, sys = newTestFilterSystem(db, Config{LogQueryLimit: 2})
+		api    = NewFilterAPI(sys)
+		addr1  = common.HexToAddress("0x1111111111111111111111111111111111111111")
+		addr2  = common.HexToAddress("0x2222222222222222222222222222222222222222")
+		addr3  = common.HexToAddress("0x3333333333333333333333333333333333333333")
+		logs   = make(chan []*types.Log)
 	)
+	defer db.Close()
 
-	// create all subscriptions, this ensures all subscriptions are created before the events are posted.
-	// on slow machines this could otherwise lead to missing events when the subscription is created after
-	// (some) events are posted.
-	for i := range testCases {
-		testCases[i].c = make(chan []*types.Log)
-		testCases[i].err = make(chan error)
-
-		var err error
-		testCases[i].sub, err = api.events.SubscribeLogs(testCases[i].crit, testCases[i].c)
-		if err != nil {
-			t.Fatalf("SubscribeLogs %d failed: %v\n", i, err)
-		}
+	sub, err := api.events.SubscribeLogs(ethereum.FilterQuery{Addresses: []common.Address{addr1, addr2}}, logs)
+	if err != nil {
+		t.Fatalf("subscription with 2 addresses returned error: %v", err)
 	}
+	sub.Unsubscribe()
 
-	for n, test := range testCases {
-		i := n
-		tt := test
-		go func() {
-			defer tt.sub.Unsubscribe()
-
-			var fetched []*types.Log
-
-			timeout := time.After(1 * time.Second)
-		fetchLoop:
-			for {
-				select {
-				case logs := <-tt.c:
-					// Do not break early if we've fetched greater, or equal,
-					// to the number of logs expected. This ensures we do not
-					// deadlock the filter system because it will do a blocking
-					// send on this channel if another log arrives.
-					fetched = append(fetched, logs...)
-				case <-timeout:
-					break fetchLoop
-				}
-			}
-
-			if len(fetched) != len(tt.expected) {
-				tt.err <- fmt.Errorf("invalid number of logs for case %d, want %d log(s), got %d", i, len(tt.expected), len(fetched))
-				return
-			}
-
-			for l := range fetched {
-				if fetched[l].Removed {
-					tt.err <- fmt.Errorf("expected log not to be removed for log %d in case %d", l, i)
-					return
-				}
-				if !reflect.DeepEqual(fetched[l], tt.expected[l]) {
-					tt.err <- fmt.Errorf("invalid log on index %d for case %d\n", l, i)
-					return
-				}
-			}
-			tt.err <- nil
-		}()
-	}
-
-	// raise events
-	for _, ev := range allLogs {
-		backend.pendingLogsFeed.Send(ev)
-	}
-
-	for i := range testCases {
-		err := <-testCases[i].err
-		if err != nil {
-			t.Fatalf("test %d failed: %v", i, err)
-		}
-		<-testCases[i].sub.Err()
+	if _, err := api.events.SubscribeLogs(ethereum.FilterQuery{Addresses: []common.Address{addr1, addr2, addr3}}, logs); err != errExceedLogQueryLimit {
+		t.Fatalf("subscription with 3 addresses returned error %v, want %v", err, errExceedLogQueryLimit)
 	}
 }
 
-func TestLightFilterLogs(t *testing.T) {
+// TestGetLogsStartBeyondHead tests that an explicit range starting after the
+// chain head returns no logs instead of searching the head block.
+func TestGetLogsStartBeyondHead(t *testing.T) {
 	t.Parallel()
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(t, db, Config{})
-		api          = NewFilterAPI(sys, true)
-		signer       = types.HomesteadSigner{}
-
-		firstAddr      = common.HexToAddress("0x1111111111111111111111111111111111111111")
-		secondAddr     = common.HexToAddress("0x2222222222222222222222222222222222222222")
-		thirdAddress   = common.HexToAddress("0x3333333333333333333333333333333333333333")
-		notUsedAddress = common.HexToAddress("0x9999999999999999999999999999999999999999")
-		firstTopic     = common.HexToHash("0x1111111111111111111111111111111111111111111111111111111111111111")
-		secondTopic    = common.HexToHash("0x2222222222222222222222222222222222222222222222222222222222222222")
-
-		// posted twice, once as regular logs and once as pending logs.
-		allLogs = []*types.Log{
-			// Block 1
-			{Address: firstAddr, Topics: []common.Hash{}, Data: []byte{}, BlockNumber: 2, Index: 0},
-			// Block 2
-			{Address: firstAddr, Topics: []common.Hash{firstTopic}, Data: []byte{}, BlockNumber: 3, Index: 0},
-			{Address: secondAddr, Topics: []common.Hash{firstTopic}, Data: []byte{}, BlockNumber: 3, Index: 1},
-			{Address: thirdAddress, Topics: []common.Hash{secondTopic}, Data: []byte{}, BlockNumber: 3, Index: 2},
-			// Block 3
-			{Address: thirdAddress, Topics: []common.Hash{secondTopic}, Data: []byte{}, BlockNumber: 4, Index: 0},
+		backend, sys = newTestFilterSystem(db, Config{})
+		addr         = common.HexToAddress("0x1111111111111111111111111111111111111111")
+		gspec        = &core.Genesis{
+			BaseFee: big.NewInt(params.InitialBaseFee),
+			Config:  params.TestChainConfig,
 		}
-
-		testCases = []struct {
-			crit     FilterCriteria
-			expected []*types.Log
-			id       rpc.ID
-		}{
-			// match all
-			0: {FilterCriteria{}, allLogs, ""},
-			// match none due to no matching addresses
-			1: {FilterCriteria{Addresses: []common.Address{{}, notUsedAddress}, Topics: [][]common.Hash{nil}}, []*types.Log{}, ""},
-			// match logs based on addresses, ignore topics
-			2: {FilterCriteria{Addresses: []common.Address{firstAddr}}, allLogs[:2], ""},
-			// match logs based on addresses and topics
-			3: {FilterCriteria{Addresses: []common.Address{thirdAddress}, Topics: [][]common.Hash{{firstTopic, secondTopic}}}, allLogs[3:5], ""},
-			// all logs with block num >= 3
-			4: {FilterCriteria{FromBlock: big.NewInt(3), ToBlock: big.NewInt(5)}, allLogs[1:], ""},
-			// all logs
-			5: {FilterCriteria{FromBlock: big.NewInt(0), ToBlock: big.NewInt(5)}, allLogs, ""},
-			// all logs with 1>= block num <=2 and topic secondTopic
-			6: {FilterCriteria{FromBlock: big.NewInt(2), ToBlock: big.NewInt(3), Topics: [][]common.Hash{{secondTopic}}}, allLogs[3:4], ""},
-		}
-
-		key, _  = crypto.GenerateKey()
-		addr    = crypto.PubkeyToAddress(key.PublicKey)
-		genesis = &core.Genesis{
-			Alloc: types.GenesisAlloc{
-				addr: {Balance: big.NewInt(params.Ether)},
-			},
-			Config: params.TestChainConfig,
-		}
-		receipts = []*types.Receipt{{
-			Logs: []*types.Log{allLogs[0]},
-		}, {
-			Logs: []*types.Log{allLogs[1], allLogs[2], allLogs[3]},
-		}, {
-			Logs: []*types.Log{allLogs[4]},
-		}}
 	)
+	defer db.Close()
 
-	_, blocks, _ := core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 4, func(i int, b *core.BlockGen) {
-		if i == 0 {
-			return
+	_, chain, receipts := core.GenerateChainWithGenesis(gspec, ethash.NewFaker(), 3, func(i int, gen *core.BlockGen) {
+		if i == 2 {
+			receipt := makeReceipt(addr)
+			gen.AddUncheckedReceipt(receipt)
+			gen.AddUncheckedTx(types.NewTransaction(999, common.HexToAddress("0x999"), big.NewInt(999), 999, gen.BaseFee(), nil))
 		}
-		receipts[i-1].Bloom = types.CreateBloom(types.Receipts{receipts[i-1]})
-		b.AddUncheckedReceipt(receipts[i-1])
-		fee := b.BaseFee()
-		if fee == nil {
-			fee = big.NewInt(params.InitialBaseFee)
-		}
-		tx, _ := types.SignTx(types.NewTx(&types.LegacyTx{Nonce: uint64(i - 1), To: &common.Address{}, Value: big.NewInt(1000), Gas: params.TxGas, GasPrice: fee, Data: nil}), signer, key)
-		b.AddTx(tx)
 	})
-	for i, block := range blocks {
+	gspec.MustCommit(db)
+	for i, block := range chain {
 		rawdb.WriteBlock(db, block)
 		rawdb.WriteCanonicalHash(db, block.Hash(), block.NumberU64())
 		rawdb.WriteHeadBlockHash(db, block.Hash())
-		if i > 0 {
-			rawdb.WriteReceipts(db, block.Hash(), block.NumberU64(), []*types.Receipt{receipts[i-1]})
-		}
+		rawdb.WriteReceipts(db, block.Hash(), block.NumberU64(), receipts[i])
 	}
-	// create all filters
-	for i := range testCases {
-		id, err := api.NewFilter(testCases[i].crit)
-		if err != nil {
-			t.Fatal(err)
-		}
-		testCases[i].id = id
+	backend.startFilterMaps(0, true, filtermaps.DefaultParams)
+	defer backend.stopFilterMaps()
+
+	api := NewFilterAPI(sys)
+	logs, err := api.GetLogs(context.Background(), FilterCriteria{FromBlock: big.NewInt(4), ToBlock: big.NewInt(5)})
+	if err != nil {
+		t.Fatalf("GetLogs beyond head returned error: %v", err)
 	}
-
-	// raise events
-	time.Sleep(1 * time.Second)
-	for _, block := range blocks {
-		backend.chainFeed.Send(core.ChainEvent{Block: block, Hash: common.Hash{}, Logs: allLogs})
+	if len(logs) != 0 {
+		t.Fatalf("expected no logs for range beyond head, got %d", len(logs))
 	}
+}
 
-	for i, tt := range testCases {
-		var fetched []*types.Log
-		timeout := time.Now().Add(1 * time.Second)
-		for { // fetch all expected logs
-			results, err := api.GetFilterChanges(tt.id)
-			if err != nil {
-				t.Fatalf("Unable to fetch logs: %v", err)
-			}
-			fetched = append(fetched, results.([]*types.Log)...)
-			if len(fetched) >= len(tt.expected) {
-				break
-			}
-			// check timeout
-			if time.Now().After(timeout) {
-				break
-			}
+// TestSearchSessionRewindClearsMatches tests that a head rewind which discards
+// the whole search range does not return results collected before the rewind.
+func TestSearchSessionRewindClearsMatches(t *testing.T) {
+	t.Parallel()
 
-			time.Sleep(100 * time.Millisecond)
-		}
+	var (
+		db           = rawdb.NewMemoryDatabase()
+		backend, sys = newTestFilterSystem(db, Config{})
+	)
+	defer db.Close()
 
-		if len(fetched) != len(tt.expected) {
-			t.Errorf("invalid number of logs for case %d, want %d log(s), got %d", i, len(tt.expected), len(fetched))
-			return
-		}
+	header := &types.Header{Number: big.NewInt(99)}
+	rawdb.WriteHeader(db, header)
+	rawdb.WriteCanonicalHash(db, header.Hash(), 99)
+	rawdb.WriteHeadBlockHash(db, header.Hash())
 
-		for l := range fetched {
-			if fetched[l].Removed {
-				t.Errorf("expected log not to be removed for log %d in case %d", l, i)
-			}
-			expected := *tt.expected[l]
-			blockNum := expected.BlockNumber - 1
-			expected.BlockHash = blocks[blockNum].Hash()
-			expected.TxHash = blocks[blockNum].Transactions()[0].Hash()
-			if !reflect.DeepEqual(fetched[l], &expected) {
-				t.Errorf("invalid log on index %d for case %d", l, i)
-			}
-		}
+	backend.startFilterMaps(0, true, filtermaps.DefaultParams)
+	defer backend.stopFilterMaps()
+
+	mb := backend.NewMatcherBackend()
+	defer mb.Close()
+
+	s := &searchSession{
+		ctx:        context.Background(),
+		filter:     sys.NewRangeFilter(100, 100, nil, nil, 0),
+		mb:         mb,
+		firstBlock: 100,
+		lastBlock:  100,
+	}
+	s.matchRange = common.NewRange[uint64](100, 1)
+	s.matches = []*types.Log{{BlockNumber: 100}}
+
+	if err := s.syncMatcher(0); err != nil {
+		t.Fatalf("syncMatcher returned error: %v", err)
+	}
+	if len(s.matches) != 0 {
+		t.Fatalf("expected matches to be discarded after rewind, got %d", len(s.matches))
 	}
 }
 
@@ -893,10 +689,11 @@ func TestPendingTxFilterDeadlock(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(t, db, Config{Timeout: timeout})
-		api          = NewFilterAPI(sys, false)
+		backend, sys = newTestFilterSystem(db, Config{Timeout: timeout})
+		api          = NewFilterAPI(sys)
 		done         = make(chan struct{})
 	)
+	defer close(done)
 
 	go func() {
 		// Bombard feed with txes until signal was received to stop
@@ -916,93 +713,35 @@ func TestPendingTxFilterDeadlock(t *testing.T) {
 
 	// Create a bunch of filters that will
 	// timeout either in 100ms or 200ms
-	fids := make([]rpc.ID, 20)
-	for i := 0; i < len(fids); i++ {
-		fid := api.NewPendingTransactionFilter()
-		fids[i] = fid
+	subs := make([]*Subscription, 20)
+	for i := range subs {
+		fid := api.NewPendingTransactionFilter(nil)
+		api.filtersMu.Lock()
+		f, ok := api.filters[fid]
+		api.filtersMu.Unlock()
+		if !ok {
+			t.Fatalf("Filter %s should exist", fid)
+		}
+		subs[i] = f.s
 		// Wait for at least one tx to arrive in filter
 		for {
-			txs, err := api.GetFilterChanges(fid)
+			hashes, err := api.GetFilterChanges(fid)
 			if err != nil {
 				t.Fatalf("Filter should exist: %v\n", err)
 			}
-			if len(txs.([]common.Hash)) > 0 {
+			if len(hashes.([]common.Hash)) > 0 {
 				break
 			}
 			runtime.Gosched()
 		}
 	}
 
-	// Wait until filters have timed out
-	time.Sleep(3 * timeout)
-
-	// If tx loop doesn't consume `done` after a second
-	// it's hanging.
-	select {
-	case done <- struct{}{}:
-		// Check that all filters have been uninstalled
-		for _, fid := range fids {
-			if _, err := api.GetFilterChanges(fid); err == nil {
-				t.Errorf("Filter %s should have been uninstalled\n", fid)
-			}
-		}
-	case <-time.After(1 * time.Second):
-		t.Error("Tx sending loop hangs")
-	}
-}
-
-func flattenLogs(pl [][]*types.Log) []*types.Log {
-	var logs []*types.Log
-	for _, l := range pl {
-		logs = append(logs, l...)
-	}
-	return logs
-}
-
-// TestPendingTxFilterReturnsHashes checks the JSON hash-array response contract.
-// No subscription goroutines are needed to inspect the RPC return contract.
-func TestPendingTxFilterReturnsHashes(t *testing.T) {
-	tx := types.NewTransaction(0, common.Address{0x42}, big.NewInt(0), 21000, big.NewInt(1), nil)
-	f := &filter{typ: PendingTransactionsSubscription, deadline: time.NewTimer(time.Hour), txs: []*types.Transaction{tx}}
-	defer f.deadline.Stop()
-	// Leave sys nil: this hash-only pending branch does not access the backend.
-	// If that precondition changes, construct the API with newTestFilterSystem.
-	api := &FilterAPI{filters: map[rpc.ID]*filter{"pending": f}, timeout: time.Hour}
-	result, err := api.GetFilterChanges("pending")
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := json.Marshal(result)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var hashes []common.Hash
-	if err := json.Unmarshal(encoded, &hashes); err != nil {
-		t.Fatalf("eth_getFilterChanges pending response cannot be decoded as hashes: %v; response=%s", err, encoded)
-	}
-	if len(hashes) != 1 || hashes[0] != tx.Hash() {
-		t.Fatalf("wrong hashes: %v", hashes)
-	}
-}
-
-// TestPendingTxFilterEmptyPollIsArray checks that repeated empty polls encode as [].
-func TestPendingTxFilterEmptyPollIsArray(t *testing.T) {
-	f := &filter{typ: PendingTransactionsSubscription, deadline: time.NewTimer(time.Hour), txs: []*types.Transaction{}}
-	defer f.deadline.Stop()
-	// Leave sys nil: this hash-only pending branch does not access the backend.
-	// If that precondition changes, construct the API with newTestFilterSystem.
-	api := &FilterAPI{filters: map[rpc.ID]*filter{"pending": f}, timeout: time.Hour}
-	for i := 0; i < 2; i++ {
-		result, err := api.GetFilterChanges("pending")
-		if err != nil {
-			t.Fatal(err)
-		}
-		encoded, err := json.Marshal(result)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(encoded) != "[]" {
-			t.Fatalf("poll %d: got %s, want []", i+1, encoded)
+	// Wait until filters have timed out and have been uninstalled.
+	for _, sub := range subs {
+		select {
+		case <-sub.Err():
+		case <-time.After(1 * time.Second):
+			t.Fatalf("Filter timeout is hanging")
 		}
 	}
 }

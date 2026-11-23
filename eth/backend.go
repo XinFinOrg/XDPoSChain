@@ -39,6 +39,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/contracts"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/bloombits"
+	"github.com/XinFinOrg/XDPoSChain/core/filtermaps"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/txpool/legacypool"
@@ -92,6 +93,9 @@ type Ethereum struct {
 
 	bloomRequests chan chan *bloombits.Retrieval // Channel receiving bloom data retrieval requests
 	bloomIndexer  *core.ChainIndexer             // Bloom indexer operating during block imports
+
+	filterMaps      *filtermaps.FilterMaps
+	closeFilterMaps chan chan struct{}
 
 	APIBackend *EthAPIBackend
 
@@ -312,6 +316,20 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	}
 
 	eth.bloomIndexer.Start(eth.blockchain)
+
+	fmConfig := filtermaps.Config{
+		History:        config.LogHistory,
+		Disabled:       config.LogNoHistory,
+		ExportFileName: config.LogExportCheckpoints,
+		// This fork always stores state in the hash scheme, so legacy index
+		// cleanup has to skip trie nodes.
+		HashScheme: true,
+	}
+	eth.filterMaps, err = filtermaps.NewFilterMaps(chainDb, eth.newChainView(eth.blockchain.CurrentBlock()), 0, 0, filtermaps.DefaultParams, fmConfig)
+	if err != nil {
+		return nil, err
+	}
+	eth.closeFilterMaps = make(chan chan struct{})
 
 	// TxPool
 	if config.TxPool.Journal != "" {
@@ -622,7 +640,11 @@ func (e *Ethereum) APIs() []rpc.API {
 			Service:   downloader.NewDownloaderAPI(e.handler.downloader, e.eventMux),
 		}, {
 			Namespace: "eth",
-			Service:   filters.NewFilterAPI(filters.NewFilterSystem(e.APIBackend, filters.Config{LogCacheSize: e.config.FilterLogCacheSize}), false),
+			Service: filters.NewFilterAPI(filters.NewFilterSystem(e.APIBackend, filters.Config{
+				LogCacheSize:  e.config.FilterLogCacheSize,
+				LogQueryLimit: e.config.LogQueryLimit,
+				RangeLimit:    e.config.RangeLimit,
+			})),
 		}, {
 			Namespace: "admin",
 			Service:   NewAdminAPI(e),
@@ -733,11 +755,11 @@ func (e *Ethereum) TxPool() *txpool.TxPool             { return e.txPool }
 func (e *Ethereum) EventMux() *event.TypeMux           { return e.eventMux }
 func (e *Ethereum) Engine() consensus.Engine           { return e.engine }
 func (e *Ethereum) ChainDb() ethdb.Database            { return e.chainDb }
+func (e *Ethereum) BloomIndexer() *core.ChainIndexer   { return e.bloomIndexer }
 func (e *Ethereum) IsListening() bool                  { return true } // Always listening
 func (e *Ethereum) EthVersion() int                    { return int(ethproto.ProtocolVersions[0]) }
 func (e *Ethereum) NetVersion() uint64                 { return e.networkId }
 func (e *Ethereum) Downloader() *downloader.Downloader { return e.handler.downloader }
-func (e *Ethereum) BloomIndexer() *core.ChainIndexer   { return e.bloomIndexer }
 
 // Protocols returns all the currently configured
 func (e *Ethereum) Protocols() []p2p.Protocol {
@@ -762,12 +784,78 @@ func (e *Ethereum) Start() error {
 	}
 	// Start the networking layer and the light server if requested
 	e.handler.Start(maxPeers)
+
+	// Start the log indexer.
+	e.filterMaps.Start()
+	go e.updateFilterMapsHeads()
 	return nil
+}
+
+// newChainView returns a chain view anchored at the given head.
+func (e *Ethereum) newChainView(head *types.Header) *filtermaps.ChainView {
+	if head == nil {
+		return nil
+	}
+	return filtermaps.NewChainView(e.blockchain, head.Number.Uint64(), head.Hash())
+}
+
+// updateFilterMapsHeads keeps the log indexer in sync with the chain head.
+func (e *Ethereum) updateFilterMapsHeads() {
+	headEventCh := make(chan core.ChainEvent, 10)
+	sub := e.blockchain.SubscribeChainEvent(headEventCh)
+	defer func() {
+		sub.Unsubscribe()
+		for {
+			select {
+			case <-headEventCh:
+			default:
+				return
+			}
+		}
+	}()
+
+	var head *types.Header
+	setHead := func(newHead *types.Header) {
+		if newHead == nil {
+			return
+		}
+		if head == nil || newHead.Hash() != head.Hash() {
+			view := e.newChainView(newHead)
+			if view == nil {
+				// The head was removed before its view was created, which can
+				// happen when a rewind races with head event delivery. Skip the
+				// stale view and retry on the next event or tick.
+				return
+			}
+			head = newHead
+			e.filterMaps.SetTarget(view, 0, 0)
+		}
+	}
+	setHead(e.blockchain.CurrentBlock())
+
+	for {
+		select {
+		case ev := <-headEventCh:
+			setHead(ev.Block.Header())
+		case <-time.After(time.Second * 10):
+			setHead(e.blockchain.CurrentBlock())
+		case ch := <-e.closeFilterMaps:
+			close(ch)
+			return
+		}
+	}
 }
 
 // Stop implements node.Lifecycle, terminating all internal goroutines used by the
 // Ethereum protocol.
 func (e *Ethereum) Stop() error {
+	if e.filterMaps != nil {
+		ch := make(chan struct{})
+		e.closeFilterMaps <- ch
+		<-ch
+		e.filterMaps.Stop()
+	}
+
 	log.Info("Stopping Ethereum bloomIndexer start")
 	e.bloomIndexer.Close()
 	log.Info("Ethereum bloomIndexer stopped")
