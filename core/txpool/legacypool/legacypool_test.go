@@ -219,6 +219,49 @@ func TestDemoteUnexecutablesUsesNextBlockGasSchedule(t *testing.T) {
 	}
 }
 
+// TestAddTRC21TxValueAboveBalance checks that the TRC21 fee capacity pays for
+// gas only: execution takes the value from the sender's own balance, so the
+// pool does not admit a sponsored transaction whose value the sender cannot
+// hold.
+func TestAddTRC21TxValueAboveBalance(t *testing.T) {
+	t.Parallel()
+
+	token := common.HexToAddress("0x00000000000000000000000000000000000000cc")
+	// Far more fee capacity than the transaction cost, value included.
+	capacity := new(big.Int).Mul(big.NewInt(params.Ether), big.NewInt(1000))
+
+	for _, tc := range []struct {
+		name    string
+		balance int64
+		value   int64
+		wantErr error
+	}{
+		{name: "no value, no balance", balance: 0, value: 0},
+		{name: "value held by sender", balance: 5, value: 5},
+		{name: "value above sender balance", balance: 4, value: 5, wantErr: core.ErrInsufficientFundsForTransfer},
+		{name: "value with empty sender", balance: 0, value: 1, wantErr: core.ErrInsufficientFundsForTransfer},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pool, key := setupPool()
+			defer pool.Close()
+
+			pool.mu.Lock()
+			pool.trc21FeeCapacity = map[common.Address]*big.Int{token: capacity}
+			pool.mu.Unlock()
+			testAddBalance(pool, crypto.PubkeyToAddress(key.PublicKey), big.NewInt(tc.balance))
+
+			tx, err := types.SignTx(types.NewTransaction(0, token, big.NewInt(tc.value), 50000, big.NewInt(common.DefaultMinGasPrice), []byte{0x01, 0x02, 0x03, 0x04}), types.HomesteadSigner{}, key)
+			if err != nil {
+				t.Fatalf("failed to sign transaction: %v", err)
+			}
+			err = pool.addRemotesSync([]*types.Transaction{tx})[0]
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("unexpected error: have %v want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 // TestDemoteUnexecutablesDropsTRC21TxValueAboveBalance checks that a TRC21
 // transaction admitted while its sender held the value is evicted once the
 // sender's own balance drops below the value, although the issuer's fee
