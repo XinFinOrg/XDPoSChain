@@ -59,9 +59,6 @@ func newValidationStateOpts(t *testing.T, cfg *params.ChainConfig, number *big.I
 		ExistingCost: func(common.Address, uint64) *big.Int {
 			return nil
 		},
-		PendingNonce: func(common.Address) uint64 {
-			return 0
-		},
 		CurrentNumber: func() *big.Int {
 			return number
 		},
@@ -126,9 +123,6 @@ func TestValidateTransactionWithStateDenylistHardForkBoundaries(t *testing.T) {
 			},
 			ExistingCost: func(common.Address, uint64) *big.Int {
 				return nil
-			},
-			PendingNonce: func(common.Address) uint64 {
-				return 0
 			},
 			CurrentNumber: func() *big.Int {
 				return big.NewInt(99)

@@ -62,7 +62,6 @@ func TestValidateTransactionWithStateTRC21CostSchedule(t *testing.T) {
 				Trc21FeeCapacity:    map[common.Address]*big.Int{token: gas50xCapacity},
 				ExistingExpenditure: func(common.Address) *big.Int { return new(big.Int) },
 				ExistingCost:        func(common.Address, uint64) *big.Int { return nil },
-				PendingNonce:        func(common.Address) uint64 { return 0 },
 				CurrentNumber:       func() *big.Int { return tc.number },
 			}
 
@@ -124,7 +123,6 @@ func TestValidateTransactionWithStateMinGasPriceSchedule(t *testing.T) {
 				State:               statedb,
 				ExistingExpenditure: func(common.Address) *big.Int { return new(big.Int) },
 				ExistingCost:        func(common.Address, uint64) *big.Int { return nil },
-				PendingNonce:        func(common.Address) uint64 { return 0 },
 				CurrentNumber:       func() *big.Int { return tc.number },
 			}
 
