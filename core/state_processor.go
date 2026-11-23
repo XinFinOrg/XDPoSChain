@@ -406,11 +406,7 @@ func (p *StateProcessor) signTxRules(block *types.Block) *SignTxRules {
 	if !p.config.IsTIPSignTxRules(block.Number()) {
 		return nil
 	}
-	var parent *types.Header
-	if p.bc != nil {
-		parent = p.bc.GetHeader(block.ParentHash(), block.NumberU64()-1)
-	}
-	return NewSignTxRules(p.config, block.Number(), SignerSourceOf(p.engine), p.bc, parent)
+	return SignTxRulesFor(p.config, p.bc, p.engine, block.Header())
 }
 
 // txRoute describes how a transaction is handled while a block is processed.

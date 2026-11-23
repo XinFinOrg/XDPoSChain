@@ -111,6 +111,10 @@ type Work struct {
 	receipts []*types.Receipt
 	uncles   map[common.Hash]*types.Header
 
+	// signRules are the sign transaction rules of the block, shared by every
+	// commitTransactions call on it so a sender gets one sign tx per block.
+	signRules *core.SignTxRules
+
 	createdAt time.Time
 }
 
@@ -734,6 +738,7 @@ func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
 		header:       header,
 		evm:          vm.NewEVM(core.NewEVMBlockContext(header, w.chain, &header.Coinbase), state, XDCxState, w.chainConfig, vm.Config{}),
 		uncles:       make(map[common.Hash]*types.Header),
+		signRules:    core.SignTxRulesFor(w.chainConfig, w.chain, w.chain.Engine(), header),
 		createdAt:    time.Now(),
 	}
 
@@ -1107,16 +1112,6 @@ func (w *worker) commitNewWork() {
 	w.updateSnapshot()
 }
 
-// signTxRules returns the sign transaction rules for the block being built,
-// with the candidate list of its parent read through the chain's engine.
-func (w *Work) signTxRules(bc *core.BlockChain) *core.SignTxRules {
-	if bc == nil {
-		return core.NewSignTxRules(w.config, w.header.Number, nil, nil, nil)
-	}
-	parent := bc.GetHeader(w.header.ParentHash, w.header.Number.Uint64()-1)
-	return core.NewSignTxRules(w.config, w.header.Number, core.SignerSourceOf(bc.Engine()), bc, parent)
-}
-
 func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Address]*big.Int, txs *transactionsByPriceAndNonce, specialTxs types.Transactions, bc *core.BlockChain, pendingLogsFeed *event.Feed) {
 	gp := new(core.GasPool).AddGas(w.header.GasLimit)
 	// EIP-2780 lowers the minimal gas a transaction can carry after Amsterdam.
@@ -1127,7 +1122,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 	balanceUpdated := map[common.Address]*big.Int{}
 	totalFeeUsed := big.NewInt(0)
 	var coalescedLogs []*types.Log
-	signRules := w.signTxRules(bc)
+	signRules := w.signRules
 	// first priority for special Txs
 	for _, tx := range specialTxs {
 		if !w.txFitsSize(tx) {

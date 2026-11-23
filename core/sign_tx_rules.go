@@ -90,6 +90,12 @@ func CheckSignTxFields(config *params.ChainConfig, number *big.Int, tx *types.Tr
 	if !IsSignTransactionRoute(config, number, tx) {
 		return nil
 	}
+	return checkSignTxFields(config, number, tx)
+}
+
+// checkSignTxFields is CheckSignTxFields for a transaction already known to
+// be a sign transaction at number.
+func checkSignTxFields(config *params.ChainConfig, number *big.Int, tx *types.Transaction) error {
 	if tx.Type() != types.LegacyTxType {
 		return fmt.Errorf("%w: type %d", ErrSignTxType, tx.Type())
 	}
@@ -153,6 +159,18 @@ func SignerSourceOf(engine consensus.Engine) SignerSource {
 	return source
 }
 
+// SignTxRulesFor returns the rules for the block with header, with the
+// candidate list of its parent in bc read through engine. Block processing and
+// the miner both build their rules here, so the miner checks a block exactly
+// as consensus does.
+func SignTxRulesFor(config *params.ChainConfig, bc *BlockChain, engine consensus.Engine, header *types.Header) *SignTxRules {
+	var parent *types.Header
+	if bc != nil {
+		parent = bc.GetHeader(header.ParentHash, header.Number.Uint64()-1)
+	}
+	return NewSignTxRules(config, header.Number, SignerSourceOf(engine), bc, parent)
+}
+
 // NewSignTxRules returns the rules for the block numbered number whose parent
 // is parent. The candidate set comes from source; when source is nil the
 // sender rule is not applied.
@@ -190,7 +208,7 @@ func (r *SignTxRules) Check(tx *types.Transaction, from common.Address) error {
 	if r == nil || !IsSignTransactionRoute(r.config, r.number, tx) {
 		return nil
 	}
-	if err := CheckSignTxFields(r.config, r.number, tx); err != nil {
+	if err := checkSignTxFields(r.config, r.number, tx); err != nil {
 		return err
 	}
 	if signed := signedBlockNumber(tx); signed.Cmp(r.number) >= 0 {
