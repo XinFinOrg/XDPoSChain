@@ -218,6 +218,15 @@ func (bc *BlockChain) GetAncestor(hash common.Hash, number, ancestor uint64, max
 	return bc.hc.GetAncestor(hash, number, ancestor, maxNonCanonical)
 }
 
+// GetRawReceipts retrieves the raw (underived) receipts for all transactions in
+// a given block.
+func (bc *BlockChain) GetRawReceipts(hash common.Hash, number uint64) types.Receipts {
+	if receipts, ok := bc.receiptsCache.Get(hash); ok {
+		return receipts
+	}
+	return rawdb.ReadRawReceipts(bc.db, hash, number)
+}
+
 // GetReceiptsByHash retrieves the receipts for all transactions in a given block.
 func (bc *BlockChain) GetReceiptsByHash(hash common.Hash) types.Receipts {
 	if receipts, ok := bc.receiptsCache.Get(hash); ok {
