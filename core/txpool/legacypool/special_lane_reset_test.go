@@ -17,6 +17,7 @@
 package legacypool
 
 import (
+	"math/big"
 	"sync"
 	"testing"
 
@@ -119,6 +120,45 @@ func TestSpecialLaneResetDropsNonCandidate(t *testing.T) {
 	}
 	if pool.all.Get(stays.Hash()) == nil {
 		t.Fatal("candidate's sign tx was dropped")
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}
+
+// TestSpecialLaneResetSkipsMinedSignTx checks that the reset re-check leaves
+// alone a sign transaction already mined, nonce below the state nonce, so
+// dropping it cannot demote the sender's next executable transaction.
+func TestSpecialLaneResetSkipsMinedSignTx(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPool()
+	defer pool.Close()
+	var (
+		mu        sync.Mutex
+		candidate = true
+	)
+	pool.SetSigner(func(common.Address) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return candidate
+	})
+	key := laneKey(pool)
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	for _, tx := range []*types.Transaction{laneSignTx(t, key, 0, 0, 1), pricedTransaction(1, 100000, big.NewInt(common.DefaultMinGasPrice), key)} {
+		if err := pool.addRemoteSync(tx); err != nil {
+			t.Fatalf("failed to add tx %d: %v", tx.Nonce(), err)
+		}
+	}
+	// The sign tx is mined, then its sender stops being a candidate.
+	testSetNonce(pool, addr, 1)
+	mu.Lock()
+	candidate = false
+	mu.Unlock()
+	<-pool.requestReset(nil, newTestHeader(1))
+
+	if pending, queued := pool.Stats(); pending != 1 || queued != 0 {
+		t.Fatalf("pool stats = (%d pending, %d queued), want (1, 0)", pending, queued)
 	}
 	if err := validatePoolInternals(pool); err != nil {
 		t.Fatalf("pool internal state corrupted: %v", err)

@@ -973,8 +973,14 @@ func checkSignTxReplacement(old, tx *types.Transaction) error {
 // signing window, or once its sender stops being a candidate; it could then
 // never be mined and would block the sender's later nonces. Each one is
 // removed, and the sender's later pending transactions are moved back to the
-// queue as for any removal. Only special transactions are looked at. It
-// returns the number of transactions dropped.
+// queue as for any removal. A sign transaction below the sender's state nonce
+// is already mined and left to the nonce rules: dropping it here would move the
+// sender's next executable transaction back to the queue. It returns the
+// number of transactions dropped.
+//
+// It walks the pooled transactions without copying the lists, and runs the
+// signer check and reads the state nonce only for an account holding a sign
+// transaction.
 //
 // Note, this method assumes the pool lock is held!
 func (pool *LegacyPool) dropInvalidSignTxs() int {
@@ -985,10 +991,22 @@ func (pool *LegacyPool) dropInvalidSignTxs() int {
 	next := new(big.Int).Add(head.Number, common.Big1)
 
 	var drop []common.Hash
-	check := func(addr common.Address, txs types.Transactions) {
-		signer := pool.isSigner == nil || pool.isSigner(addr)
-		for _, tx := range txs {
+	check := func(addr common.Address, l *list) {
+		var (
+			loaded bool
+			signer bool
+			nonce  uint64
+		)
+		for _, tx := range l.txs.items {
 			if !core.IsSignTransactionRoute(pool.chainconfig, next, tx) {
+				continue
+			}
+			if !loaded {
+				signer = pool.isSigner == nil || pool.isSigner(addr)
+				nonce = pool.currentState.GetNonce(addr)
+				loaded = true
+			}
+			if tx.Nonce() < nonce {
 				continue
 			}
 			if !signer || core.CheckSignTxFields(pool.chainconfig, next, tx) != nil {
@@ -997,11 +1015,11 @@ func (pool *LegacyPool) dropInvalidSignTxs() int {
 		}
 	}
 	for addr, list := range pool.pending {
-		check(addr, list.Flatten())
+		check(addr, list)
 	}
 	for _, addr := range pool.queue.addresses() {
 		if list, ok := pool.queue.get(addr); ok {
-			check(addr, list.Flatten())
+			check(addr, list)
 		}
 	}
 	for _, hash := range drop {
