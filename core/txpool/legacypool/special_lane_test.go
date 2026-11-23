@@ -300,3 +300,43 @@ func TestSpecialLaneTruncateKeepsAccountSlots(t *testing.T) {
 		t.Fatalf("pool internal state corrupted: %v", err)
 	}
 }
+
+// TestSpecialLaneNotCappedPerAccount checks that the per-account queue limit
+// counts and drops regular transactions only, as the global queue limit does.
+func TestSpecialLaneNotCappedPerAccount(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPool()
+	defer pool.Close()
+	pool.SetSigner(func(common.Address) bool { return true })
+	pool.config.AccountQueue = 2
+	pool.queue.config.AccountQueue = 2
+
+	key := laneKey(pool)
+	// Queued behind a nonce gap at 0: regular at 1-3, special at 4-5.
+	regular := []*types.Transaction{
+		pricedTransaction(1, 100000, big.NewInt(common.DefaultMinGasPrice), key),
+		pricedTransaction(2, 100000, big.NewInt(common.DefaultMinGasPrice), key),
+		pricedTransaction(3, 100000, big.NewInt(common.DefaultMinGasPrice), key),
+	}
+	specials := []*types.Transaction{laneRandomizeTx(t, key, 4, 4), laneRandomizeTx(t, key, 5, 5)}
+	for _, tx := range append(append([]*types.Transaction{}, regular...), specials...) {
+		if err := pool.addRemoteSync(tx); err != nil {
+			t.Fatalf("failed to add tx %d: %v", tx.Nonce(), err)
+		}
+	}
+	for _, tx := range specials {
+		if pool.all.Get(tx.Hash()) == nil {
+			t.Fatalf("special tx at nonce %d was dropped by the account queue limit", tx.Nonce())
+		}
+	}
+	if pool.all.Get(regular[2].Hash()) != nil {
+		t.Fatal("the account queue limit kept a third regular tx")
+	}
+	if _, queued := pool.Stats(); queued != 4 {
+		t.Fatalf("queued = %d, want 4 (2 regular + 2 special)", queued)
+	}
+	if err := validatePoolInternals(pool); err != nil {
+		t.Fatalf("pool internal state corrupted: %v", err)
+	}
+}

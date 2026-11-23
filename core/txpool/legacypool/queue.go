@@ -196,7 +196,7 @@ func (q *queue) promoteExecutables(accounts []common.Address, gasLimit uint64, c
 		queuedGauge.Dec(int64(len(readies)))
 
 		// Drop all transactions over the allowed limit
-		var caps = list.Cap(int(q.config.AccountQueue))
+		var caps = capRegular(list, int(q.config.AccountQueue))
 		for _, tx := range caps {
 			hash := tx.Hash()
 			dropped = append(dropped, hash)
@@ -214,6 +214,33 @@ func (q *queue) promoteExecutables(accounts []common.Address, gasLimit uint64, c
 	}
 	queuedGauge.Dec(int64(len(dropped)))
 	return promotable, dropped, removedAddresses
+}
+
+// capRegular drops the highest-nonce regular transactions of the queued list l
+// until at most threshold regular ones are left, and returns them. Special
+// transactions have their own budget, bounded per sender at admission: as in
+// truncate, they do not count toward the limit and are never dropped here.
+func capRegular(l *list, threshold int) types.Transactions {
+	if l.Len() <= threshold {
+		return nil
+	}
+	txs := l.Flatten()
+	regular := 0
+	for _, tx := range txs {
+		if !tx.IsSpecialTransaction() {
+			regular++
+		}
+	}
+	var caps types.Transactions
+	for i := len(txs) - 1; i >= 0 && regular > threshold; i-- {
+		if txs[i].IsSpecialTransaction() {
+			continue
+		}
+		l.Remove(txs[i])
+		caps = append(caps, txs[i])
+		regular--
+	}
+	return caps
 }
 
 // truncate drops the oldest transactions from the queue until the total
