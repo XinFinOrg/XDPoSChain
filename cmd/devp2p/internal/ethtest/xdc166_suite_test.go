@@ -193,12 +193,26 @@ func TestXdc166ResponsesDecodeWireDialect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to decode PooledTransactions66 payload: %v", err)
 	}
-	gotTxs, ok := msg.(*types.Transactions)
+	gotTxs, ok := msg.(*pooledTransactionsResponse)
 	if !ok {
 		t.Fatalf("wrong PooledTransactions payload type: %T", msg)
 	}
 	if id != 11 || len(*gotTxs) != 1 || (*gotTxs)[0].Hash() != tx.Hash() {
 		t.Fatalf("PooledTransactions66 payload mismatch: id %d, have %+v", id, *gotTxs)
+	}
+
+	// The same txs delivered as a full broadcast must stay distinguishable from
+	// a pooled response, or a broadcast could pass for one
+	broadcast, err := rlp.EncodeToBytes(types.Transactions{tx})
+	if err != nil {
+		t.Fatalf("failed to encode transaction broadcast: %v", err)
+	}
+	_, msg, err = decodeXdc166Payload(ethproto.TransactionMsg, broadcast)
+	if err != nil {
+		t.Fatalf("failed to decode transaction broadcast: %v", err)
+	}
+	if _, ok := msg.(*types.Transactions); !ok {
+		t.Fatalf("transaction broadcast decoded as %T, want *types.Transactions", msg)
 	}
 }
 
