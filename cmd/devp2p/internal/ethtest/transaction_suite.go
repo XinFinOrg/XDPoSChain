@@ -428,7 +428,9 @@ var errPooledTxDeadline = errors.New("did not receive PooledTransactions respons
 // waitPooledTransactionsXdc166 reads until the PooledTransactions response
 // carrying wantID arrives, skipping unrelated frames (block, BFT and full
 // transaction broadcasts) and giving up at the deadline; upstream waits for
-// the target message code for the same reason
+// the target message code for the same reason. The read window covers the
+// whole remaining budget, so a timeout means the deadline passed: an RLPx
+// frame read is not resumable, and the connection may be left mid-frame
 func waitPooledTransactionsXdc166(readMsg func() (uint64, interface{}, error), wantID uint64, deadline time.Time) (types.Transactions, error) {
 	for {
 		if !time.Now().Before(deadline) {
@@ -436,6 +438,10 @@ func waitPooledTransactionsXdc166(readMsg func() (uint64, interface{}, error), w
 		}
 		id, msg, err := readMsg()
 		if err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				return nil, errPooledTxDeadline
+			}
 			return nil, fmt.Errorf("failed to read pooled tx response: %w", err)
 		}
 		// A read clamped to the deadline may still deliver a frame after it

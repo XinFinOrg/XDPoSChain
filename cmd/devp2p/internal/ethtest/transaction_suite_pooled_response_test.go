@@ -96,6 +96,29 @@ func TestWaitPooledTransactionsHonoursDeadline(t *testing.T) {
 	}
 }
 
+type timeoutReadError struct{}
+
+func (timeoutReadError) Error() string   { return "i/o timeout" }
+func (timeoutReadError) Timeout() bool   { return true }
+func (timeoutReadError) Temporary() bool { return true }
+
+// A read timeout means the deadline passed: the RLPx frame read is not
+// resumable, so the wait must not read the same connection again
+func TestWaitPooledTransactionsStopsOnReadTimeout(t *testing.T) {
+	reads := 0
+	readMsg := func() (uint64, interface{}, error) {
+		reads++
+		return 0, nil, timeoutReadError{}
+	}
+	_, err := waitPooledTransactionsXdc166(readMsg, 1234, time.Now().Add(time.Second))
+	if !errors.Is(err, errPooledTxDeadline) {
+		t.Fatalf("read timeout not reported as the deadline: %v", err)
+	}
+	if reads != 1 {
+		t.Fatalf("read %d frames after the timeout, want 1", reads)
+	}
+}
+
 func TestWaitPooledTransactionsRejectsLateResponse(t *testing.T) {
 	txs := frameTestTxs(1)
 	readMsg := func() (uint64, interface{}, error) {
