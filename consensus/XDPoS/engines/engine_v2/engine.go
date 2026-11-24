@@ -228,6 +228,25 @@ func (x *XDPoS_v2) Initial(chain consensus.ChainReader, header *types.Header) er
 	return nil
 }
 
+// ensureInitialised runs initial once, for the paths that reach the engine before Initial did:
+// a node started below the v2 switch block meets its first v2 header in header verification or
+// in YourTurn. Both run concurrently with each other, so the flag is checked again under the
+// write lock that initial requires, and only one of them initialises.
+func (x *XDPoS_v2) ensureInitialised(chain consensus.ChainReader, header *types.Header) error {
+	x.lock.RLock()
+	initialised := x.isInitilised
+	x.lock.RUnlock()
+	if initialised {
+		return nil
+	}
+	x.lock.Lock()
+	defer x.lock.Unlock()
+	if x.isInitilised {
+		return nil
+	}
+	return x.initial(chain, header)
+}
+
 // initial sets the v2 parameters from the chain. It must only be called while
 // holding x.lock, from either the startup path (Initial) or header verification.
 // The startup-only gap snapshot repair is deliberately kept in Initial, not here.
@@ -269,6 +288,7 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 		if err != nil {
 			return err
 		}
+		x.restoreCommittedBlock(chain, header)
 	}
 
 	// Initial first v2 snapshot
@@ -324,16 +344,13 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 
 // Check if it's my turn to mine a block. Note: The second return value `preIndex` is useless in V2 engine
 func (x *XDPoS_v2) YourTurn(chain consensus.ChainReader, parent *types.Header, signer common.Address) (bool, error) {
+	if err := x.ensureInitialised(chain, parent); err != nil {
+		log.Error("[YourTurn] Error while initialising last v2 variables", "ParentBlockHash", parent.Hash(), "Error", err)
+		return false, err
+	}
+
 	x.lock.RLock()
 	defer x.lock.RUnlock()
-
-	if !x.isInitilised {
-		err := x.initial(chain, parent)
-		if err != nil {
-			log.Error("[YourTurn] Error while initialising last v2 variables", "ParentBlockHash", parent.Hash(), "Error", err)
-			return false, err
-		}
-	}
 
 	waitedTime := time.Now().Unix() - int64(parent.Time)
 	minePeriod := x.config.V2.Config(uint64(x.currentRound)).MinePeriod
@@ -1189,6 +1206,50 @@ func (x *XDPoS_v2) commitBlocks(blockChainReader consensus.ChainReader, proposed
 	return true, nil
 }
 
+// restoreCommittedBlock recovers highestCommitBlock at startup when processing the head's QC
+// did not set it. commitBlocks applies the 3-chain rule to that one QC only, so a timeout among
+// the three blocks below the head leaves the value nil. Every v2 header carries the QC of its
+// parent, so walking down from the head finds the most recent 3-chain on disk.
+//
+// The walk applies exactly the rule commitBlocks applies: the certified block, its parent and
+// its grandparent must have consecutive rounds. Committing on anything weaker would mark a block
+// final that is not, and the side-chain gate and reorg would then refuse a legitimate fork.
+// It is bounded by one epoch; a chain with no 3-chain over a whole epoch leaves the value nil,
+// and the gate keeps today's behaviour. It does not run the forensics monitor that commitBlocks
+// starts, because no new QC is being processed. The caller holds x.lock.
+func (x *XDPoS_v2) restoreCommittedBlock(chain consensus.ChainReader, head *types.Header) {
+	if x.highestCommitBlock != nil || head.Number.Sign() == 0 {
+		return
+	}
+	// commitBlocks skips a certified block at or below SwitchBlock+2; so does this walk.
+	floor := new(big.Int).Add(x.config.V2.SwitchBlock, big.NewInt(2))
+
+	// The head's QC certifies the head's parent; each further step moves down one block.
+	certified := chain.GetHeader(head.ParentHash, head.Number.Uint64()-1)
+	for i := uint64(0); certified != nil && certified.Number.Cmp(floor) > 0 && i < x.config.Epoch; i++ {
+		parent := chain.GetHeader(certified.ParentHash, certified.Number.Uint64()-1)
+		if parent == nil {
+			return
+		}
+		grand := chain.GetHeader(parent.ParentHash, parent.Number.Uint64()-1)
+		if grand == nil {
+			return
+		}
+		_, r0, _, err0 := x.getExtraFields(certified)
+		_, r1, _, err1 := x.getExtraFields(parent)
+		_, r2, _, err2 := x.getExtraFields(grand)
+		if err0 != nil || err1 != nil || err2 != nil {
+			return
+		}
+		if r0 >= 2 && r1 == r0-1 && r2 == r0-2 {
+			x.highestCommitBlock = &types.BlockInfo{Number: grand.Number, Hash: grand.Hash(), Round: r2}
+			log.Info("[initial] Restored committed block", "number", grand.Number, "round", r2, "hash", grand.Hash())
+			return
+		}
+		certified = parent
+	}
+}
+
 // Get master nodes over extra data of epoch switch block.
 func (x *XDPoS_v2) GetMasternodesFromEpochSwitchHeader(epochSwitchHeader *types.Header) []common.Address {
 	if epochSwitchHeader == nil {
@@ -1354,7 +1415,12 @@ func (x *XDPoS_v2) periodicJob() {
 	}()
 }
 
+// GetLatestCommittedBlockInfo returns the highest committed block. It reads under x.lock because
+// commitBlocks writes the value under it, and it is called from outside the engine only, so no
+// caller already holds the lock.
 func (x *XDPoS_v2) GetLatestCommittedBlockInfo() *types.BlockInfo {
+	x.lock.RLock()
+	defer x.lock.RUnlock()
 	return x.highestCommitBlock
 }
 
