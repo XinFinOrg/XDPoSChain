@@ -439,9 +439,9 @@ func TestReorgGapSnapshotDerivationFailsBeforeAnySideEffect(t *testing.T) {
 	recorder.reset()
 
 	oldHead := blockchain.CurrentHeader()
-	// reorg expects the chain mutex to be held by its caller.
+	// reorgForTest expects the chain mutex to be held by its caller.
 	blockchain.chainmu.MustLock()
-	err := blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	_, _, err := blockchain.reorgForTest(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 
 	if err == nil {
@@ -487,13 +487,13 @@ func TestReorgTakesAGapSnapshotItAlreadyStored(t *testing.T) {
 
 	oldHead := blockchain.CurrentHeader()
 	blockchain.chainmu.MustLock()
-	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	_, _, err = blockchain.reorgForTest(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 	if err != nil {
 		t.Fatalf("the stored set did not spare the unreadable state, so the reorg derived it again: %v", err)
 	}
 
-	// reorg deliberately leaves the chain head to its caller - see BlockChain.reorg - so the
+	// reorg deliberately leaves the chain head to its caller - see BlockChain.reorgLocked - so the
 	// promoted gap block is the last block it writes here, and the tip above it is not written.
 	want := blocks[0].Hash()
 	if got := blockchain.CurrentBlock().Hash(); got != want {
@@ -528,7 +528,7 @@ func TestReorgRebuildsACandidateLessGapSnapshot(t *testing.T) {
 
 	oldHead := blockchain.CurrentHeader()
 	blockchain.chainmu.MustLock()
-	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	_, _, err = blockchain.reorgForTest(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 	if err != nil {
 		t.Fatalf("the candidate-less record failed the reorg instead of being rebuilt: %v", err)
@@ -558,7 +558,7 @@ func TestReorgFailsOnACandidateLessGapSnapshotWithoutState(t *testing.T) {
 
 	oldHead := blockchain.CurrentHeader()
 	blockchain.chainmu.MustLock()
-	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	_, _, err = blockchain.reorgForTest(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 	if err == nil {
 		t.Fatal("a reorg over a candidate-less set with no state to rebuild it was accepted")
@@ -699,9 +699,9 @@ func TestReorgDerivesAGapSnapshotItDoesNotHave(t *testing.T) {
 	recorder.reset()
 
 	oldHead := blockchain.CurrentHeader()
-	// reorg expects the chain mutex to be held by its caller.
+	// reorgForTest expects the chain mutex to be held by its caller.
 	blockchain.chainmu.MustLock()
-	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	_, _, err = blockchain.reorgForTest(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 	if err != nil {
 		t.Fatalf("the reorg over a gap block with a derivable set failed: %v", err)
@@ -753,9 +753,9 @@ func TestReorgFailsOnSnapshotProbeError(t *testing.T) {
 	recorder.reset()
 
 	oldHead := blockchain.CurrentHeader()
-	// reorg expects the chain mutex to be held by its caller.
+	// reorgForTest expects the chain mutex to be held by its caller.
 	blockchain.chainmu.MustLock()
-	err := blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	_, _, err := blockchain.reorgForTest(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 
 	if err == nil {
@@ -810,9 +810,9 @@ func TestReorgFailsOnSnapshotLoadError(t *testing.T) {
 	recorder.getErr, recorder.getErrValue = loadErr, blob
 
 	oldHead := blockchain.CurrentHeader()
-	// reorg expects the chain mutex to be held by its caller.
+	// reorgForTest expects the chain mutex to be held by its caller.
 	blockchain.chainmu.MustLock()
-	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	_, _, err = blockchain.reorgForTest(oldHead, blocks[len(blocks)-1].Header())
 	blockchain.chainmu.Unlock()
 
 	if err == nil {

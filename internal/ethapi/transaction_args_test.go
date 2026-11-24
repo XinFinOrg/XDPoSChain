@@ -393,7 +393,10 @@ func (b *backendMock) BlobBaseFee(ctx context.Context) *big.Int {
 	return new(big.Int)
 }
 
-func (b *backendMock) ChainDb() ethdb.Database           { return nil }
+func (b *backendMock) ChainDb() ethdb.Database { return nil }
+func (b *backendMock) ReadTransaction(common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+	return nil, common.Hash{}, 0, 0
+}
 func (b *backendMock) AccountManager() *accounts.Manager { return nil }
 func (b *backendMock) ExtRPCEnabled() bool               { return false }
 func (b *backendMock) RPCGasCap() uint64                 { return 0 }

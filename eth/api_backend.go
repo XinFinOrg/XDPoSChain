@@ -362,8 +362,12 @@ func (b *EthAPIBackend) GetPoolTransaction(hash common.Hash) *types.Transaction 
 	return nil
 }
 
+func (b *EthAPIBackend) ReadTransaction(txHash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+	return b.eth.blockchain.ReadTransaction(txHash)
+}
+
 func (b *EthAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (*types.Transaction, common.Hash, uint64, uint64, error) {
-	tx, blockHash, blockNumber, index := rawdb.ReadTransaction(b.eth.ChainDb(), txHash)
+	tx, blockHash, blockNumber, index := b.ReadTransaction(txHash)
 	return tx, blockHash, blockNumber, index, nil
 }
 
