@@ -26,8 +26,8 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/internal/cmdtest"
+	"github.com/XinFinOrg/XDPoSChain/internal/reexec"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
-	"github.com/docker/docker/pkg/reexec"
 )
 
 type testXDC struct {
