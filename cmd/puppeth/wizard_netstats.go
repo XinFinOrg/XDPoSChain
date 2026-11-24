@@ -24,8 +24,8 @@ import (
 	"sync"
 
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/internal/tablewriter"
 	"github.com/XinFinOrg/XDPoSChain/log"
-	"github.com/olekukonko/tablewriter"
 )
 
 // networkStats verifies the status of network components and generates a protip
@@ -195,8 +195,6 @@ func (stats serverStats) render() {
 	table := tablewriter.NewWriter(os.Stdout)
 
 	table.SetHeader([]string{"Server", "Address", "Service", "Config", "Value"})
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-	table.SetColWidth(100)
 
 	// Find the longest lines for all columns for the hacked separator
 	separator := make([]string, 5)
