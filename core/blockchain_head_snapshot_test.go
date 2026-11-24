@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"strings"
@@ -43,6 +44,13 @@ type headBatchRecorder struct {
 	// database whose presence checks fail.
 	hasErr error
 
+	// getErr, once set, is what Get answers with for a key whose stored value
+	// equals getErrValue, so a test can model a database whose presence checks
+	// succeed while the read itself fails. Matching on the value rather than on
+	// the key keeps block bodies - also keyed by hash - out of the way.
+	getErr      error
+	getErrValue []byte
+
 	mu         sync.Mutex
 	writes     []headWriteRecord
 	directPuts []string
@@ -53,6 +61,14 @@ func (r *headBatchRecorder) Has(key []byte) (bool, error) {
 		return false, r.hasErr
 	}
 	return r.Database.Has(key)
+}
+
+func (r *headBatchRecorder) Get(key []byte) ([]byte, error) {
+	val, err := r.Database.Get(key)
+	if err == nil && r.getErr != nil && bytes.Equal(val, r.getErrValue) {
+		return nil, r.getErr
+	}
+	return val, err
 }
 
 func (r *headBatchRecorder) NewBatch() ethdb.Batch {
@@ -488,6 +504,84 @@ func TestReorgTakesAGapSnapshotItAlreadyStored(t *testing.T) {
 	}
 }
 
+// A record that cannot be served does not spare the derivation: a candidate-less set would
+// reject the epoch it backs exactly like a missing one, so the reorg rebuilds it from the
+// state of the block it belongs to.
+func TestReorgRebuildsACandidateLessGapSnapshot(t *testing.T) {
+	recorder, blockchain, blocks := newReorgDerivableGapChain(t)
+
+	gap := blocks[0]
+	if !blockchain.needsNextEpochSnapshot(gap.Number()) {
+		t.Fatalf("block %d is not scheduled as a v2 gap block, so the test would not derive anything", gap.NumberU64())
+	}
+	// What a build that stored a set without candidates could have left behind.
+	blob, err := json.Marshal(&engine_v2.SnapshotV2{Number: gap.NumberU64(), Hash: gap.Hash()})
+	if err != nil {
+		t.Fatalf("failed to marshal the candidate-less record: %v", err)
+	}
+	rawdb.WriteXdposV2Snapshot(recorder.Database, gap.Hash(), blob)
+	want, err := engine_v2.EncodeSnapshot(engine_v2.NewSnapshot(gap.NumberU64(), gap.Hash(), derivableGapSet))
+	if err != nil {
+		t.Fatalf("failed to encode the expected snapshot: %v", err)
+	}
+	recorder.reset()
+
+	oldHead := blockchain.CurrentHeader()
+	blockchain.chainmu.MustLock()
+	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	blockchain.chainmu.Unlock()
+	if err != nil {
+		t.Fatalf("the candidate-less record failed the reorg instead of being rebuilt: %v", err)
+	}
+
+	if got, err := rawdb.ReadXdposV2Snapshot(recorder.Database, gap.Hash()); err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("the reorg kept the record it cannot serve: err=%v, got %s, want %s", err, got, want)
+	}
+}
+
+// The same record with no readable state behind it cannot be rebuilt, so the reorg is refused
+// before any side effect: a gap block must not become canonical with a set its epoch switch
+// cannot read.
+func TestReorgFailsOnACandidateLessGapSnapshotWithoutState(t *testing.T) {
+	recorder, blockchain, blocks := newReorgGapChain(t)
+
+	gap := blocks[0]
+	if !blockchain.needsNextEpochSnapshot(gap.Number()) {
+		t.Fatalf("block %d is not scheduled as a v2 gap block, so the test would not derive anything", gap.NumberU64())
+	}
+	blob, err := json.Marshal(&engine_v2.SnapshotV2{Number: gap.NumberU64(), Hash: gap.Hash()})
+	if err != nil {
+		t.Fatalf("failed to marshal the candidate-less record: %v", err)
+	}
+	rawdb.WriteXdposV2Snapshot(recorder.Database, gap.Hash(), blob)
+	recorder.reset()
+
+	oldHead := blockchain.CurrentHeader()
+	blockchain.chainmu.MustLock()
+	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	blockchain.chainmu.Unlock()
+	if err == nil {
+		t.Fatal("a reorg over a candidate-less set with no state to rebuild it was accepted")
+	}
+	if !strings.Contains(err.Error(), "gap block 3") {
+		t.Fatalf("the reorg failed for something other than the gap block set: %v", err)
+	}
+	// A gap block state this node can no longer open is its own condition, so the reorg must
+	// not leave the downloader blaming the peer that served the new chain.
+	if !blockchain.IsLocalInsertError(err) {
+		t.Fatalf("the unopenable gap block state is the block's fault to the downloader, so it drops the peer that served it: %v", err)
+	}
+	if got := blockchain.CurrentBlock().Hash(); got != oldHead.Hash() {
+		t.Fatalf("the head moved to %s despite the refused reorg, want %s", got, oldHead.Hash())
+	}
+	recorder.mu.Lock()
+	writes, directPuts := recorder.writes, recorder.directPuts
+	recorder.mu.Unlock()
+	if len(writes) != 0 || len(directPuts) != 0 {
+		t.Fatalf("the refused reorg wrote %d batch(es) and %d key(s) outside a batch, want none", len(writes), len(directPuts))
+	}
+}
+
 // derivableGapCandidates is the candidate order the state of the derivable gap
 // block stores, and derivableGapSet is the order the stakes written for it
 // produce: the stakes grow over the stored order, so the set the derivation has
@@ -686,6 +780,63 @@ func TestReorgFailsOnSnapshotProbeError(t *testing.T) {
 	}
 	if has, err := rawdb.HasXdposV2Snapshot(recorder.Database, blocks[0].Hash()); err != nil || has {
 		t.Fatalf("a set reached the database despite the failed probe: has=%v err=%v", has, err)
+	}
+}
+
+// TestReorgFailsOnSnapshotLoadError pins what a reorg does when the record is
+// there but cannot be read: the load failure is the same kind of condition as a
+// failed presence check, so the reorg fails before any side effect instead of
+// taking the unreadable record as a usable set. The gap block has readable
+// state, so a reorg that read the failed load as "no usable set" would derive
+// the set, overwrite the record and succeed.
+func TestReorgFailsOnSnapshotLoadError(t *testing.T) {
+	recorder, blockchain, blocks := newReorgDerivableGapChain(t)
+
+	gap := blocks[0]
+	if !blockchain.needsNextEpochSnapshot(gap.Number()) {
+		t.Fatalf("block %d is not scheduled as a v2 gap block, so the test would not read the record", gap.NumberU64())
+	}
+	snap := engine_v2.NewSnapshot(gap.NumberU64(), gap.Hash(), []common.Address{{0x1}, {0x2}})
+	blob, err := engine_v2.EncodeSnapshot(snap)
+	if err != nil {
+		t.Fatalf("failed to encode the stored snapshot: %v", err)
+	}
+	if err := rawdb.WriteXdposV2Snapshot(recorder.Database, gap.Hash(), blob); err != nil {
+		t.Fatalf("failed to store the snapshot: %v", err)
+	}
+	recorder.reset()
+
+	loadErr := errors.New("injected snapshot load failure")
+	recorder.getErr, recorder.getErrValue = loadErr, blob
+
+	oldHead := blockchain.CurrentHeader()
+	// reorg expects the chain mutex to be held by its caller.
+	blockchain.chainmu.MustLock()
+	err = blockchain.reorg(oldHead, blocks[len(blocks)-1].Header())
+	blockchain.chainmu.Unlock()
+
+	if err == nil {
+		t.Fatal("the reorg went ahead although it could not read the stored set")
+	}
+	if !errors.Is(err, loadErr) {
+		t.Fatalf("the reorg failed for something other than the failed load: %v", err)
+	}
+	// A load this node's own database refused says nothing about the blocks of the new
+	// chain, so the peer that served them must not be blamed for it.
+	if !blockchain.IsLocalInsertError(err) {
+		t.Fatalf("the failed load is the block's fault to the downloader, so it drops the peer that served it: %v", err)
+	}
+	if got := blockchain.CurrentBlock().Hash(); got != oldHead.Hash() {
+		t.Fatalf("the head moved to %s despite the failed load, want %s", got, oldHead.Hash())
+	}
+	recorder.mu.Lock()
+	writes, directPuts := recorder.writes, recorder.directPuts
+	recorder.mu.Unlock()
+	if len(writes) != 0 || len(directPuts) != 0 {
+		t.Fatalf("the failed reorg wrote %d batch(es) and %d key(s) outside a batch, want none", len(writes), len(directPuts))
+	}
+	if got, err := rawdb.ReadXdposV2Snapshot(recorder.Database, gap.Hash()); err != nil || !bytes.Equal(got, blob) {
+		t.Fatalf("the failed reorg rewrote the record it could not read: err=%v", err)
 	}
 }
 

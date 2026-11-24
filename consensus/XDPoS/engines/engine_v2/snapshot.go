@@ -36,6 +36,10 @@ func NewSnapshot(number uint64, hash common.Hash, candidates []common.Address) *
 	return snap
 }
 
+// errUnusableSnapshot marks a stored snapshot that cannot be served: it either
+// does not decode or carries no candidates.
+var errUnusableSnapshot = errors.New("unusable gap snapshot")
+
 // loadSnapshot loads an existing snapshot from the database.
 func loadSnapshot(db ethdb.Database, hash common.Hash) (*SnapshotV2, error) {
 	blob, err := rawdb.ReadXdposV2Snapshot(db, hash)
@@ -44,16 +48,38 @@ func loadSnapshot(db ethdb.Database, hash common.Hash) (*SnapshotV2, error) {
 	}
 	snap := new(SnapshotV2)
 	if err := json.Unmarshal(blob, snap); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", errUnusableSnapshot, err)
+	}
+	if len(snap.NextEpochCandidates) == 0 {
+		return nil, fmt.Errorf("%w: no candidates for gap block %s", errUnusableSnapshot, hash.Hex())
 	}
 
 	return snap, nil
+}
+
+// LoadSnapshot loads the stored gap snapshot of a block hash. A record that cannot be served
+// is reported as an error for which IsUnusableSnapshot reports true.
+func LoadSnapshot(db ethdb.Database, hash common.Hash) (*SnapshotV2, error) {
+	return loadSnapshot(db, hash)
+}
+
+// IsUnusableSnapshot reports whether err marks a stored snapshot that cannot be served.
+func IsUnusableSnapshot(err error) bool { return errors.Is(err, errUnusableSnapshot) }
+
+// snapshotNotStored reports whether the database holds no record under hash. A probe that
+// fails answers false, so the caller keeps the error it already has.
+func snapshotNotStored(db ethdb.KeyValueReader, hash common.Hash) bool {
+	has, err := rawdb.HasXdposV2Snapshot(db, hash)
+	return err == nil && !has
 }
 
 // EncodeSnapshot marshals a snapshot for storage. Callers that have to write a
 // snapshot together with other data (e.g. the chain markers of the gap block it
 // belongs to) encode it here and hand the blob to their own writer.
 func EncodeSnapshot(s *SnapshotV2) ([]byte, error) {
+	if len(s.NextEpochCandidates) == 0 {
+		return nil, fmt.Errorf("%w: refusing to encode an empty masternode snapshot", errUnusableSnapshot)
+	}
 	return json.Marshal(s)
 }
 
@@ -128,12 +154,16 @@ func (x *XDPoS_v2) getSnapshot(chain consensus.ChainReader, number uint64, isGap
 			log.Warn("[getSnapshot] cannot rebuild bootstrap snapshot", "number", gapBlockNum, "hash", gapBlockHash, "err", rerr)
 		}
 		// Reported as a sentinel rather than as a bare error: the header above is this node's
-		// own canonical gap block, so an entry that is absent, unreadable or undecodable is a
-		// condition of its database rather than a fault of the batch under verification. core's
+		// own canonical gap block, so an entry that is absent, unreadable, undecodable or empty is
+		// a condition of its database rather than a fault of the batch under verification. core's
 		// classification reads the sentinel as local, and the storage or decoding error stays
 		// the cause.
-		return nil, fmt.Errorf("%w: gap block %v (%s): %w",
-			consensus.ErrGapSnapshotUnavailable, gapBlockNum, gapBlockHash.Hex(), err)
+		hint := ""
+		if errors.Is(err, errUnusableSnapshot) {
+			hint = " (a restart repairs at most the two most recent gap snapshots, from their gap block state, when that state is still readable)"
+		}
+		return nil, fmt.Errorf("%w: gap block %v (%s): %w%s",
+			consensus.ErrGapSnapshotUnavailable, gapBlockNum, gapBlockHash.Hex(), err, hint)
 	}
 
 	log.Trace("Loaded snapshot from disk", "number", gapBlockNum, "hash", gapBlockHash)
@@ -212,7 +242,7 @@ func BuildSnapshotFromState(statedb *state.StateDB, number uint64, hash common.H
 		return nil, fmt.Errorf("reading masternode candidates from state: %w", err)
 	}
 	if len(ms) == 0 {
-		// An empty snapshot loads back fine and would permanently mask the hole.
+		// An empty set is not a usable snapshot, so it is never written.
 		return nil, ErrNoCandidates
 	}
 	utils.SortMasternodesByStakeDesc(ms)
@@ -279,16 +309,27 @@ func (x *XDPoS_v2) RepairGapSnapshots(chain GapStateReader) {
 			continue
 		}
 		gapHash := gapHeader.Hash()
-		// Only a genuinely absent key is repaired. If we cannot reliably determine
-		// whether a snapshot is present (e.g. I/O error), skip repair to avoid
-		// overwriting a snapshot that may have been persisted through a reorg.
+		// A stored snapshot is kept unless it cannot be served (it does not decode
+		// or carries no candidates): such a record would otherwise reject every
+		// signature and epoch switch block it backs, forever. A read that fails
+		// tells us nothing about the stored value, so it still skips the repair to
+		// avoid overwriting a set that may have been persisted through a reorg.
 		has, err := rawdb.HasXdposV2Snapshot(db, gapHash)
 		if err != nil {
 			log.Debug("[RepairGapSnapshots] cannot probe stored snapshot", "number", gapNum, "hash", gapHash, "err", err)
 			continue
 		}
 		if has {
-			continue
+			_, lerr := loadSnapshot(db, gapHash)
+			switch {
+			case lerr == nil:
+				continue
+			case errors.Is(lerr, errUnusableSnapshot):
+				log.Warn("[RepairGapSnapshots] stored snapshot is unusable, rebuilding", "number", gapNum, "hash", gapHash, "err", lerr)
+			default:
+				log.Debug("[RepairGapSnapshots] cannot read stored snapshot", "number", gapNum, "hash", gapHash, "err", lerr)
+				continue
+			}
 		}
 		statedb, err := chain.StateAt(gapHeader.Root)
 		if err != nil {
@@ -305,6 +346,6 @@ func (x *XDPoS_v2) RepairGapSnapshots(chain GapStateReader) {
 			continue
 		}
 		x.snapshots.Add(snap.Hash, snap)
-		log.Warn("[RepairGapSnapshots] repaired missing snapshot", "number", gapNum, "hash", gapHash, "candidates", len(snap.NextEpochCandidates))
+		log.Warn("[RepairGapSnapshots] repaired snapshot", "number", gapNum, "hash", gapHash, "candidates", len(snap.NextEpochCandidates))
 	}
 }

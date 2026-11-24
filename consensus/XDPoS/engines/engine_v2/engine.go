@@ -274,8 +274,10 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 	// Initial first v2 snapshot
 	lastGapNum, _ := x.config.GapBlockNumber(x.config.V2.SwitchBlock.Uint64())
 	lastGapHeader := chain.GetHeaderByNumber(lastGapNum)
+	lastGapHash := lastGapHeader.Hash()
 
-	snap, _ := loadSnapshot(x.db, lastGapHeader.Hash())
+	snap, err := loadSnapshot(x.db, lastGapHash)
+	reportBootstrapSnapshotLoad(x.db, lastGapNum, lastGapHash, err)
 
 	if snap == nil {
 		checkpointHeader := chain.GetHeaderByNumber(x.config.V2.SwitchBlock.Uint64())
@@ -320,6 +322,18 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 	log.Warn("[initial] finish initialisation")
 
 	return nil
+}
+
+// reportBootstrapSnapshotLoad logs why initial() is about to rewrite the bootstrap snapshot.
+func reportBootstrapSnapshotLoad(db ethdb.KeyValueReader, number uint64, hash common.Hash, err error) {
+	switch {
+	case err == nil || snapshotNotStored(db, hash):
+		// A missing record is the normal first start: initial() writes it.
+	case errors.Is(err, errUnusableSnapshot):
+		log.Warn("[initial] stored bootstrap snapshot is unusable, rebuilding", "number", number, "hash", hash, "err", err)
+	default:
+		log.Warn("[initial] cannot read the stored bootstrap snapshot, rewriting it", "number", number, "hash", hash, "err", err)
+	}
 }
 
 // Check if it's my turn to mine a block. Note: The second return value `preIndex` is useless in V2 engine
