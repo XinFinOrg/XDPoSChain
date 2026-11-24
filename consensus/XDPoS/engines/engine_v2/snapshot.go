@@ -57,6 +57,15 @@ func loadSnapshot(db ethdb.Database, hash common.Hash) (*SnapshotV2, error) {
 	return snap, nil
 }
 
+// LoadSnapshot loads the stored gap snapshot of a block hash. A record that cannot be served
+// is reported as an error for which IsUnusableSnapshot reports true.
+func LoadSnapshot(db ethdb.Database, hash common.Hash) (*SnapshotV2, error) {
+	return loadSnapshot(db, hash)
+}
+
+// IsUnusableSnapshot reports whether err marks a stored snapshot that cannot be served.
+func IsUnusableSnapshot(err error) bool { return errors.Is(err, errUnusableSnapshot) }
+
 // snapshotNotStored reports whether the database holds no record under hash. A probe that
 // fails answers false, so the caller keeps the error it already has.
 func snapshotNotStored(db ethdb.KeyValueReader, hash common.Hash) bool {

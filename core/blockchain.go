@@ -4120,17 +4120,19 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 			continue
 		}
 		// A set the database already holds does not have to be derived again:
-		// the derivation is deterministic, so the stored set is the one this
-		// loop would produce. Skipping it also keeps the loop from failing the
-		// reorg over a state that is no longer readable, which is the common
-		// case for a gap block that was canonical before the rollback.
+		// the derivation is deterministic, so a stored set that can be served is
+		// the one this loop would produce. Skipping it also keeps the loop from
+		// failing the reorg over a state that is no longer readable, which is the
+		// common case for a gap block that was canonical before the rollback.
+		// A record that cannot be served spares nothing - it would reject the
+		// epoch it backs - so it is rebuilt here like a missing one.
 		//
-		// A probe that fails is not a missing set, and is not read as one: the
-		// same read failure would let this loop derive over a set it cannot see,
-		// or fail the reorg on the state below when the stored set was the very
-		// thing that should have spared it. It fails here instead, before any
-		// side effect, the way the startup repair leaves a set it cannot probe
-		// alone.
+		// A read that cannot complete is not a missing set, and is not read as
+		// one: the same failure would let this loop derive over a set it cannot
+		// see, or fail the reorg on the state below when the stored set was the
+		// very thing that should have spared it. Both the presence check and the
+		// load fail here, before any side effect, the way the startup repair
+		// leaves a set it cannot probe alone.
 		has, err := rawdb.HasXdposV2Snapshot(bc.db, header.Hash())
 		if err != nil {
 			// A presence check this node's own database refused says nothing about the blocks of
@@ -4138,7 +4140,17 @@ func (bc *BlockChain) reorg(oldHead, newHead *types.Header) error {
 			return localConditionf("failed to read the stored next-epoch snapshot of gap block %d (%s): %w", header.Number.Uint64(), header.Hash().Hex(), err)
 		}
 		if has {
-			continue
+			switch _, lerr := engine_v2.LoadSnapshot(bc.db, header.Hash()); {
+			case lerr == nil:
+				continue
+			case engine_v2.IsUnusableSnapshot(lerr):
+				// Rebuilt below, like a missing record.
+			default:
+				// A load this node's own database refused says nothing about the blocks of the
+				// new chain either: a condition of this node, not of the blocks. Failing here
+				// keeps the markers below from moving over a record the epoch cannot serve.
+				return localConditionf("failed to read the stored next-epoch snapshot of gap block %d (%s): %w", header.Number.Uint64(), header.Hash().Hex(), lerr)
+			}
 		}
 		statedb, err := bc.StateAt(header.Root)
 		if err != nil {
