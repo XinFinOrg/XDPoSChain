@@ -9,7 +9,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/log"
-	"github.com/pkg/errors"
 )
 
 func GetLocMappingAtKey(key common.Hash, slot uint64) *big.Int {
@@ -76,7 +75,7 @@ func SubRelayerFee(relayer common.Address, fee *big.Int, statedb *state.StateDB)
 	balance := statedb.GetState(contract, locHashDeposit).Big()
 	log.Debug("ApplyXDCXMatchedTransaction settle balance: SubRelayerFee BEFORE", "relayer", relayer, "balance", balance)
 	if balance.Cmp(fee) < 0 {
-		return errors.Errorf("relayer %s isn't enough XDC fee", relayer)
+		return fmt.Errorf("relayer %s isn't enough XDC fee", relayer)
 	} else {
 		balance = new(big.Int).Sub(balance, fee)
 		statedb.SetState(contract, locHashDeposit, common.BigToHash(balance))
@@ -98,7 +97,7 @@ func CheckRelayerFee(relayer common.Address, fee *big.Int, statedb *state.StateD
 	locHashDeposit := common.BigToHash(locBigDeposit)
 	balance := statedb.GetState(contract, locHashDeposit).Big()
 	if new(big.Int).Sub(balance, fee).Cmp(new(big.Int).Mul(common.BasePrice, common.RelayerLockedFund)) < 0 {
-		return errors.Errorf("relayer %s isn't enough XDC fee : balance %d , fee : %d ", relayer.Hex(), balance.Uint64(), fee.Uint64())
+		return fmt.Errorf("relayer %s isn't enough XDC fee : balance %d , fee : %d ", relayer.Hex(), balance.Uint64(), fee.Uint64())
 	}
 	return nil
 }
@@ -125,7 +124,7 @@ func AddTokenBalance(addr common.Address, value *big.Int, token common.Address, 
 		log.Debug("ApplyXDCXMatchedTransaction settle balance: ADD TOKEN BALANCE AFTER", "token", token, "address", addr, "balance", balance, "orderValue", value)
 		return nil
 	} else {
-		return errors.Errorf("token %s isn't exist", token)
+		return fmt.Errorf("token %s isn't exist", token)
 	}
 }
 
@@ -135,7 +134,7 @@ func SubTokenBalance(addr common.Address, value *big.Int, token common.Address, 
 		balance := statedb.GetBalance(addr)
 		log.Debug("ApplyXDCXMatchedTransaction settle balance: SUB XDC NATIVE BALANCE BEFORE", "token", common.XDCNativeAddressBinary, "address", addr, "balance", balance, "orderValue", value)
 		if balance.Cmp(value) < 0 {
-			return errors.Errorf("value %s in token %s not enough , have : %s , want : %s  ", addr, common.XDCNativeAddressBinary, balance, value)
+			return fmt.Errorf("value %s in token %s not enough , have : %s , want : %s  ", addr, common.XDCNativeAddressBinary, balance, value)
 		}
 		statedb.SubBalance(addr, value, tracing.BalanceChangeUnspecified)
 		balance = statedb.GetBalance(addr)
@@ -151,14 +150,14 @@ func SubTokenBalance(addr common.Address, value *big.Int, token common.Address, 
 		balance := statedb.GetState(token, locHash).Big()
 		log.Debug("ApplyXDCXMatchedTransaction settle balance: SUB TOKEN BALANCE BEFORE", "token", token, "address", addr, "balance", balance, "orderValue", value)
 		if balance.Cmp(value) < 0 {
-			return errors.Errorf("value %s in token %s not enough , have : %s , want : %s  ", addr, token, balance, value)
+			return fmt.Errorf("value %s in token %s not enough , have : %s , want : %s  ", addr, token, balance, value)
 		}
 		balance = new(big.Int).Sub(balance, value)
 		statedb.SetState(token, locHash, common.BigToHash(balance))
 		log.Debug("ApplyXDCXMatchedTransaction settle balance: SUB TOKEN BALANCE AFTER", "token", token, "address", addr, "balance", balance, "orderValue", value)
 		return nil
 	} else {
-		return errors.Errorf("token %s isn't exist", token)
+		return fmt.Errorf("token %s isn't exist", token)
 	}
 }
 
@@ -172,7 +171,7 @@ func CheckSubTokenBalance(addr common.Address, value *big.Int, token common.Addr
 			balance = statedb.GetBalance(addr)
 		}
 		if balance.Cmp(value) < 0 {
-			return nil, errors.Errorf("value %s in token %s not enough , have : %s , want : %s  ", addr, common.XDCNativeAddressBinary, balance, value)
+			return nil, fmt.Errorf("value %s in token %s not enough , have : %s , want : %s  ", addr, common.XDCNativeAddressBinary, balance, value)
 		}
 		newBalance := new(big.Int).Sub(balance, value)
 		log.Debug("CheckSubTokenBalance settle balance: SUB XDC NATIVE BALANCE ", "token", common.XDCNativeAddressBinary, "address", addr, "balance", balance, "value", value, "newBalance", newBalance)
@@ -189,13 +188,13 @@ func CheckSubTokenBalance(addr common.Address, value *big.Int, token common.Addr
 			balance = statedb.GetState(token, locHash).Big()
 		}
 		if balance.Cmp(value) < 0 {
-			return nil, errors.Errorf("value %s in token %s not enough , have : %s , want : %s  ", addr.String(), token.String(), balance, value)
+			return nil, fmt.Errorf("value %s in token %s not enough , have : %s , want : %s  ", addr.String(), token.String(), balance, value)
 		}
 		newBalance := new(big.Int).Sub(balance, value)
 		log.Debug("CheckSubTokenBalance settle balance: SUB TOKEN BALANCE ", "token", token, "address", addr, "balance", balance, "value", value, "newBalance", newBalance)
 		return newBalance, nil
 	} else {
-		return nil, errors.Errorf("token %s isn't exist", token)
+		return nil, fmt.Errorf("token %s isn't exist", token)
 	}
 }
 
@@ -230,7 +229,7 @@ func CheckAddTokenBalance(addr common.Address, value *big.Int, token common.Addr
 			return newBalance, nil
 		}
 	} else {
-		return nil, errors.Errorf("token %s isn't exist", token)
+		return nil, fmt.Errorf("token %s isn't exist", token)
 	}
 }
 
@@ -249,7 +248,7 @@ func CheckSubRelayerFee(relayer common.Address, fee *big.Int, statedb *state.Sta
 	}
 	log.Debug("CheckSubRelayerFee settle balance: SubRelayerFee ", "relayer", relayer, "balance", balance, "fee", fee)
 	if balance.Cmp(fee) < 0 {
-		return nil, errors.Errorf("relayer %s isn't enough XDC fee", relayer)
+		return nil, fmt.Errorf("relayer %s isn't enough XDC fee", relayer)
 	} else {
 		return new(big.Int).Sub(balance, fee), nil
 	}
@@ -284,7 +283,7 @@ func SetTokenBalance(addr common.Address, balance *big.Int, token common.Address
 		statedb.SetState(token, locHash, common.BigToHash(balance))
 		return nil
 	} else {
-		return errors.Errorf("token %s isn't exist", token)
+		return fmt.Errorf("token %s isn't exist", token)
 	}
 }
 
