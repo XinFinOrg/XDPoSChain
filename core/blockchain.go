@@ -1573,50 +1573,91 @@ const (
 )
 
 // Rollback is designed to remove a chain of links from the database that aren't
-// certain enough to be valid.
+// certain enough to be valid. When a parent is missing or a marker sits on the
+// genesis block, it moves no head marker and reports why in the log.
 func (bc *BlockChain) Rollback(chain []common.Hash) {
 	if !bc.chainmu.TryLock() {
 		return
 	}
 	defer bc.chainmu.Unlock()
 
-	batch := bc.db.NewBatch()
+	// Resolve every marker before changing any of them: one missing parent aborts
+	// the whole rollback
+	var (
+		header      = bc.hc.CurrentHeader()
+		snap        = bc.CurrentSnapBlock()
+		block       = bc.CurrentBlock()
+		headerMoved bool
+		snapMoved   bool
+		blockMoved  bool
+	)
 	for i := len(chain) - 1; i >= 0; i-- {
 		hash := chain[i]
 
-		// Degrade the chain markers if they are explicitly reverted.
-		// In theory, we should update all in-memory markers in the
-		// last step, however the direction of rollback is from high
-		// to low, so it's safe the update in-memory markers directly.
-		currentHeader := bc.hc.CurrentHeader()
-		if currentHeader.Hash() == hash {
-			newHeadHeader := bc.GetHeader(currentHeader.ParentHash, currentHeader.Number.Uint64()-1)
-			rawdb.WriteHeadHeaderHash(batch, currentHeader.ParentHash)
-			bc.hc.SetCurrentHeader(newHeadHeader)
-		}
-		if currentSnapBlock := bc.CurrentSnapBlock(); currentSnapBlock.Hash() == hash {
-			newFastBlock := bc.GetBlock(currentSnapBlock.ParentHash, currentSnapBlock.Number.Uint64()-1)
-			if newFastBlock == nil {
-				log.Error("Rollback failed", "number", currentSnapBlock.Number.Uint64()-1, "hash", currentSnapBlock.ParentHash.Hex())
+		if header != nil && header.Hash() == hash {
+			if header.Number.Uint64() == 0 {
+				log.Error("Rollback failed: genesis has no parent, no marker was moved", "marker", "header", "hash", hash)
 				return
 			}
-			rawdb.WriteHeadFastBlockHash(batch, currentSnapBlock.ParentHash)
-			bc.currentSnapBlock.Store(newFastBlock.Header())
-			headFastBlockGauge.Update(int64(newFastBlock.NumberU64()))
-		}
-		if currentBlock := bc.CurrentBlock(); currentBlock.Hash() == hash {
-			newBlock := bc.GetBlock(currentBlock.ParentHash, currentBlock.Number.Uint64()-1)
-			if newBlock == nil {
-				log.Error("Rollback failed", "number", currentBlock.Number.Uint64()-1, "hash", currentBlock.ParentHash.Hex())
+			parent := bc.GetHeader(header.ParentHash, header.Number.Uint64()-1)
+			if parent == nil {
+				log.Error("Rollback failed: parent missing, no marker was moved", "marker", "header", "number", header.Number.Uint64()-1, "hash", header.ParentHash.Hex())
 				return
 			}
-			rawdb.WriteHeadBlockHash(batch, currentBlock.ParentHash)
-			bc.currentBlock.Store(newBlock.Header())
-			headBlockGauge.Update(int64(newBlock.NumberU64()))
+			header, headerMoved = parent, true
 		}
+		if snap != nil && snap.Hash() == hash {
+			if snap.Number.Uint64() == 0 {
+				log.Error("Rollback failed: genesis has no parent, no marker was moved", "marker", "snap", "hash", hash)
+				return
+			}
+			parent := bc.GetBlock(snap.ParentHash, snap.Number.Uint64()-1)
+			if parent == nil {
+				log.Error("Rollback failed: parent missing, no marker was moved", "marker", "snap", "number", snap.Number.Uint64()-1, "hash", snap.ParentHash.Hex())
+				return
+			}
+			snap, snapMoved = parent.Header(), true
+		}
+		if block != nil && block.Hash() == hash {
+			if block.Number.Uint64() == 0 {
+				log.Error("Rollback failed: genesis has no parent, no marker was moved", "marker", "block", "hash", hash)
+				return
+			}
+			parent := bc.GetBlock(block.ParentHash, block.Number.Uint64()-1)
+			if parent == nil {
+				log.Error("Rollback failed: parent missing, no marker was moved", "marker", "block", "number", block.Number.Uint64()-1, "hash", block.ParentHash.Hex())
+				return
+			}
+			block, blockMoved = parent.Header(), true
+		}
+	}
+	if !headerMoved && !snapMoved && !blockMoved {
+		return
+	}
+	batch := bc.db.NewBatch()
+	if headerMoved {
+		rawdb.WriteHeadHeaderHash(batch, header.Hash())
+	}
+	if snapMoved {
+		rawdb.WriteHeadFastBlockHash(batch, snap.Hash())
+	}
+	if blockMoved {
+		rawdb.WriteHeadBlockHash(batch, block.Hash())
 	}
 	if err := batch.Write(); err != nil {
 		log.Crit("Failed to rollback chain markers", "err", err)
+	}
+	// Publish the markers only after the batch is on disk
+	if headerMoved {
+		bc.hc.SetCurrentHeader(header)
+	}
+	if snapMoved {
+		bc.currentSnapBlock.Store(snap)
+		headFastBlockGauge.Update(snap.Number.Int64())
+	}
+	if blockMoved {
+		bc.currentBlock.Store(block)
+		headBlockGauge.Update(block.Number.Int64())
 	}
 	// TODO: Truncate ancient data which exceeds the current header.
 }
