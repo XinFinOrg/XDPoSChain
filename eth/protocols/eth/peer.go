@@ -21,6 +21,7 @@ import (
 	"math/big"
 	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -100,6 +101,10 @@ type Peer struct {
 	lock sync.RWMutex
 
 	tipNumber uint64 // Highest block number announced by the peer (live network high-water mark)
+
+	// Inbound NewBlockHashes announcement budget, touched only by the peer's message loop
+	announceTokens float64
+	announceRefill time.Time
 
 	knownBlocks     mapset.Set[common.Hash] // Set of block hashes known to be known by this peer
 	queuedBlocks    chan *propEvent         // Queue of blocks to broadcast to the peer
@@ -728,4 +733,22 @@ func (p *Peer) String() string {
 	return fmt.Sprintf("Peer %s [%s]", p.id,
 		fmt.Sprintf("eth/%2d", p.version),
 	)
+}
+
+func (p *Peer) spendAnnounceBudget(n int) bool {
+	now := time.Now()
+	if p.announceRefill.IsZero() {
+		p.announceTokens = maxAnnounceBurst
+	} else if refilled := p.announceTokens + now.Sub(p.announceRefill).Seconds()*maxAnnounceRate; refilled < maxAnnounceBurst {
+		p.announceTokens = refilled
+	} else {
+		p.announceTokens = maxAnnounceBurst
+	}
+	p.announceRefill = now
+
+	if p.announceTokens < float64(n) {
+		return false
+	}
+	p.announceTokens -= float64(n)
+	return true
 }
