@@ -192,6 +192,50 @@ func TestExpTimeoutDurationConcurrentSetParams(t *testing.T) {
 	wg.Wait()
 }
 
+// TestExpParamsLowerBounds pins the lower bounds of the exponential-timeout
+// parameters: a non-positive duration reaches time.NewTimer as an immediately
+// firing timer, and a base below one truncates the multiplier to zero once an
+// exponent can occur.
+func TestExpParamsLowerBounds(t *testing.T) {
+	rejected := []struct {
+		name        string
+		duration    time.Duration
+		base        float64
+		maxExponent uint8
+	}{
+		{"zero duration", 0, 1, 0},
+		{"negative duration", -time.Second, 1, 0},
+		{"zero base with exponent", time.Second, 0, 1},
+		{"fractional base with exponent", time.Second, 0.5, 2},
+		{"negative base with exponent", time.Second, -2, 1},
+	}
+	for _, tc := range rejected {
+		t.Run(tc.name, func(t *testing.T) {
+			helper, err := NewExpTimeoutDuration(tc.duration, tc.base, tc.maxExponent)
+			assert.Error(t, err)
+			assert.Nil(t, helper)
+		})
+	}
+	// At maxExponent zero the exponent is always zero and math.Pow returns 1
+	// for every base, so base never reaches the multiplier.
+	accepted := []struct {
+		name string
+		base float64
+	}{
+		{"zero base at zero exponent", 0},
+		{"fractional base at zero exponent", 0.5},
+		{"negative base at zero exponent", -2},
+		{"base one", 1},
+	}
+	for _, tc := range accepted {
+		t.Run(tc.name, func(t *testing.T) {
+			helper, err := NewExpTimeoutDuration(time.Second, tc.base, 0)
+			assert.NoError(t, err)
+			assert.NotNil(t, helper)
+		})
+	}
+}
+
 // TestSetParamsRejectedKeepsTimeout pins that a rejected set leaves the
 // previous parameters untouched.
 func TestSetParamsRejectedKeepsTimeout(t *testing.T) {
@@ -203,6 +247,9 @@ func TestSetParamsRejectedKeepsTimeout(t *testing.T) {
 	}{
 		{"max exponent out of range", 9 * time.Second, 3, maxExponentUpperbound},
 		{"base power overflow", 9 * time.Second, 3, 21},
+		{"zero duration", 0, 2, 1},
+		{"negative duration", -time.Second, 2, 1},
+		{"base below one", 9 * time.Second, 0.5, 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

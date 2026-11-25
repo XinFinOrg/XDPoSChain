@@ -24,7 +24,7 @@ type ExpTimeoutDuration struct {
 }
 
 func NewExpTimeoutDuration(duration time.Duration, base float64, maxExponent uint8) (*ExpTimeoutDuration, error) {
-	if err := checkExpParams(base, maxExponent); err != nil {
+	if err := checkExpParams(duration, base, maxExponent); err != nil {
 		return nil, err
 	}
 	return &ExpTimeoutDuration{
@@ -35,9 +35,19 @@ func NewExpTimeoutDuration(duration time.Duration, base float64, maxExponent uin
 }
 
 // checkExpParams validates a parameter set before it becomes visible to readers.
-func checkExpParams(base float64, maxExponent uint8) error {
+func checkExpParams(duration time.Duration, base float64, maxExponent uint8) error {
 	if maxExponent >= maxExponentUpperbound {
 		return fmt.Errorf("max_exponent (%d) >= max_exponent_upperbound (%d)", maxExponent, maxExponentUpperbound)
+	}
+	// A non-positive duration makes time.NewTimer fire immediately, and
+	// GetTimeoutDuration re-arms with the same value after every timeout.
+	if duration <= 0 {
+		return fmt.Errorf("duration (%v) must be positive", duration)
+	}
+	// At maxExponent zero the exponent is always zero and math.Pow returns 1
+	// for every base, so base only has to be usable once it can be applied.
+	if maxExponent > 0 && base < 1 {
+		return fmt.Errorf("base (%f) must be at least 1 when max_exponent is %d", base, maxExponent)
 	}
 	if math.Pow(base, float64(maxExponent)) >= float64(math.MaxUint32) {
 		return fmt.Errorf("base^max_exponent (%f^%d) should be less than 2^32", base, maxExponent)
@@ -78,7 +88,7 @@ func (d *ExpTimeoutDuration) GetTimeoutDuration(currentRound, highestRound types
 // SetParams replaces the whole parameter set; an invalid set is rejected
 // before the current one is touched.
 func (d *ExpTimeoutDuration) SetParams(duration time.Duration, base float64, maxExponent uint8) error {
-	if err := checkExpParams(base, maxExponent); err != nil {
+	if err := checkExpParams(duration, base, maxExponent); err != nil {
 		return err
 	}
 	d.mu.Lock()
