@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -102,6 +103,46 @@ func TestNewFakerAcceptsUnvalidatedSchedule(t *testing.T) {
 
 	if engine := NewFaker(rawdb.NewMemoryDatabase(), config); engine == nil {
 		t.Fatal("NewFaker() = nil for a schedule it does not validate")
+	}
+}
+
+// TestVerifySealRejectsV2Block pins the v2 guard: a v2 header carries no
+// recoverable seal for VerifySeal to check, so the adapter must report that
+// instead of accepting whatever the remote-mining SubmitWork path hands it.
+func TestVerifySealRejectsV2Block(t *testing.T) {
+	engine, err := New(params.TestXDPoSMockChainConfig, rawdb.NewMemoryDatabase())
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	// TestXDPoSMockChainConfig switches to v2 after block 900.
+	for _, tc := range []struct {
+		name   string
+		header *types.Header
+	}{
+		{name: "unsigned", header: &types.Header{Number: big.NewInt(901)}},
+		// A submitted header can carry bytes in Validator; every v2 header is
+		// refused, not only the ones that happen to be unsigned.
+		{name: "with validator bytes", header: &types.Header{Number: big.NewInt(901), Validator: make([]byte, 65)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := engine.VerifySeal(nil, tc.header); err == nil || !errors.Is(err, ErrUnsupportedV2Seal) {
+				t.Fatalf("VerifySeal error = %v, want ErrUnsupportedV2Seal", err)
+			}
+		})
+	}
+}
+
+// TestVerifySealStillDelegatesV1Headers pins the other side of the guard: a v1
+// header still reaches engine_v1 instead of being refused at the adapter. Block
+// zero is the one header engine_v1 answers without a chain (utils.ErrUnknownBlock).
+func TestVerifySealStillDelegatesV1Headers(t *testing.T) {
+	engine, err := New(params.TestXDPoSMockChainConfig, rawdb.NewMemoryDatabase())
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	err = engine.VerifySeal(nil, &types.Header{Number: big.NewInt(0)})
+	if err == nil || !errors.Is(err, utils.ErrUnknownBlock) {
+		t.Fatalf("VerifySeal(v1 header) error = %v, want utils.ErrUnknownBlock from engine_v1", err)
 	}
 }
 

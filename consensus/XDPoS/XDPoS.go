@@ -289,12 +289,17 @@ func (x *XDPoS) VerifyUncles(chain consensus.ChainReader, block *types.Block) er
 	}
 }
 
+// ErrUnsupportedV2Seal reports that seal verification was asked of a v2 header.
+// A v2 block's proof is the validator signature in header.Validator, checked by
+// engine_v2's header verification; this adapter has no seal to verify.
+var ErrUnsupportedV2Seal = errors.New("not supported in the v2 consensus")
+
 // VerifySeal implements consensus.Engine, checking whether the signature contained
 // in the header satisfies the consensus protocol requirements.
 func (x *XDPoS) VerifySeal(chain consensus.ChainReader, header *types.Header) error {
 	switch x.config.BlockConsensusVersion(header.Number) {
 	case params.ConsensusEngineVersion2:
-		return nil
+		return ErrUnsupportedV2Seal
 	default: // Default "v1"
 		return x.EngineV1.VerifySeal(chain, header)
 	}
