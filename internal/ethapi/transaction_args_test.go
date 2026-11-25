@@ -29,7 +29,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
 	"github.com/XinFinOrg/XDPoSChain/XDCxlending"
 	"github.com/XinFinOrg/XDPoSChain/accounts"
-	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
@@ -515,10 +514,6 @@ func (b *backendMock) GetBlocksHashCache(blockNr uint64) []common.Hash {
 
 func (b *backendMock) GetEpochDuration() *big.Int {
 	return nil
-}
-
-func (b *backendMock) GetIPCClient() (bind.ContractBackend, error) {
-	return nil, nil
 }
 
 func (b *backendMock) GetMasternodesCap(uint64) map[common.Address]*big.Int {

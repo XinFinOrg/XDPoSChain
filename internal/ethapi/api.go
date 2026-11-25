@@ -1522,12 +1522,6 @@ func (api *BlockChainAPI) getSigners(ctx context.Context, block *types.Block, en
 }
 
 func (api *BlockChainAPI) rpcOutputBlockSigners(b *types.Block, ctx context.Context, masternodes []common.Address) ([]common.Address, error) {
-	_, err := api.b.GetIPCClient()
-	if err != nil {
-		log.Error("Fail to connect IPC client for block status", "error", err)
-		return []common.Address{}, err
-	}
-
 	engine, ok := api.b.Engine().(*XDPoS.XDPoS)
 	if !ok {
 		log.Error("Undefined XDPoS consensus engine")

@@ -71,8 +71,8 @@ func newCandidatesFixtureWith(t *testing.T, candidates []common.Address, caps []
 
 	backend := &EthAPIBackend{eth: &Ethereum{blockchain: chain, engine: engine}}
 	// What the RPCs used to depend on, and what a node started with --ipcdisable cannot offer.
-	_, err = backend.GetIPCClient()
-	require.Error(t, err, "the fixture must model a node without an IPC endpoint")
+	require.Empty(t, chain.IPCEndpoint, "the fixture must model a node without an IPC endpoint")
+	require.Nil(t, chain.Client, "the fixture must not carry an IPC client")
 
 	return &candidatesFixture{
 		chain:      chain,
