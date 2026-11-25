@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
@@ -918,4 +919,66 @@ func containsAPI(stackAPIs []rpc.API, api rpc.API) bool {
 		}
 	}
 	return false
+}
+
+func TestTrackDatabaseStates(t *testing.T) {
+	t.Run("rejects nil", func(t *testing.T) {
+		n, err := New(&Config{DataDir: t.TempDir()})
+		if err != nil {
+			t.Fatalf("can't create the node: %v", err)
+		}
+		defer n.Close()
+
+		if _, err := n.TrackDatabase(nil); err == nil {
+			t.Fatal("TrackDatabase accepted a nil database")
+		}
+	})
+
+	t.Run("accepts before start", func(t *testing.T) {
+		n, err := New(&Config{DataDir: t.TempDir()})
+		if err != nil {
+			t.Fatalf("can't create the node: %v", err)
+		}
+		db, err := n.TrackDatabase(rawdb.NewMemoryDatabase())
+		if err != nil {
+			n.Close()
+			t.Fatalf("TrackDatabase rejected a database before start: %v", err)
+		}
+		// Closing through the returned handle unregisters it from the node, so
+		// the shutdown below must not try to close it a second time.
+		if err := db.Close(); err != nil {
+			t.Fatalf("can't close the tracked database: %v", err)
+		}
+		if err := n.Close(); err != nil {
+			t.Fatalf("node shutdown after the tracked database closed: %v", err)
+		}
+	})
+
+	t.Run("rejects running", func(t *testing.T) {
+		n, err := New(&Config{DataDir: t.TempDir()})
+		if err != nil {
+			t.Fatalf("can't create the node: %v", err)
+		}
+		if err := n.Start(); err != nil {
+			t.Fatalf("can't start the node: %v", err)
+		}
+		defer n.Close()
+
+		if _, err := n.TrackDatabase(rawdb.NewMemoryDatabase()); !errors.Is(err, ErrNodeRunning) {
+			t.Fatalf("TrackDatabase on a running node = %v, want %v", err, ErrNodeRunning)
+		}
+	})
+
+	t.Run("rejects closed", func(t *testing.T) {
+		n, err := New(&Config{DataDir: t.TempDir()})
+		if err != nil {
+			t.Fatalf("can't create the node: %v", err)
+		}
+		if err := n.Close(); err != nil {
+			t.Fatalf("can't close the node: %v", err)
+		}
+		if _, err := n.TrackDatabase(rawdb.NewMemoryDatabase()); !errors.Is(err, ErrNodeStopped) {
+			t.Fatalf("TrackDatabase on a closed node = %v, want %v", err, ErrNodeStopped)
+		}
+	})
 }

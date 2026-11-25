@@ -100,7 +100,10 @@ func Test_getCancelFee(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not create new node: %v", err)
 	}
-	XDCx := XDCx.New(stack, &XDCx.DefaultConfig)
+	XDCx, err := XDCx.New(stack, &XDCx.DefaultConfig)
+	if err != nil {
+		t.Fatalf("could not create XDCx service: %v", err)
+	}
 	defer stack.Close()
 	db := rawdb.NewMemoryDatabase()
 	stateCache := tradingstate.NewDatabase(db)
