@@ -8284,3 +8284,40 @@ func TestTransferTracerReleasesRevertedIndexes(t *testing.T) {
 	require.Equal(t, uint(1), logs[1].Index, "the dropped indices are reused")
 	require.Equal(t, from, logs[1].Address, "the surviving log is the outer one")
 }
+
+// TestXDPoSOnlyRPCsRejectMissingXDPoSConfig pins the guards of the XDC-only
+// RPCs: a chain whose config has no XDPoS section must answer with an error
+// instead of dereferencing the missing config.
+func TestXDPoSOnlyRPCsRejectMissingXDPoSConfig(t *testing.T) {
+	t.Parallel()
+
+	backend := newBackendMock()
+	api := NewBlockChainAPI(backend, nil)
+	ctx := context.Background()
+
+	if _, err := api.GetCandidateStatus(ctx, common.Address{}, 1); !errors.Is(err, errXDPoSConfigMissing) {
+		t.Fatalf("GetCandidateStatus: have %v, want %v", err, errXDPoSConfigMissing)
+	}
+	if _, err := api.GetCandidates(ctx, 1); !errors.Is(err, errXDPoSConfigMissing) {
+		t.Fatalf("GetCandidates: have %v, want %v", err, errXDPoSConfigMissing)
+	}
+	if _, err := api.GetStakerROI(); !errors.Is(err, errXDPoSConfigMissing) {
+		t.Fatalf("GetStakerROI: have %v, want %v", err, errXDPoSConfigMissing)
+	}
+	if _, err := api.GetStakerROIMasternode(common.Address{}); !errors.Is(err, errXDPoSConfigMissing) {
+		t.Fatalf("GetStakerROIMasternode: have %v, want %v", err, errXDPoSConfigMissing)
+	}
+	if _, err := api.GetTokenStats(ctx, 1); !errors.Is(err, errXDPoSConfigMissing) {
+		t.Fatalf("GetTokenStats: have %v, want %v", err, errXDPoSConfigMissing)
+	}
+	if block, epoch := api.GetCheckpointFromEpoch(ctx, 2); block != 0 || epoch != 2 {
+		t.Fatalf("GetCheckpointFromEpoch: have (%d, %d), want (0, 2)", block, epoch)
+	}
+
+	// A config that names XDPoS keeps the helper usable: the guard must not
+	// reject it, and a non-latest epoch resolves against the configured length.
+	backend.config.XDPoS = &params.XDPoSConfig{Epoch: 900, Gap: 450}
+	if block, epoch := api.GetCheckpointFromEpoch(ctx, 2); block != 900 || epoch != 2 {
+		t.Fatalf("GetCheckpointFromEpoch with XDPoS config: have (%d, %d), want (900, 2)", block, epoch)
+	}
+}
