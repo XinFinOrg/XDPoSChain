@@ -277,6 +277,10 @@ type BlockChain struct {
 	calculatingBlock *lru.Cache[common.Hash, *CalculatedBlock] // Cache for processing blocks
 	downloadingBlock *lru.Cache[common.Hash, struct{}]         // Cache for downloading blocks (avoid duplication from fetcher)
 
+	// testHookBeforeCalculationRetire lets a test hold the handoff open before the
+	// calculation entry retires; nil in production.
+	testHookBeforeCalculationRetire func()
+
 	// future blocks are blocks added for later processing
 	futureBlocks *lru.Cache[common.Hash, *types.Block]
 
@@ -3556,7 +3560,7 @@ func (bc *BlockChain) PrepareBlock(block *types.Block) (err error) {
 		log.Debug("Stop prepare a block because the result cached", "number", block.NumberU64(), "hash", block.Hash(), "validator", block.Header().Validator)
 		return nil
 	}
-	if _, ok := bc.calculatingBlock.Get(block.HashNoValidator()); ok {
+	if calculatedBlock, ok := bc.calculatingBlock.Get(block.HashNoValidator()); ok && !calculatedBlock.done.Load() {
 		log.Debug("Stop prepare a block because inserting", "number", block.NumberU64(), "hash", block.Hash(), "validator", block.Header().Validator)
 		return nil
 	}
@@ -3569,13 +3573,10 @@ func (bc *BlockChain) PrepareBlock(block *types.Block) (err error) {
 	// block of it fails, and a caller that only returned the error would leave subscribers
 	// following the head on a head the chain has already left. Same contract as the insertion
 	// paths, and empty for every other path, the rebuild being the only source of them.
-	result, prepareEvents, prepareLogs, err := bc.getResultBlock(block, false)
+	_, prepareEvents, prepareLogs, err := bc.getResultBlock(block, false, true)
 	bc.PostChainEvents(prepareEvents, prepareLogs)
 	switch err {
 	case nil:
-		// Stored under the same key getResultBlock and insertBlock look a prepared result up
-		// with, so that the precomputation this function exists for is actually reused.
-		bc.resultProcess.Add(block.HashNoValidator(), result)
 		return nil
 	case ErrKnownBlock:
 		// Benign: the block (and its state) is already on disk, so there is nothing to
@@ -3624,7 +3625,11 @@ func stampedResultWithBlock(result *ResultProcessBlock, block *types.Block) *Res
 	return &stamped
 }
 
-func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*ResultProcessBlock, []interface{}, []*types.Log, error) {
+// getResultBlock computes a block and records the calculation in calculatingBlock while it
+// runs. publishResult caches a successful result in resultProcess before that entry retires,
+// so a preparation racing the handoff finds one of the two. Only PrepareBlock passes true:
+// an insertion drops the cached result and must not hand its state to a second insertion.
+func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool, publishResult bool) (*ResultProcessBlock, []interface{}, []*types.Log, error) {
 	// The events and logs of the pruned ancestors this call had to re-import to make the
 	// block calculable. They are handed back to the caller rather than dropped: the
 	// segment can promote one of those stored ancestors to the head before a later block
@@ -3645,7 +3650,20 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 		}
 	}
 	calculatedBlock = &CalculatedBlock{block: block}
-	bc.calculatingBlock.Add(block.HashNoValidator(), calculatedBlock)
+	key := block.HashNoValidator()
+	bc.calculatingBlock.Add(key, calculatedBlock)
+	// The entry belongs to this calculation: a newer calculation may have replaced it under
+	// the same key, and that one is not this call's to drop. The mark goes first, so a reader
+	// racing the removal cannot take the entry for a calculation still in flight.
+	defer func() {
+		if bc.testHookBeforeCalculationRetire != nil {
+			bc.testHookBeforeCalculationRetire()
+		}
+		calculatedBlock.done.Store(true)
+		bc.calculatingBlock.RemoveIf(key, func(entry *CalculatedBlock) bool {
+			return entry == calculatedBlock
+		})
+	}()
 	// Start the parallel header verifier
 	// If the chain is terminating, stop processing blocks
 	if bc.insertStopped() {
@@ -3764,7 +3782,11 @@ func (bc *BlockChain) getResultBlock(block *types.Block, verifiedM2 bool) (*Resu
 	proctime := time.Since(bstart)
 	log.Debug("Calculate new block", "number", block.Number(), "hash", block.Hash(), "uncles", len(block.Uncles()),
 		"txs", len(block.Transactions()), "gas", block.GasUsed(), "elapsed", common.PrettyDuration(time.Since(bstart)), "process", process)
-	return &ResultProcessBlock{receipts: receipts, logs: logs, state: statedb, tradingState: tradingState, lendingState: lendingState, proctime: proctime, usedGas: usedGas}, nestedEvents, nestedLogs, nil
+	result := &ResultProcessBlock{receipts: receipts, logs: logs, state: statedb, tradingState: tradingState, lendingState: lendingState, proctime: proctime, usedGas: usedGas}
+	if publishResult {
+		bc.resultProcess.Add(key, result)
+	}
+	return result, nestedEvents, nestedLogs, nil
 }
 
 // UpdateBlocksHashCache update BlocksHashCache by block number
@@ -3903,7 +3925,7 @@ func (bc *BlockChain) insertBlock(block *types.Block) ([]interface{}, []*types.L
 			return events, coalescedLogs, nil
 		}
 	}
-	result, blockEvents, blockLogs, err := bc.getResultBlock(block, true)
+	result, blockEvents, blockLogs, err := bc.getResultBlock(block, true, false)
 	// The events of the pruned ancestors that had to be re-imported belong to this call too,
 	// and are posted on the failing path as well: a segment that promoted a stored ancestor
 	// to the head before failing has moved the head.
