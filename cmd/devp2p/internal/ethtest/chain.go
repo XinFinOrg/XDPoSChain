@@ -109,7 +109,10 @@ func isLegacyFixtureEncodingError(err error) bool {
 		return false
 	}
 	msg := err.Error()
-	return strings.Contains(msg, "too few elements for types.Header")
+	// Header.DecodeRLP decodes the legacy layout through the types.legacyHeader
+	// alias, whose name the RLP decoder reports.
+	return strings.Contains(msg, "too few elements for types.Header") ||
+		strings.Contains(msg, "too few elements for types.legacyHeader")
 }
 
 func (c *Chain) Head() *types.Block {

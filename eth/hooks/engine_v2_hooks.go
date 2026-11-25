@@ -431,6 +431,13 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		log.Debug("Time Calculated HookReward ", "block", header.Number.Uint64(), "time", common.PrettyDuration(time.Since(start)))
 		return rewardsMap, nil
 	}
+
+	// A subnet computes its penalties at the gap block with its own rules. It
+	// shares the reward hook: with the tiered reward forks off, which the subnet
+	// config check enforces, that pays the legacy masternode reward.
+	if chainConfig.IsSubnet() {
+		adaptor.EngineV2.HookPenalty = newSubnetPenaltyHook(adaptor)
+	}
 }
 
 // GetSigningTxCount counts, per beneficiary, how many signing txs each address
@@ -509,6 +516,9 @@ func GetSigningTxCount(c *XDPoS.XDPoS, chain consensus.ChainReader, header *type
 				// (two epochs back). Its own historical masternode/standby
 				// membership is read here, from h - not from the current tip.
 				startBlockNumber = h.Number.Uint64() + 1
+				// On a subnet even the genesis is a v2 block, so this reads the
+				// Validators of the header, as the other subnet clients do: the
+				// genesis header lists none and the genesis epoch pays nothing.
 				nodesToKeep[MasterNodeBeneficiary] = c.GetMasternodesFromCheckpointHeader(h)
 				// in reward upgrade, add protector and observer nodes
 				if chain.Config().IsTIPTieredReward(header.Number) {

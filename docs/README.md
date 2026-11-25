@@ -2,6 +2,7 @@
 
 - [JSONRPC API](xdc/jsonrpc.md)
 - [Validator Contract](xdc/validator.md)
+- [XDC subnets](xdc/subnet.md)
 - [Development environment](develop.md)
 - [Solidity](solidity.md)
 - [Upgrade notes](upgrade.md)

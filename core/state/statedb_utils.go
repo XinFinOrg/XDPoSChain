@@ -89,8 +89,34 @@ var (
 	}
 )
 
+// slotSubnetValidatorCandidates is the storage slot of the candidates array in
+// the subnet validator contract (XDC-Subnet XDCValidator.sol, deployed at the
+// same address). That contract drops KYCString and moves owners and candidates
+// one slot up; validatorsState and voters keep their slots, so the cap, owner
+// and voter reads below serve both contracts.
+const slotSubnetValidatorCandidates = 7
+
 func (s *StateDB) GetCandidates() []common.Address {
-	slot := slotValidatorMapping["candidates"]
+	return s.getCandidatesAt(slotValidatorMapping["candidates"])
+}
+
+// GetSubnetCandidates returns the candidates of the subnet validator contract.
+func (s *StateDB) GetSubnetCandidates() []common.Address {
+	return s.getCandidatesAt(slotSubnetValidatorCandidates)
+}
+
+// GetCandidatesFor returns the candidates of the validator contract the chain
+// runs: the subnet contract for a subnet, the XDPoS one otherwise.
+func (s *StateDB) GetCandidatesFor(subnet bool) []common.Address {
+	if subnet {
+		return s.GetSubnetCandidates()
+	}
+	return s.GetCandidates()
+}
+
+// getCandidatesAt reads the non-zero entries of the candidates array stored at
+// slot of the validator contract.
+func (s *StateDB) getCandidatesAt(slot uint64) []common.Address {
 	slotHash := common.BigToHash(new(big.Int).SetUint64(slot))
 	arrLength := s.GetState(common.MasternodeVotingSMCBinary, slotHash)
 	count := arrLength.Big().Uint64()

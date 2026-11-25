@@ -21,6 +21,17 @@ import (
 var secp256k1halfN = new(big.Int).Rsh(crypto.S256().Params().N, 1)
 
 func sigHash(header *types.Header) (hash common.Hash) {
+	if header.Subnet {
+		// The encoding only fails on a base fee or a partial address, which a
+		// subnet header never carries: decoding and Prepare both rule them out.
+		// Should it happen, the empty hash fails the seal check of the header.
+		hash, err := header.SubnetSealHash()
+		if err != nil {
+			log.Error("[sigHash] cannot encode subnet header", "number", header.Number, "err", err)
+			return common.Hash{}
+		}
+		return hash
+	}
 	hasher := keccak.NewLegacyKeccak256()
 
 	enc := []interface{}{
@@ -437,6 +448,9 @@ func (x *XDPoS_v2) binarySearchBlockByEpochNumber(chain consensus.ChainReader, t
 }
 
 func (x *XDPoS_v2) GetBlockByEpochNumber(chain consensus.ChainReader, targetEpochNum uint64) (*types.BlockInfo, error) {
+	if x.config.IsSubnet {
+		return x.subnetGetBlockByEpochNumber(chain, targetEpochNum)
+	}
 	currentHeader := chain.CurrentHeader()
 	if currentHeader == nil {
 		return nil, errors.New("current header is nil")
