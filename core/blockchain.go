@@ -153,6 +153,20 @@ const (
 	maxTimeFutureBlocks = 30
 	TriesInMemory       = 1024
 
+	// prunedAncestorsImportChunk is how many blocks reimportPrunedAncestors hands to
+	// insertChain at a time.
+	prunedAncestorsImportChunk = 2048
+	// downloadingBlockLimit must hold every batch insertChain can have marked at the same
+	// time: the one it is handed, and the one reimport chunk it imports for that batch
+	// without releasing the chain mutex. Two chunks cover the downloader, which hands over
+	// at most maxResultsProcess (2048, eth/downloader). A batch larger than that loses the
+	// marks of its earliest blocks once it also triggers a rebuild - the admin and CLI
+	// importers both hand over 2500 (importBatchSize in cmd/utils, a literal in
+	// eth/api_admin) - which costs an execution but never a second write: the fetcher's
+	// write needs the chain mutex the batch holds.
+	// TestInsertBlockSkipsABlockWhileTheReimportChunkRuns pins the two-chunk case.
+	downloadingBlockLimit = 2 * prunedAncestorsImportChunk
+
 	// BlockChainVersion ensures that an incompatible database forces a resync from scratch.
 	//
 	// Changelog:
@@ -518,7 +532,7 @@ func newBlockChain(db ethdb.Database, cacheConfig *CacheConfig, engine consensus
 		futureBlocks:     lru.NewCache[common.Hash, *types.Block](maxFutureBlocks),
 		resultProcess:    lru.NewCache[common.Hash, *ResultProcessBlock](blockCacheLimit),
 		calculatingBlock: lru.NewCache[common.Hash, *CalculatedBlock](blockCacheLimit),
-		downloadingBlock: lru.NewCache[common.Hash, struct{}](blockCacheLimit),
+		downloadingBlock: lru.NewCache[common.Hash, struct{}](downloadingBlockLimit),
 		engine:           engine,
 		vmConfig:         vmConfig,
 		logger:           vmConfig.Tracer,
@@ -3492,7 +3506,7 @@ func (bc *BlockChain) reimportPrunedAncestors(from *types.Header, localTd, exter
 		// If memory use grew too large, import and continue. Sadly we need to discard
 		// all raised events and logs from notifications since we're too heavy on the
 		// memory here.
-		if len(blocks) >= 2048 || memory > 64*1024*1024 {
+		if len(blocks) >= prunedAncestorsImportChunk || memory > 64*1024*1024 {
 			log.Info("Importing heavy sidechain segment", "blocks", len(blocks), "start", blocks[0].NumberU64(), "end", block.NumberU64())
 			// insertChain also reports a block that fails verification or body
 			// validation in the middle of the segment: abort the sidechain import
