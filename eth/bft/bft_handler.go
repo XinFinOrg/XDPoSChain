@@ -100,6 +100,8 @@ func isNearBlockNumber(number *big.Int, head, dist uint64) bool {
 // for Gap <= Epoch-5 (every built-in network is 900/450); a larger Gap only
 // drops votes the round check already discards.
 func (b *Bfter) isNearGapNumber(gap, head uint64) bool {
+	// Faker chains skip CheckSchedule and can reach here with Epoch 0, so leave
+	// the window open
 	if b.epoch == 0 {
 		return true
 	}
@@ -188,14 +190,14 @@ func (b *Bfter) Timeout(peer string, timeout *types.Timeout) error {
 	return nil
 }
 func (b *Bfter) SyncInfo(peer string, syncInfo *types.SyncInfo) error {
-	if syncInfo == nil || syncInfo.HighestQuorumCert == nil {
-		log.Warn("[SyncInfo] Received nil SyncInfo or missing QC", "syncInfo", syncInfo)
+	// The wire decoder rejects a QC without block info, so this only catches an
+	// internally built one; the log line below would dereference it.
+	if syncInfo == nil || syncInfo.HighestQuorumCert == nil || syncInfo.HighestQuorumCert.ProposedBlockInfo == nil {
+		log.Warn("[SyncInfo] Received nil SyncInfo or a QC without block info", "syncInfo", syncInfo)
 		return nil
 	}
 	log.Debug("[SyncInfo] Received SyncInfo", "syncInfo", syncInfo, "syncInfoHash", syncInfo.Hash().Hex())
-	if syncInfo.HighestQuorumCert != nil {
-		log.Debug("[SyncInfo] Received SyncInfo", "qcRound", syncInfo.HighestQuorumCert.ProposedBlockInfo.Round, "qcBlocknum", syncInfo.HighestQuorumCert.ProposedBlockInfo.Number, "qcBlockhash", syncInfo.HighestQuorumCert.ProposedBlockInfo.Hash.Hex())
-	}
+	log.Debug("[SyncInfo] Received SyncInfo", "qcRound", syncInfo.HighestQuorumCert.ProposedBlockInfo.Round, "qcBlocknum", syncInfo.HighestQuorumCert.ProposedBlockInfo.Number, "qcBlockhash", syncInfo.HighestQuorumCert.ProposedBlockInfo.Hash.Hex())
 	if syncInfo.HighestTimeoutCert != nil {
 		log.Debug("[SyncInfo] Received SyncInfo", "tcRound", syncInfo.HighestTimeoutCert.Round)
 	}

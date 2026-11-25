@@ -542,3 +542,15 @@ func TestSyncInfoRejectsOversizedBlockNumber(t *testing.T) {
 		t.Fatalf("verifySyncInfo called %d times for a 2^64+1350 QC block number, want 0", n)
 	}
 }
+
+// TestSyncInfoToleratesMissingProposedBlockInfo pins the guard at its use site:
+// the wire decoder rejects such a SyncInfo, so only a direct call reaches it, and
+// the first log line would dereference the missing block info.
+func TestSyncInfoToleratesMissingProposedBlockInfo(t *testing.T) {
+	tester := newTester()
+	defer tester.bfter.Stop()
+
+	if err := tester.bfter.SyncInfo(peerID, &types.SyncInfo{HighestQuorumCert: &types.QuorumCert{}}); err != nil {
+		t.Fatal(err)
+	}
+}

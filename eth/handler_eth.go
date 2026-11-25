@@ -278,6 +278,11 @@ func (pm *handler) handleTransactions(peer *ethproto.Peer, txs []*types.Transact
 
 // handleVote passes a vote to the BFT handler unless it is already known.
 func (pm *handler) handleVote(peer string, vote *types.Vote, hash common.Hash) {
+	// The wire decoder rejects a vote without ProposedBlockInfo, so this only
+	// catches an internally built one; the log line below would dereference it.
+	if vote == nil || vote.ProposedBlockInfo == nil || vote.ProposedBlockInfo.Number == nil {
+		return
+	}
 	if pm.knownVotes.Contains(hash) {
 		log.Trace("Discarded vote, known vote", "vote hash", hash, "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round)
 		return

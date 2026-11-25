@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
@@ -166,4 +167,26 @@ func TestVerifyVoteMessage_RejectsNonGapNumber(t *testing.T) {
 
 	assert.False(t, verified)
 	assert.NoError(t, err, "a non-gap number is a drop, not a local failure")
+}
+
+// GapBlockNumber falls back to 0 at the chain start, so the gate must allow it
+func TestVerifyVoteMessage_AcceptsChainStartGapNumber(t *testing.T) {
+	engine := &XDPoS_v2{
+		config:       &params.XDPoSConfig{Epoch: 900, Gap: 450},
+		currentRound: 1,
+	}
+	vote := &types.Vote{
+		ProposedBlockInfo: &types.BlockInfo{
+			Hash:   common.StringToHash("some-block"),
+			Round:  1,
+			Number: big.NewInt(1350),
+		},
+		Signature: make([]byte, 65),
+		GapNumber: 0,
+	}
+
+	verified, err := engine.VerifyVoteMessage(NewMockChainReader(), vote)
+
+	assert.False(t, verified)
+	assert.ErrorIs(t, err, consensus.ErrMissingCanonicalGapHeader)
 }
