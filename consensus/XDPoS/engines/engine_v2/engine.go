@@ -725,7 +725,10 @@ func (x *XDPoS_v2) VerifyHeaders(chain consensus.ChainReader, headers []*types.H
 /*
 	SyncInfo workflow
 */
-// Verify syncInfo and trigger process QC or TC if successful
+// VerifySyncInfoMessage verifies the QC and, when present, the TC of a SyncInfo.
+// An out-of-window TC is removed from the message instead of failing the
+// verification, so the QC is still processed; a true result therefore means the
+// whole message can be relayed.
 func (x *XDPoS_v2) VerifySyncInfoMessage(chain consensus.ChainReader, syncInfo *types.SyncInfo) (bool, error) {
 	/*
 		1. Check QC and TC against highest QC TC. Skip if none of them need to be updated
@@ -749,6 +752,18 @@ func (x *XDPoS_v2) VerifySyncInfoMessage(chain consensus.ChainReader, syncInfo *
 	if !isBlankTC(syncInfo.HighestTimeoutCert) {
 		err = x.verifyTC(chain, syncInfo.HighestTimeoutCert)
 		if err != nil {
+			// An out-of-window gap number disqualifies the certificate, not the
+			// message: the QC above already verified and must still be processed.
+			// The certificate is removed from the message, so it is neither
+			// adopted nor relayed. Callers broadcast the message before
+			// SyncInfoHandler runs, and the TC round is part of SyncInfo.Hash(),
+			// so leaving it attached would relay an unauthenticated certificate
+			// and give every forged round its own relay.
+			if errors.Is(err, errGapNumberOutOfWindow) {
+				log.Debug("[VerifySyncInfoMessage] Ignored TC, gap number out of window, processing the QC", "gapNum", syncInfo.HighestTimeoutCert.GapNumber, "round", syncInfo.HighestTimeoutCert.Round)
+				syncInfo.HighestTimeoutCert = &types.TimeoutCert{}
+				return true, nil
+			}
 			log.Warn("[VerifySyncInfoMessage] SyncInfo message verification failed due to TC", "gapNum", syncInfo.HighestTimeoutCert.GapNumber, "round", syncInfo.HighestTimeoutCert.Round, "error", err)
 			return false, err
 		}
@@ -769,6 +784,22 @@ func (x *XDPoS_v2) SyncInfoHandler(chain consensus.ChainReader, syncInfo *types.
 	err := x.processQC(chain, syncInfo.HighestQuorumCert)
 	if err != nil {
 		return err
+	}
+	// VerifySyncInfoMessage authenticates the TC it lets through and removes the
+	// one the window rejects, so this is a second check for the current caller.
+	// Keep it at the adoption point: processTC advances the round, and that must
+	// not depend on a judgement made outside the lock, where the head can move
+	// between the two calls.
+	if tc := syncInfo.HighestTimeoutCert; tc != nil && !isBlankTC(tc) {
+		if err := x.verifyTC(chain, tc); err != nil {
+			if errors.Is(err, errGapNumberOutOfWindow) {
+				log.Debug("[SyncInfoHandler] Skipped TC, gap number out of window", "gapNum", tc.GapNumber, "round", tc.Round)
+				return nil
+			}
+			// Any other failure means the certificate is not authentic. The QC
+			// above is already processed, so report the error without undoing it.
+			return err
+		}
 	}
 	return x.processTC(chain, syncInfo.HighestTimeoutCert)
 }

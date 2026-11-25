@@ -155,6 +155,38 @@ func isBlankTC(timeoutCert *types.TimeoutCert) bool {
 	return timeoutCert != nil && timeoutCert.Round == types.Round(0) && len(timeoutCert.Signatures) == 0
 }
 
+// errGapNumberOutOfWindow marks a TC whose gap number is not a gap block within
+// reach of the head. VerifySyncInfoMessage drops such a certificate from the
+// message instead of failing the verification, so the QC in the same SyncInfo is
+// still processed; SyncInfoHandler skips it for the same reason.
+var errGapNumberOutOfWindow = errors.New("timeout certificate gap number out of window")
+
+// tcGapNumberInWindow bounds the height verifyTC is allowed to resolve through
+// getSnapshot. A TC gap is produced by GapBlockNumber, the same way a vote gap
+// is, so the certificate is held to the vote path's rules: VerifyVoteMessage
+// admits zero (the chain-start fallback) and gap blocks of this schedule, and
+// the height must sit within epoch*3 of the head, the window Bfter.Vote applies
+// to votes and Bfter.Timeout to timeout messages. The head is unavailable on
+// reader stubs without CurrentHeader, where only the schedule judgement runs.
+func (x *XDPoS_v2) tcGapNumberInWindow(chain consensus.ChainReader, gap uint64) bool {
+	if _, ok := x.config.GapTrigger(); !ok {
+		return true
+	}
+	if gap != 0 && !x.config.IsGapBlock(gap) {
+		return false
+	}
+	header := chain.CurrentHeader()
+	if header == nil || header.Number == nil || !header.Number.IsUint64() {
+		return true
+	}
+	head := header.Number.Uint64()
+	window := x.config.Epoch * 3
+	if gap >= head {
+		return gap-head <= window
+	}
+	return head-gap <= window
+}
+
 func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.TimeoutCert) error {
 	/*
 		1. Get epoch master node list by gapNumber
@@ -167,6 +199,12 @@ func (x *XDPoS_v2) verifyTC(chain consensus.ChainReader, timeoutCert *types.Time
 	if timeoutCert == nil || timeoutCert.Signatures == nil {
 		log.Warn("[verifyTC] TC or TC signatures is Nil")
 		return utils.ErrInvalidTC
+	}
+	// The gap number is peer-controlled and the snapshot lookup below reads a
+	// canonical header for it, so bound it before that read.
+	if !x.tcGapNumberInWindow(chain, timeoutCert.GapNumber) {
+		log.Debug("[verifyTC] Disqualified TC, gap number is not a gap block within reach of the head", "tcGapNumber", timeoutCert.GapNumber, "tcRound", timeoutCert.Round)
+		return errGapNumberOutOfWindow
 	}
 
 	snap, err := x.getSnapshot(chain, timeoutCert.GapNumber, true)
