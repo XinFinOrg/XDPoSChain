@@ -64,7 +64,7 @@ func newMuxTracer(ctx *tracers.Context, cfg json.RawMessage, chainConfig *params
 			OnExit:          t.OnExit,
 			OnOpcode:        t.OnOpcode,
 			OnFault:         t.OnFault,
-			OnGasChange:     t.OnGasChange,
+			OnGasChangeV2:   t.OnGasChangeV2,
 			OnBalanceChange: t.OnBalanceChange,
 			OnNonceChange:   t.OnNonceChange,
 			OnCodeChange:    t.OnCodeChange,
@@ -92,10 +92,12 @@ func (t *muxTracer) OnFault(pc uint64, op byte, gas, cost uint64, scope tracing.
 	}
 }
 
-func (t *muxTracer) OnGasChange(old, new uint64, reason tracing.GasChangeReason) {
+func (t *muxTracer) OnGasChangeV2(old, new tracing.Gas, reason tracing.GasChangeReason) {
 	for _, t := range t.tracers {
-		if t.OnGasChange != nil {
-			t.OnGasChange(old, new, reason)
+		if t.OnGasChangeV2 != nil {
+			t.OnGasChangeV2(old, new, reason)
+		} else if t.OnGasChange != nil {
+			t.OnGasChange(old.Regular, new.Regular, reason)
 		}
 	}
 }

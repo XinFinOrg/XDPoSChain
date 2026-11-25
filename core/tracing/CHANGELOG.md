@@ -4,6 +4,19 @@ All notable changes to the tracing interface will be documented in this file.
 
 ## Unreleased
 
+### Added methods
+
+- `OnGasChangeV2(old, new Gas, reason GasChangeReason)`: this hook is called when any gas dimension changes. It is a successor to `OnGasChange` that exposes the EIP-8037 state-access dimension alongside the regular one: the dimension that did not change is passed through unchanged, so consumers always see the complete vector, and `Gas.State` is always zero before Amsterdam. Register only one of the pair; when both are set, only V2 is invoked.
+
+### New types
+
+- `Gas` is the two-dimensional gas vector introduced by EIP-8037, pairing ordinary execution gas with the state-access dimension.
+- `GasChangeHookV2` is the hook signature of `OnGasChangeV2`.
+
+### Modified types
+
+- `Hooks` gains the `OnGasChangeV2` field. Within the gas hook pair the V2 hook takes precedence; the V1 hook is invoked only when no V2 hook is registered.
+
 ## [v1.15.0](https://github.com/ethereum/go-ethereum/releases/tag/v1.15.0)
 
 The tracing interface has been extended with backwards-compatible changes to support more use-cases and simplify tracer code. The most notable change is a state journaling library which emits reverse events when a call is reverted.

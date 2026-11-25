@@ -52,13 +52,13 @@ func TestGasBudget(t *testing.T) {
 	if budget.CanAfford(GasCosts{RegularGas: 101}) {
 		t.Error("CanAfford: uncovered cost accepted")
 	}
-	if prior, ok := budget.Charge(GasCosts{RegularGas: 100}); !ok || prior != 100 || budget.RegularGas != 0 {
-		t.Errorf("Charge exact: prior %d, ok %v, left %d", prior, ok, budget.RegularGas)
+	if prior, ok := budget.Charge(GasCosts{RegularGas: 100}); !ok || prior.RegularGas != 100 || budget.RegularGas != 0 {
+		t.Errorf("Charge exact: prior %v, ok %v, left %d", prior, ok, budget.RegularGas)
 	}
 
 	insufficient := NewGasBudget(99)
-	if prior, ok := insufficient.Charge(GasCosts{RegularGas: 100}); ok || prior != 99 || insufficient.RegularGas != 99 {
-		t.Errorf("Charge short: prior %d, ok %v, left %d", prior, ok, insufficient.RegularGas)
+	if prior, ok := insufficient.Charge(GasCosts{RegularGas: 100}); ok || prior.RegularGas != 99 || insufficient.RegularGas != 99 {
+		t.Errorf("Charge short: prior %v, ok %v, left %d", prior, ok, insufficient.RegularGas)
 	}
 	withState := GasBudget{RegularGas: 1, StateGas: 1000}
 	if _, ok := withState.Charge(GasCosts{RegularGas: 2}); ok {
@@ -66,11 +66,11 @@ func TestGasBudget(t *testing.T) {
 	}
 
 	refunding := NewGasBudget(10)
-	if prior, changed := refunding.Refund(GasBudget{}); changed || prior != 10 || refunding.RegularGas != 10 {
-		t.Errorf("Refund zero: prior %d, changed %v, left %d", prior, changed, refunding.RegularGas)
+	if prior, changed := refunding.Refund(GasBudget{}); changed || prior.RegularGas != 10 || refunding.RegularGas != 10 {
+		t.Errorf("Refund zero: prior %v, changed %v, left %d", prior, changed, refunding.RegularGas)
 	}
-	if prior, changed := refunding.Refund(NewGasBudget(5)); !changed || prior != 10 || refunding.RegularGas != 15 {
-		t.Errorf("Refund: prior %d, changed %v, left %d", prior, changed, refunding.RegularGas)
+	if prior, changed := refunding.Refund(NewGasBudget(5)); !changed || prior.RegularGas != 10 || refunding.RegularGas != 15 {
+		t.Errorf("Refund: prior %v, changed %v, left %d", prior, changed, refunding.RegularGas)
 	}
 
 	start := GasBudget{RegularGas: 100, StateGas: 50}
@@ -93,6 +93,32 @@ func TestGasBudget(t *testing.T) {
 	}
 	if got := (GasBudget{RegularGas: 7, StateGas: 5}).String(); got != "<7,5>" {
 		t.Errorf("String: have %q, want %q", got, "<7,5>")
+	}
+
+	for _, tc := range []struct {
+		name   string
+		budget GasBudget
+		want   bool
+	}{
+		{"zero", GasBudget{}, true},
+		{"regular only", GasBudget{RegularGas: 3}, false},
+		{"state only", GasBudget{StateGas: 5}, false},
+		{"both", GasBudget{RegularGas: 3, StateGas: 5}, false},
+	} {
+		if got := tc.budget.IsZero(); got != tc.want {
+			t.Errorf("IsZero %s: have %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestGasBudgetAsTracing(t *testing.T) {
+	budget := GasBudget{RegularGas: 7, StateGas: 5}
+	if got := budget.AsTracing(); got.Regular != 7 || got.State != 5 {
+		t.Errorf("AsTracing: have %+v, want Regular 7, State 5", got)
+	}
+	var empty GasBudget
+	if got := empty.AsTracing(); got.Regular != 0 || got.State != 0 {
+		t.Errorf("zero AsTracing: have %+v, want empty", got)
 	}
 }
 

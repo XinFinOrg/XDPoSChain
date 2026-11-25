@@ -16,7 +16,11 @@
 
 package vm
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
+)
 
 type GasCosts struct {
 	RegularGas uint64
@@ -71,20 +75,30 @@ func (g GasBudget) CanAfford(cost GasCosts) bool {
 }
 
 // Charge deducts the given cost from the budget. It returns the pre-charge
-// gas value and false if the budget cannot cover the cost.
-func (g *GasBudget) Charge(cost GasCosts) (uint64, bool) {
-	prior := g.RegularGas
-	if prior < cost.RegularGas {
+// budget and false if the budget cannot cover the cost.
+func (g *GasBudget) Charge(cost GasCosts) (GasBudget, bool) {
+	prior := *g
+	if g.RegularGas < cost.RegularGas {
 		return prior, false
 	}
 	g.RegularGas -= cost.RegularGas
 	return prior, true
 }
 
-// Refund adds the given budget back. It returns the pre-refund gas value and
+// Refund adds the given budget back. It returns the pre-refund budget and
 // whether the budget was actually changed.
-func (g *GasBudget) Refund(other GasBudget) (uint64, bool) {
-	prior := g.RegularGas
+func (g *GasBudget) Refund(other GasBudget) (GasBudget, bool) {
+	prior := *g
 	g.RegularGas += other.RegularGas
-	return prior, g.RegularGas != prior
+	return prior, g.RegularGas != prior.RegularGas
+}
+
+// IsZero returns an indicator if the gas budget has been exhausted.
+func (g *GasBudget) IsZero() bool {
+	return g.RegularGas == 0 && g.StateGas == 0
+}
+
+// AsTracing converts the budget into the tracing-facing gas vector.
+func (g GasBudget) AsTracing() tracing.Gas {
+	return tracing.Gas{Regular: g.RegularGas, State: g.StateGas}
 }
