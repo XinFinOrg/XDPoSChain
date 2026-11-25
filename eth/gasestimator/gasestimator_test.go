@@ -18,6 +18,8 @@ package gasestimator
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -50,8 +52,13 @@ func TestEstimateCapsHiAtMaxTxGasOnOsaka(t *testing.T) {
 	from := common.HexToAddress("0x1001")
 	to := common.HexToAddress("0x1002")
 
+	// Amsterdam replaces the EIP-7825 cap with the EIP-8037 total cap, so pin
+	// the Osaka-only rules this test is about.
+	osaka := params.MergedTestChainConfig.Clone()
+	osaka.AmsterdamBlock = nil
+
 	genesis := &core.Genesis{
-		Config: params.MergedTestChainConfig,
+		Config: osaka,
 		Alloc: types.GenesisAlloc{
 			from: {Balance: big.NewInt(params.Ether)},
 		},
@@ -68,7 +75,7 @@ func TestEstimateCapsHiAtMaxTxGasOnOsaka(t *testing.T) {
 	header.GasLimit = params.MaxTxGas + 100000
 
 	opts := &Options{
-		Config: params.MergedTestChainConfig,
+		Config: osaka,
 		Chain:  &testChainContext{engine: ethash.NewFaker()},
 		Header: header,
 		State:  stateDB,
@@ -159,6 +166,143 @@ func TestEstimateHonoursBaseGasCap(t *testing.T) {
 			}
 			if estimate != params.TxGas {
 				t.Fatalf("estimate = %d, want %d", estimate, params.TxGas)
+			}
+		})
+	}
+}
+
+// TestEstimateGasCapAcrossAmsterdam checks that Amsterdam lifts the EIP-7825
+// cap on the initial high bound. The loop contract below never halts, so the
+// error reports the bound the estimator started from: the EIP-7825 cap before
+// Amsterdam, the caller's own gas limit after it.
+func TestEstimateGasCapAcrossAmsterdam(t *testing.T) {
+	t.Parallel()
+
+	var (
+		from = common.HexToAddress("0x1001")
+		to   = common.HexToAddress("0x1002")
+		loop = []byte{0x5b, 0x60, 0x00, 0x56} // JUMPDEST PUSH1 0x00 JUMP
+		gas  = params.MaxTxGas + 100000
+	)
+	osaka := params.MergedTestChainConfig.Clone()
+	osaka.AmsterdamBlock = nil
+	amsterdam := params.MergedTestChainConfig.Clone()
+
+	for _, tt := range []struct {
+		name   string
+		config *params.ChainConfig
+		want   string
+	}{
+		{"osaka", osaka, fmt.Sprintf("gas required exceeds allowance (%d)", params.MaxTxGas)},
+		{"amsterdam", amsterdam, fmt.Sprintf("gas required exceeds allowance (%d)", gas)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			genesis := &core.Genesis{
+				Config: tt.config,
+				Alloc: types.GenesisAlloc{
+					from: {Balance: big.NewInt(params.Ether)},
+					to:   {Code: loop},
+				},
+			}
+			db := rawdb.NewMemoryDatabase()
+			block := genesis.MustCommit(db)
+
+			stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+			if err != nil {
+				t.Fatalf("failed to create state db: %v", err)
+			}
+			header := types.CopyHeader(block.Header())
+			header.GasLimit = gas
+
+			msg := &core.Message{
+				From:      from,
+				To:        &to,
+				GasLimit:  gas,
+				GasPrice:  new(big.Int),
+				GasFeeCap: new(big.Int),
+				GasTipCap: new(big.Int),
+				Value:     new(big.Int),
+			}
+			opts := &Options{
+				Config: tt.config,
+				Chain:  &testChainContext{engine: ethash.NewFaker()},
+				Header: header,
+				State:  stateDB,
+			}
+			_, _, err = Estimate(context.Background(), msg, opts, 0)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+// TestEstimateAboveTotalCap checks that a gas limit above the EIP-8037 total cap
+// is still estimated when the transaction checks are skipped, as eth_estimateGas
+// does, while the same limit is rejected when the checks run. Amsterdam must not
+// clamp the initial high bound to the total cap, otherwise the checks-enabled
+// case would silently succeed.
+func TestEstimateAboveTotalCap(t *testing.T) {
+	t.Parallel()
+
+	var (
+		from = common.HexToAddress("0x1001")
+		to   = common.HexToAddress("0x1002")
+		gas  = params.MaxTxTotalGas + 1
+	)
+	amsterdam := params.MergedTestChainConfig.Clone()
+
+	for _, tt := range []struct {
+		name    string
+		skip    bool
+		wantErr bool
+	}{
+		{"checks-skipped", true, false},
+		{"checks-enabled", false, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			genesis := &core.Genesis{
+				Config: amsterdam,
+				Alloc:  types.GenesisAlloc{from: {Balance: big.NewInt(params.Ether)}},
+			}
+			db := rawdb.NewMemoryDatabase()
+			block := genesis.MustCommit(db)
+
+			stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+			if err != nil {
+				t.Fatalf("failed to create state db: %v", err)
+			}
+			header := types.CopyHeader(block.Header())
+			header.GasLimit = 8_000_000
+
+			msg := &core.Message{
+				From:                  from,
+				To:                    &to,
+				GasLimit:              gas,
+				GasPrice:              new(big.Int),
+				GasFeeCap:             new(big.Int),
+				GasTipCap:             new(big.Int),
+				Value:                 new(big.Int),
+				SkipTransactionChecks: tt.skip,
+			}
+			opts := &Options{
+				Config: amsterdam,
+				Chain:  &testChainContext{engine: ethash.NewFaker()},
+				Header: header,
+				State:  stateDB,
+			}
+			estimate, _, err := Estimate(context.Background(), msg, opts, 0)
+			if tt.wantErr {
+				if !errors.Is(err, core.ErrGasLimitTooHigh) {
+					t.Fatalf("error = %v, want ErrGasLimitTooHigh", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("estimate failed: %v", err)
+			}
+			if estimate > params.MaxTxTotalGas {
+				t.Fatalf("estimate = %d, want at most %d", estimate, params.MaxTxTotalGas)
 			}
 		})
 	}

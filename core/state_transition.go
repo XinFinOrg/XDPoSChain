@@ -435,11 +435,11 @@ func (st *stateTransition) preCheck(rules params.Rules) error {
 				msg.From.Hex(), stNonce)
 		}
 	}
-	isOsaka := rules.IsOsaka
 	if !msg.SkipTransactionChecks {
-		// Verify tx gas limit does not exceed EIP-7825 cap.
-		if isOsaka && msg.GasLimit > params.MaxTxGas {
-			return fmt.Errorf("%w (cap: %d, tx: %d)", ErrGasLimitTooHigh, params.MaxTxGas, msg.GasLimit)
+		// Verify tx gas limit does not exceed the EIP-8037 total cap, or the
+		// EIP-7825 cap before it.
+		if err := CheckGasLimitCap(msg.GasLimit, rules); err != nil {
+			return err
 		}
 		// Make sure the sender is an EOA
 		code := st.state.GetCode(msg.From)
@@ -491,6 +491,17 @@ func (st *stateTransition) preCheck(rules params.Rules) error {
 		}
 	}
 	return st.buyGas()
+}
+
+// CheckGasLimitCap checks the tx gas limit against the EIP-8037 total cap, or the EIP-7825 cap before it.
+func CheckGasLimitCap(gasLimit uint64, rules params.Rules) error {
+	if rules.IsAmsterdam && gasLimit > params.MaxTxTotalGas {
+		return fmt.Errorf("%w (cap: %d, tx: %d)", ErrGasLimitTooHigh, params.MaxTxTotalGas, gasLimit)
+	}
+	if !rules.IsAmsterdam && rules.IsOsaka && gasLimit > params.MaxTxGas {
+		return fmt.Errorf("%w (cap: %d, tx: %d)", ErrGasLimitTooHigh, params.MaxTxGas, gasLimit)
+	}
+	return nil
 }
 
 // execute will transition the state by applying the current message and

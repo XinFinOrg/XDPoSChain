@@ -57,18 +57,18 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 	// The caller's cap counts from the transaction base, which EIP-2780 lowers.
 	hi = opts.Header.GasLimit
 	base := params.TxGas
-	if opts.Config.IsAmsterdam(opts.Header.Number) {
+	isAmsterdam := opts.Config.IsAmsterdam(opts.Header.Number)
+	if isAmsterdam {
 		base = params.TxBaseCost2780
 	}
 	if call.GasLimit >= base {
 		hi = call.GasLimit
 	}
 
-	// Cap the maximum gas allowance according to EIP-7825 if the estimation targets Osaka
-	if hi > params.MaxTxGas {
-		if opts.Config.IsOsaka(opts.Header.Number) {
-			hi = params.MaxTxGas
-		}
+	// Cap the maximum gas allowance according to EIP-7825 until Amsterdam
+	// replaces it with the EIP-8037 total cap.
+	if hi > params.MaxTxGas && opts.Config.IsOsaka(opts.Header.Number) && !isAmsterdam {
+		hi = params.MaxTxGas
 	}
 
 	// Normalize the max fee per gas the call is willing to spend.

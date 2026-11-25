@@ -511,3 +511,53 @@ func TestApplyMessageEIP2780Intrinsic(t *testing.T) {
 		})
 	}
 }
+
+// TestPreCheckGasCapAcrossAmsterdam checks the transaction gas limit cap on both
+// sides of Amsterdam: before it the EIP-7825 cap applies, from Amsterdam on the
+// EIP-8037 total cap replaces it.
+func TestPreCheckGasCapAcrossAmsterdam(t *testing.T) {
+	t.Parallel()
+
+	var (
+		block     = big.NewInt(1)
+		osaka     = params.TestChainConfig.Clone()
+		amsterdam = params.TestChainConfig.Clone()
+	)
+	osaka.AmsterdamBlock = nil
+
+	for _, tt := range []struct {
+		name   string
+		config *params.ChainConfig
+		gas    uint64
+		want   error
+	}{
+		{"osaka at cap", osaka, params.MaxTxGas, nil},
+		{"osaka above cap", osaka, params.MaxTxGas + 1, ErrGasLimitTooHigh},
+		{"amsterdam above osaka cap", amsterdam, params.MaxTxGas + 1, nil},
+		{"amsterdam at total cap", amsterdam, 1<<32 - 1, nil},
+		{"amsterdam above total cap", amsterdam, 1 << 32, ErrGasLimitTooHigh},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
+			if err != nil {
+				t.Fatalf("failed to open state: %v", err)
+			}
+			evm := vm.NewEVM(vm.BlockContext{BlockNumber: block}, statedb, nil, tt.config, vm.Config{NoBaseFee: true})
+			msg := newTestMessage()
+			msg.GasLimit = tt.gas
+			msg.SkipTransactionChecks = false
+			st := newStateTransition(evm, msg, new(GasPool).AddGas(tt.gas))
+
+			err = st.preCheck(tt.config.Rules(block))
+			if tt.want == nil {
+				if err != nil {
+					t.Fatalf("preCheck rejected gas limit %d: %v", tt.gas, err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.want) {
+				t.Fatalf("preCheck error = %v, want %v", err, tt.want)
+			}
+		})
+	}
+}
