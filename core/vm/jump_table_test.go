@@ -92,7 +92,7 @@ func TestAmsterdamJumpTableSelection(t *testing.T) {
 func TestSlotNumForkGating(t *testing.T) {
 	run := func(cfg *params.ChainConfig) (uint64, error) {
 		evm := NewEVM(BlockContext{BlockNumber: big.NewInt(1), SlotNum: 1}, nil, nil, cfg, Config{})
-		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), 100000, nil)
+		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), NewGasBudget(100000), nil)
 		contract.Code = []byte{byte(SLOTNUM)}
 		before := contract.Gas.RegularGas
 		_, err := evm.Run(contract, nil, false)

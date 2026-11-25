@@ -132,7 +132,7 @@ func TestMulticall3RuntimeCodeIsCallable(t *testing.T) {
 
 	// getBlockNumber() returns block.number; it is a known selector of the runtime
 	// code, so a wrong or truncated constant fails here rather than on a live network.
-	ret, _, err := evm.StaticCall(common.Address{}, params.Multicall3Address, common.FromHex("0x42cbb15c"), 100_000)
+	ret, _, err := evm.StaticCall(common.Address{}, params.Multicall3Address, common.FromHex("0x42cbb15c"), vm.NewGasBudget(100_000))
 	if err != nil {
 		t.Fatalf("getBlockNumber() on the installed Multicall3 failed: %v", err)
 	}

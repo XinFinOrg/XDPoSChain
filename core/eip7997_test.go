@@ -132,7 +132,7 @@ func TestEIP7997RuntimeCodeIsCallable(t *testing.T) {
 	salt := [32]byte{1}
 	initcode := common.FromHex("0x600160005260206000f3")
 	input := append(salt[:], initcode...)
-	ret, _, err := evm.Call(common.Address{}, params.DeterministicFactoryAddress, input, 200_000, uint256.NewInt(0))
+	ret, _, err := evm.Call(common.Address{}, params.DeterministicFactoryAddress, input, vm.NewGasBudget(200_000), uint256.NewInt(0))
 	if err != nil {
 		t.Fatalf("CREATE2 through the factory failed: %v", err)
 	}

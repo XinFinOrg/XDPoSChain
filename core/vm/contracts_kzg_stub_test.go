@@ -184,11 +184,11 @@ func TestKZGPointEvaluationStubFails(t *testing.T) {
 	} {
 		t.Run("input/"+test.name, func(t *testing.T) {
 			const gas uint64 = 100_000
-			_, leftOverGas, err := evm.Call(caller, kzgPointEvalAddr, test.input, gas, zero)
+			_, leftOverGas, err := evm.Call(caller, kzgPointEvalAddr, test.input, NewGasBudget(gas), zero)
 			if !errors.Is(err, errKZGUnsupported) {
 				t.Fatalf("0x0a call with %s returned %v, want %v", test.name, err, errKZGUnsupported)
 			}
-			if leftOverGas != 0 {
+			if leftOverGas.RegularGas != 0 {
 				t.Fatalf("expected all gas to be consumed, leftOverGas = %d", leftOverGas)
 			}
 		})
