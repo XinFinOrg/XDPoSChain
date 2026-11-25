@@ -687,7 +687,11 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 	epochConfig := api.b.ChainConfig().XDPoS.Epoch
 
 	// checkpoint block
-	checkpointNumber, epochNumber = api.GetCheckpointFromEpoch(ctx, epoch)
+	checkpointNumber, epochNumber, err = api.GetCheckpointFromEpoch(ctx, epoch)
+	if err != nil {
+		result[fieldSuccess] = false
+		return result, err
+	}
 	result[fieldEpoch] = epochNumber.Int64()
 
 	block, err = api.b.BlockByNumber(ctx, checkpointNumber)
@@ -833,7 +837,11 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 	}
 	epochConfig := api.b.ChainConfig().XDPoS.Epoch
 
-	checkpointNumber, epochNumber = api.GetCheckpointFromEpoch(ctx, epoch)
+	checkpointNumber, epochNumber, err = api.GetCheckpointFromEpoch(ctx, epoch)
+	if err != nil {
+		result[fieldSuccess] = false
+		return result, err
+	}
 	result[fieldEpoch] = epochNumber.Int64()
 
 	block, err = api.b.BlockByNumber(ctx, checkpointNumber)
@@ -966,9 +974,9 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 }
 
 // GetCheckpointFromEpoch returns header of the previous checkpoint
-func (api *BlockChainAPI) GetCheckpointFromEpoch(ctx context.Context, epochNum rpc.EpochNumber) (rpc.BlockNumber, rpc.EpochNumber) {
+func (api *BlockChainAPI) GetCheckpointFromEpoch(ctx context.Context, epochNum rpc.EpochNumber) (rpc.BlockNumber, rpc.EpochNumber, error) {
 	if api.b.ChainConfig().XDPoS == nil {
-		return 0, epochNum
+		return 0, epochNum, errXDPoSConfigMissing
 	}
 	var checkpointNumber uint64
 	epoch := api.b.ChainConfig().XDPoS.Epoch
@@ -981,7 +989,7 @@ func (api *BlockChainAPI) GetCheckpointFromEpoch(ctx context.Context, epochNum r
 			checkpointNumber, currentEpoch, err = engine.GetCurrentEpochSwitchBlock(api.chainReader, blockNumer)
 			if err != nil {
 				log.Error("[GetCheckpointFromEpoch] Fail to get GetCurrentEpochSwitchBlock for current checkpoint block", "block", blockNumer, "err", err)
-				return 0, epochNum
+				return 0, 0, err
 			}
 
 			epochNum = rpc.EpochNumber(currentEpoch)
@@ -993,7 +1001,7 @@ func (api *BlockChainAPI) GetCheckpointFromEpoch(ctx context.Context, epochNum r
 		checkpointNumber = epoch * (uint64(epochNum) - 1)
 	}
 
-	return rpc.BlockNumber(checkpointNumber), epochNum
+	return rpc.BlockNumber(checkpointNumber), epochNum, nil
 }
 
 // getCandidatesFromState returns the voting contract's candidates and their capacities as they
@@ -1412,6 +1420,7 @@ func (api *BlockChainAPI) findNearestSignedBlock(ctx context.Context, b *types.B
 	checkpointNumber, _, err := engine.GetCurrentEpochSwitchBlock(api.chainReader, big.NewInt(int64(signedBlockNumber)))
 	if err != nil {
 		log.Error("[findNearestSignedBlock] Error while trying to get current Epoch switch block", "Number", signedBlockNumber)
+		return nil
 	}
 
 	checkpointBlock, _ := api.b.BlockByNumber(ctx, rpc.BlockNumber(checkpointNumber))

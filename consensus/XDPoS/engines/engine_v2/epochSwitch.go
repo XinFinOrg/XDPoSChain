@@ -148,6 +148,9 @@ func (x *XDPoS_v2) isEpochSwitchAtRound(round types.Round, parentHeader *types.H
 
 func (x *XDPoS_v2) GetCurrentEpochSwitchBlock(chain consensus.ChainReader, blockNum *big.Int) (uint64, uint64, error) {
 	header := chain.GetHeaderByNumber(blockNum.Uint64())
+	if header == nil {
+		return 0, 0, fmt.Errorf("header %d not found", blockNum.Uint64())
+	}
 	epochSwitchInfo, err := x.getEpochSwitchInfo(chain, []*types.Header{header}, header.Hash())
 	if err != nil {
 		log.Error("[GetCurrentEpochSwitchBlock] Fail to get epoch switch info", "Num", header.Number, "Hash", header.Hash())
