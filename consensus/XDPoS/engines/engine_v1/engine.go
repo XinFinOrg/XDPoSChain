@@ -278,6 +278,12 @@ func (x *XDPoS_v1) verifyCascadingFields(chain consensus.ChainReader, header *ty
 		if err == nil {
 			return x.verifySeal(chain, header, parents, fullVerify)
 		}
+		// A missing penalty block is this node's own record, not a signer mismatch: the
+		// contract fallback only supplies another signer list, and the retry below runs
+		// checkSignersOnCheckpoint again, hitting the same missing block.
+		if errors.Is(err, consensus.ErrMissingPenaltyBlock) {
+			return err
+		}
 		log.Debug("[verifyCascadingFields] checkSignersOnCheckpoint failed, fallback to smart contract check", "number", number, "err", err)
 		signers, err = x.getSignersFromContract(chain, header)
 		if err != nil {
@@ -323,7 +329,11 @@ func (x *XDPoS_v1) checkSignersOnCheckpoint(chain consensus.ChainReader, parent,
 	signers = common.RemoveItemFromArray(signers, penPenalties)
 	for i := 1; i <= common.LimitPenaltyEpoch; i++ {
 		if number > uint64(i)*x.config.Epoch {
-			signers = removePenaltiesFromBlock(chain, signers, number-uint64(i)*x.config.Epoch)
+			var err error
+			signers, err = removePenaltiesFromBlock(chain, signers, number-uint64(i)*x.config.Epoch)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	extraSuffix := len(header.Extra) - utils.ExtraSeal
@@ -387,6 +397,10 @@ func (x *XDPoS_v1) StoreSnapshot(snap *SnapshotV1) error {
 	return snap.store(x.db)
 }
 
+// GetMasternodes returns the masternodes recorded in the header of the epoch the given header
+// belongs to. The header must be non-nil: callers that read it from the chain check the lookup
+// themselves (the v1 penalty hooks do), because an empty set would silently change the signer
+// decision a checkpoint is verified against.
 func (x *XDPoS_v1) GetMasternodes(chain consensus.ChainReader, header *types.Header) []common.Address {
 	n := header.Number.Uint64()
 	e := x.config.Epoch
@@ -779,7 +793,11 @@ func (x *XDPoS_v1) Prepare(chain consensus.ChainReader, header *types.Header) er
 		// Prevent penalized masternode(s) within 4 recent epochs
 		for i := 1; i <= common.LimitPenaltyEpoch; i++ {
 			if number > uint64(i)*x.config.Epoch {
-				masternodes = removePenaltiesFromBlock(chain, masternodes, number-uint64(i)*x.config.Epoch)
+				var err error
+				masternodes, err = removePenaltiesFromBlock(chain, masternodes, number-uint64(i)*x.config.Epoch)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		for _, masternode := range masternodes {
@@ -1024,19 +1042,24 @@ func (x *XDPoS_v1) GetDb() ethdb.Database {
 	return x.db
 }
 
-// Extract validators from byte array.
-func removePenaltiesFromBlock(chain consensus.ChainReader, masternodes []common.Address, epochNumber uint64) []common.Address {
-	if epochNumber <= 0 {
-		return masternodes
+// removePenaltiesFromBlock removes from masternodes the penalties recorded in the given epoch block.
+func removePenaltiesFromBlock(chain consensus.ChainReader, masternodes []common.Address, epochNumber uint64) ([]common.Address, error) {
+	if epochNumber == 0 {
+		return masternodes, nil
 	}
 	header := chain.GetHeaderByNumber(epochNumber)
-	block := chain.GetBlock(header.Hash(), epochNumber)
-	penalties := block.Penalties()
+	if header == nil {
+		return masternodes, fmt.Errorf("%w: header %d", consensus.ErrMissingPenaltyBlock, epochNumber)
+	}
+	// The penalty set is a header field. Reading the body too would fail on the nodes that
+	// hold the header but not the body (fast sync's pre-pivot range, a header-only chain),
+	// where the checkpoint decision can still be made.
+	penalties := header.Penalties
 	if penalties != nil {
 		prevPenalties := common.ExtractAddressFromBytes(penalties)
 		masternodes = common.RemoveItemFromArray(masternodes, prevPenalties)
 	}
-	return masternodes
+	return masternodes, nil
 }
 
 func (x *XDPoS_v1) getSignersFromContract(chain consensus.ChainReader, checkpointHeader *types.Header) ([]common.Address, error) {

@@ -2844,8 +2844,8 @@ func (bc *BlockChain) insertChain(chain types.Blocks, verifySeals bool) (n int, 
 	// Some other error occurred, abort
 	case err != nil:
 		// The table decides whether the block is at fault, as it does for the two queue-stop
-		// paths. Behaviourally identical today, but it keeps the "is this a bad block" answer
-		// in one place if a local sentinel ever becomes reachable from verification.
+		// paths. That keeps the "is this a bad block" answer in one place now that a local
+		// sentinel - consensus.ErrMissingPenaltyBlock - is reachable from verification.
 		bc.reportBlockIfFault(block, err)
 		return it.index, events, coalescedLogs, err
 	}
