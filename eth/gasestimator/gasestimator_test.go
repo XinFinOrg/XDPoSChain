@@ -312,69 +312,97 @@ func TestEstimateAboveTotalCap(t *testing.T) {
 
 // TestEstimateUnboundedHighTerminates checks that an explicit gas limit of
 // math.MaxUint64 with the RPC gas cap disabled terminates. The binary search
-// used to compute its midpoint as (hi+lo)/2, which wraps around once hi is
-// close to math.MaxUint64, lands below lo and then pins mid to lo*2 == 0, so
-// the loop never exits.
+// biases its midpoint towards twice the low bound, and that doubling wrapped
+// around once the low bound passed math.MaxUint64/2, letting mid fall below lo
+// and pin the loop to a fixed point.
 func TestEstimateUnboundedHighTerminates(t *testing.T) {
 	t.Parallel()
 
 	var (
 		from = common.HexToAddress("0x1001")
 		to   = common.HexToAddress("0x1002")
+		// Reverts unless gasleft() exceeds 2^63. The search only walks the low
+		// bound past math.MaxUint64/2 with a contract that rejects such high
+		// limits.
+		gasSensitive = []byte{
+			0x67, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // PUSH8 2^63
+			0x5a,       // GAS
+			0x11,       // GT
+			0x60, 0x13, // PUSH1 0x13
+			0x57,                   // JUMPI
+			0x60, 0x00, 0x60, 0x00, // PUSH1 0, PUSH1 0
+			0xfd, // REVERT
+			0x5b, // JUMPDEST
+			0x00, // STOP
+		}
 	)
 	// Amsterdam is active here, so the initial high bound is not clamped to
 	// the EIP-7825 cap and stays at the explicitly requested gas limit.
 	config := params.TestChainConfig.Clone()
 
-	genesis := &core.Genesis{
-		Config: config,
-		Alloc:  types.GenesisAlloc{from: {Balance: big.NewInt(params.Ether)}},
-	}
-	db := rawdb.NewMemoryDatabase()
-	block := genesis.MustCommit(db)
-	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
-	if err != nil {
-		t.Fatalf("failed to create state db: %v", err)
-	}
-	header := types.CopyHeader(block.Header())
-	header.GasLimit = 8_000_000
+	for _, tt := range []struct {
+		name string
+		code []byte
+		min  uint64
+	}{
+		{"transfer", nil, 0},
+		{"gas-sensitive", gasSensitive, 1 << 63},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			genesis := &core.Genesis{
+				Config: config,
+				Alloc: types.GenesisAlloc{
+					from: {Balance: big.NewInt(params.Ether)},
+					to:   {Code: tt.code},
+				},
+			}
+			db := rawdb.NewMemoryDatabase()
+			block := genesis.MustCommit(db)
+			stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+			if err != nil {
+				t.Fatalf("failed to create state db: %v", err)
+			}
+			header := types.CopyHeader(block.Header())
+			header.GasLimit = 8_000_000
 
-	// Zero fee fields keep the balance and base fee recaps from lowering the
-	// high bound; the estimation then starts its binary search at MaxUint64.
-	msg := &core.Message{
-		From:                  from,
-		To:                    &to,
-		GasLimit:              math.MaxUint64,
-		GasPrice:              new(big.Int),
-		GasFeeCap:             new(big.Int),
-		GasTipCap:             new(big.Int),
-		Value:                 new(big.Int),
-		SkipTransactionChecks: true,
-	}
-	opts := &Options{
-		Config: config,
-		Chain:  &testChainContext{engine: ethash.NewFaker()},
-		Header: header,
-		State:  stateDB,
-	}
-	type result struct {
-		estimate uint64
-		err      error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		estimate, _, err := Estimate(context.Background(), msg, opts, 0)
-		ch <- result{estimate, err}
-	}()
-	select {
-	case res := <-ch:
-		if res.err != nil {
-			t.Fatalf("estimate failed: %v", res.err)
-		}
-		if res.estimate == 0 {
-			t.Fatal("estimate returned zero gas")
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("Estimate did not terminate with an unbounded high gas limit")
+			// Zero fee fields keep the balance and base fee recaps from lowering the
+			// high bound; the estimation then starts its binary search at MaxUint64.
+			msg := &core.Message{
+				From:                  from,
+				To:                    &to,
+				GasLimit:              math.MaxUint64,
+				GasPrice:              new(big.Int),
+				GasFeeCap:             new(big.Int),
+				GasTipCap:             new(big.Int),
+				Value:                 new(big.Int),
+				SkipTransactionChecks: true,
+			}
+			opts := &Options{
+				Config: config,
+				Chain:  &testChainContext{engine: ethash.NewFaker()},
+				Header: header,
+				State:  stateDB,
+			}
+			type result struct {
+				estimate uint64
+				err      error
+			}
+			ch := make(chan result, 1)
+			go func() {
+				estimate, _, err := Estimate(context.Background(), msg, opts, 0)
+				ch <- result{estimate, err}
+			}()
+			select {
+			case res := <-ch:
+				if res.err != nil {
+					t.Fatalf("estimate failed: %v", res.err)
+				}
+				if res.estimate <= tt.min {
+					t.Fatalf("estimate = %d, want more than %d", res.estimate, tt.min)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("Estimate did not terminate with an unbounded high gas limit")
+			}
+		})
 	}
 }
