@@ -194,7 +194,6 @@ func TestForEachChainConfigForkOrderBlockCoversValidationOrder(t *testing.T) {
 		"OsakaBlock",
 		"AmsterdamBlock",
 		"TIPEpochHalvingBlock",
-		"TIPProportionalRewardBlock",
 	}
 
 	if !reflect.DeepEqual(got, want) {
@@ -1469,6 +1468,7 @@ func TestForEachChainConfigForkOrderSpecialCaseRuleCoversSpecialCaseConstraints(
 		{before: "TIPTRC21FeeBlock", after: "Gas50xBlock"},
 		{before: "Gas50xBlock", after: "Gas2500xBlock"},
 		{before: "Gas50xBlock", after: "TIPXDCXMinerDisableBlock"},
+		{before: "TIPFixedRewardBlock", after: "TIPProportionalRewardBlock"},
 	}
 
 	if !reflect.DeepEqual(got, want) {

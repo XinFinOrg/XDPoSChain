@@ -504,7 +504,7 @@ var (
 		EIP1559Block:                big.NewInt(25000),
 		CancunBlock:                 big.NewInt(25000),
 		PragueBlock:                 big.NewInt(50000),
-		OsakaBlock:                  nil,
+		OsakaBlock:                  big.NewInt(1218600),
 		DynamicGasLimitBlock:        big.NewInt(50000),
 		TIPFixedRewardBlock:         nil,
 		TIPUpgradePenaltyBlock:      big.NewInt(50000),

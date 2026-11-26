@@ -25,9 +25,11 @@ type Fork int
 // it carries no consensus meaning. The order CheckConfigForkOrder enforces is
 // chainConfigForkOrderFields in params/config_backfill.go, plus the extra
 // pairings in chainConfigForkOrderSpecialCaseRules: the Gas50x and Gas2500x
-// placements, which have no linear slot there. The standard fork sequence scan
-// keeps Amsterdam off a schedule that never switches Osaka on. Both chain config
-// renderings follow that order.
+// placements, which have no linear slot there, and the tipFixedReward ->
+// tipProportionalReward pairing. The standard fork sequence scan keeps
+// Amsterdam off a schedule that never switches Osaka on. Both chain config
+// renderings follow that order for every field that has a linear slot;
+// tipProportionalRewardBlock has none, so its rendering position is free.
 const (
 	Frontier Fork = iota
 	FrontierThawing

@@ -204,6 +204,11 @@ var chainConfigForkOrderSpecialCaseRules = func() []chainConfigForkOrderSpecialC
 				return before != nil && after != nil && after.Sign() > 0
 			},
 		},
+		{
+			before:         "TIPFixedRewardBlock",
+			after:          "TIPProportionalRewardBlock",
+			shouldValidate: func(before, after *big.Int) bool { return before != nil && after != nil },
+		},
 	}
 	rules := make([]chainConfigForkOrderSpecialCaseRule, 0, len(ruleDefs))
 	for _, ruleDef := range ruleDefs {
@@ -320,6 +325,7 @@ var chainConfigCompatibilityInsertionDefs = []struct {
 }{
 	{after: "ShanghaiBlock", name: "Gas50xBlock"},
 	{after: "ShanghaiBlock", name: "Gas2500xBlock"},
+	{after: "TIPFixedRewardBlock", name: "TIPProportionalRewardBlock"},
 }
 
 var chainConfigCompatibilityFields = func() []chainConfigBigIntField {

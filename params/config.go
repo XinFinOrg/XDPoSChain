@@ -903,6 +903,9 @@ func (c *ChainConfig) String() string {
 	if c.TIPUpgradePenaltyBlock != nil {
 		result += fmt.Sprintf(", TIPUpgradePenalty: %v", c.TIPUpgradePenaltyBlock)
 	}
+	if c.TIPProportionalRewardBlock != nil {
+		result += fmt.Sprintf(", TIPProportionalReward: %v", c.TIPProportionalRewardBlock)
+	}
 	if c.PragueBlock != nil {
 		result += fmt.Sprintf(", Prague: %v", c.PragueBlock)
 	}
@@ -914,9 +917,6 @@ func (c *ChainConfig) String() string {
 	}
 	if c.TIPEpochHalvingBlock != nil {
 		result += fmt.Sprintf(", TIPEpochHalving: %v", c.TIPEpochHalvingBlock)
-	}
-	if c.TIPProportionalRewardBlock != nil {
-		result += fmt.Sprintf(", TIPProportionalReward: %v", c.TIPProportionalRewardBlock)
 	}
 	if !c.TRC21IssuerSMC.IsZero() {
 		result += fmt.Sprintf(", TRC21IssuerSMC: %s", c.TRC21IssuerSMC.Hex())
@@ -993,11 +993,11 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - DynamicGasLimit:             %-8v\n", c.DynamicGasLimitBlock)
 	banner += fmt.Sprintf("  - TIPFixedReward:              %-8v\n", c.TIPFixedRewardBlock)
 	banner += fmt.Sprintf("  - TIPUpgradePenalty:           %-8v\n", c.TIPUpgradePenaltyBlock)
+	banner += fmt.Sprintf("  - TIPProportionalReward:       %-8v\n", c.TIPProportionalRewardBlock)
 	banner += fmt.Sprintf("  - Prague:                      %-8v\n", c.PragueBlock)
 	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", c.OsakaBlock)
 	banner += fmt.Sprintf("  - Amsterdam:                   %-8v\n", c.AmsterdamBlock)
 	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", c.TIPEpochHalvingBlock)
-	banner += fmt.Sprintf("  - TIPProportionalReward:       %-8v\n", c.TIPProportionalRewardBlock)
 	banner += fmt.Sprintf("  - TRC21IssuerSMC:              %-8s\n", c.TRC21IssuerSMC)
 	banner += fmt.Sprintf("  - XDCXListingSMC:              %-8s\n", c.XDCXListingSMC)
 	banner += fmt.Sprintf("  - RelayerRegistrationSMC:      %-8s\n", c.RelayerRegistrationSMC)
