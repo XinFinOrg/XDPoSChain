@@ -15,7 +15,6 @@
 // along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
 // Package legacypool implements the normal EVM execution transaction pool.
-
 package legacypool
 
 import (
@@ -31,7 +30,6 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/prque"
-	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc/eip1559"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
@@ -41,13 +39,11 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/holiman/uint256"
 )
 
 const (
-	// chainHeadChanSize is the size of channel listening to ChainHeadEvent.
-	chainHeadChanSize = 10
-
 	// txSlotSize is used to calculate how many data slots a single transaction
 	// takes up based on its size. The slots are used as DoS protection, ensuring
 	// that validating a new transaction remains a constant operation (in reality
@@ -58,13 +54,17 @@ const (
 	// non-trivial consequences: larger transactions are significantly harder and
 	// more expensive to propagate; larger transactions also take more resources
 	// to validate whether they fit into the pool or not.
-	txMaxSize = 2 * txSlotSize // 64KB, don't bump without EIP-2464 support
+	txMaxSize = 4 * txSlotSize // 128KB
 )
 
 var (
 	// ErrTxPoolOverflow is returned if the transaction pool is full and can't accept
 	// another remote transaction.
 	ErrTxPoolOverflow = errors.New("txpool is full")
+
+	// ErrBlacklisted is returned if the tx sender or recipient is on the XDC
+	// transaction blacklist (active from BlackListHFNumber onward).
+	ErrBlacklisted = errors.New("transaction sender or recipient is blacklisted")
 
 	// ErrOutOfOrderTxFromDelegated is returned when the transaction with gapped
 	// nonce received from the accounts with delegation or pending delegation.
@@ -78,6 +78,11 @@ var (
 	// ErrFutureReplacePending is returned if a future transaction replaces a pending
 	// one. Future transactions should only be able to replace other future transactions.
 	ErrFutureReplacePending = errors.New("future transaction tries to replace pending")
+
+	// ErrDuplicateSpecialTransaction is returned when a second special XDC
+	// signing tx arrives for a nonce that already has a special tx pending.
+	// Mirrors XDPoSChain/core/txpool/txpool.go:96.
+	ErrDuplicateSpecialTransaction = errors.New("duplicate a special transaction")
 )
 
 var (
@@ -106,9 +111,6 @@ var (
 	underpricedTxMeter = metrics.NewRegisteredMeter("txpool/underpriced", nil)
 	overflowedTxMeter  = metrics.NewRegisteredMeter("txpool/overflowed", nil)
 
-	// Dropped by a raised gas price floor, pending and queue combined
-	belowFloorMeter = metrics.NewRegisteredMeter("txpool/belowfloor", nil)
-
 	// throttleTxMeter counts how many transactions are rejected due to too-many-changes between
 	// txpool reorgs.
 	throttleTxMeter = metrics.NewRegisteredMeter("txpool/throttle", nil)
@@ -131,26 +133,20 @@ var (
 // BlockChain defines the minimal set of methods needed to back a tx pool with
 // a chain. Exists to allow mocking the live chain out of tests.
 type BlockChain interface {
-	// Config retrieves the blockchain's chain configuration.
+	// Config retrieves the chain's fork configuration.
 	Config() *params.ChainConfig
 
 	// CurrentBlock returns the current head of the chain.
 	CurrentBlock() *types.Header
 
+	// Genesis returns the genesis block of the chain.
+	Genesis() *types.Block
+
 	// GetBlock retrieves a specific block, used during pool resets.
 	GetBlock(hash common.Hash, number uint64) *types.Block
 
-	// StateAt returns a state database for a given root hash (generally the head).
-	StateAt(root common.Hash) (*state.StateDB, error)
-
-	// Engine retrieves the chain's consensus engine.
-	Engine() consensus.Engine
-
-	// GetHeader returns the hash corresponding to their hash.
-	GetHeader(common.Hash, uint64) *types.Header
-
-	// CurrentHeader retrieves the current header from the local chain.
-	CurrentHeader() *types.Header
+	// StateAt returns a state database for a given chain header (generally the head).
+	StateAt(header *types.Header) (*state.StateDB, error)
 }
 
 // Config are the configuration parameters of the transaction pool.
@@ -176,7 +172,7 @@ var DefaultConfig = Config{
 	Journal:   "transactions.rlp",
 	Rejournal: time.Hour,
 
-	PriceLimit: 0,
+	PriceLimit: 1,
 	PriceBump:  10,
 
 	AccountSlots: 16,
@@ -187,14 +183,14 @@ var DefaultConfig = Config{
 	Lifetime: 3 * time.Hour,
 }
 
-// defaultMaxTip is 80x the gas2500x tier price, the headroom the ceiling kept
-// over the tier price before that fork.
-var defaultMaxTip = big.NewInt(50_000 * params.GWei)
-
 // sanitize checks the provided user configurations and changes anything that's
 // unreasonable or unworkable.
 func (config *Config) sanitize() Config {
 	conf := *config
+	if conf.PriceLimit < 1 {
+		log.Warn("Sanitizing invalid txpool price limit", "provided", conf.PriceLimit, "updated", DefaultConfig.PriceLimit)
+		conf.PriceLimit = DefaultConfig.PriceLimit
+	}
 	if conf.PriceBump < 1 {
 		log.Warn("Sanitizing invalid txpool price bump", "provided", conf.PriceBump, "updated", DefaultConfig.PriceBump)
 		conf.PriceBump = DefaultConfig.PriceBump
@@ -231,11 +227,11 @@ func (config *Config) sanitize() Config {
 // two states over time as they are received and processed.
 //
 // In addition to tracking transactions, the pool also tracks a set of pending SetCode
-// authorizations (EIP7702). This helps minimize the number of transactions that can be
+// authorizations (EIP7702). This helps minimize number of transactions that can be
 // trivially churned in the pool. As a standard rule, any account with a deployed
 // delegation or an in-flight authorization to deploy a delegation will only be allowed a
 // single transaction slot instead of the standard number. This is due to the possibility
-// of the account being swept by an unrelated account.
+// of the account being sweeped by an unrelated account.
 //
 // Because SetCode transactions can have many authorizations included, we avoid explicitly
 // checking their validity to save the state lookup. So long as the encompassing
@@ -252,10 +248,19 @@ type LegacyPool struct {
 	signer      types.Signer
 	mu          sync.RWMutex
 
+	// IsSigner is an optional callback set by the XDPoS consensus engine to
+	// check whether an address is a currently-registered masternode signer.
+	// When set, gasPrice=0 special-txs (to BlockSigners/RandomizeSMC) from
+	// registered signers are fast-pathed to pending via promoteSpecialTx,
+	// bypassing pool-full eviction and underpriced checks.
+	// Mirrors XDPoSChain/core/txpool/txpool.go:294 IsSigner field.
+	IsSigner func(address common.Address) bool
+
 	currentHead   atomic.Pointer[types.Header] // Current head of the blockchain
 	currentState  *state.StateDB               // Current state in the blockchain head
 	pendingNonces *noncer                      // Pending state tracking virtual nonces
 	reserver      txpool.Reserver              // Address reserver to ensure exclusivity across subpools
+	frameRes      *frameReservations           // EIP-8141 payer reservations for pending frame transactions
 
 	pending map[common.Address]*list // All currently processable transactions
 	queue   *queue
@@ -271,9 +276,6 @@ type LegacyPool struct {
 	initDoneCh      chan struct{}  // is closed once the pool is initialized (for tests)
 
 	changesSinceReorg int // A counter for how many drops we've performed in-between reorg.
-
-	isSigner         func(address common.Address) bool
-	trc21FeeCapacity map[common.Address]*big.Int
 }
 
 type txpoolResetRequest struct {
@@ -289,32 +291,54 @@ func New(config Config, chain BlockChain) *LegacyPool {
 	// Create the transaction pool with its initial settings
 	signer := types.LatestSigner(chain.Config())
 	pool := &LegacyPool{
-		config:           config,
-		chain:            chain,
-		chainconfig:      chain.Config(),
-		signer:           signer,
-		pending:          make(map[common.Address]*list),
-		queue:            newQueue(config, signer),
-		all:              newLookup(),
-		reqResetCh:       make(chan *txpoolResetRequest),
-		reqPromoteCh:     make(chan *accountSet),
-		queueTxEventCh:   make(chan *types.Transaction),
-		reorgDoneCh:      make(chan chan struct{}),
-		reorgShutdownCh:  make(chan struct{}),
-		initDoneCh:       make(chan struct{}),
-		trc21FeeCapacity: map[common.Address]*big.Int{},
+		config:          config,
+		chain:           chain,
+		chainconfig:     chain.Config(),
+		signer:          signer,
+		pending:         make(map[common.Address]*list),
+		queue:           newQueue(config, signer),
+		all:             newLookup(),
+		reqResetCh:      make(chan *txpoolResetRequest),
+		reqPromoteCh:    make(chan *accountSet),
+		queueTxEventCh:  make(chan *types.Transaction),
+		reorgDoneCh:     make(chan chan struct{}),
+		reorgShutdownCh: make(chan struct{}),
+		initDoneCh:      make(chan struct{}),
+		frameRes:        newFrameReservations(),
 	}
 	pool.priced = newPricedList(pool.all)
 
 	return pool
 }
 
+// SetIsSigner wires the consensus engine's signer-check callback into the pool.
+// Once set, gasPrice=0 special-txs (BlockSigners/RandomizeSMC) whose sender
+// is a registered masternode are fast-pathed into pending without price checks.
+// Call from the XDPoS engine after pool creation.
+func (pool *LegacyPool) SetIsSigner(fn func(address common.Address) bool) {
+	pool.IsSigner = fn
+}
+
 // Filter returns whether the given transaction can be consumed by the legacy
 // pool, specifically, whether it is a Legacy, AccessList or Dynamic transaction.
 func (pool *LegacyPool) Filter(tx *types.Transaction) bool {
-	switch tx.Type() {
+	return pool.FilterType(tx.Type())
+}
+
+// FilterType returns whether the legacy pool supports the given transaction type.
+func (pool *LegacyPool) FilterType(kind byte) bool {
+	switch kind {
 	case types.LegacyTxType, types.AccessListTxType, types.DynamicFeeTxType, types.SetCodeTxType:
 		return true
+	case types.FrameTxType:
+		// EIP-8141: frame transactions are routed to this pool only while
+		// the FrameTx fork is active at the current head. Fork-inactive
+		// chains keep rejecting type 0x06 here (identical external behavior
+		// to the old static gate); fork-active chains pass it through to
+		// validateTxBasics' Accept mask and ValidateTransaction's fork rules,
+		// which enforce signature, gas, fee, and sponsorship validation.
+		head := pool.currentHead.Load()
+		return head != nil && pool.chainconfig.IsFrameTx(head.Number, head.Time)
 	default:
 		return false
 	}
@@ -327,23 +351,15 @@ func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserver txpool.
 	// Set the address reserver to request exclusive access to pooled accounts
 	pool.reserver = reserver
 
-	// Set the basic pool parameters. The pool enforces one tip ceiling whatever
-	// the entry point, so an over-limit --txpool-pricelimit is clamped here
-	// instead of being applied while miner_setGasPrice and --miner.gasprice
-	// reject the same value.
-	tip := new(big.Int).SetUint64(gasTip)
-	if tip.Cmp(defaultMaxTip) > 0 {
-		log.Warn("Sanitizing invalid gas tip", "provided", tip, "updated", defaultMaxTip)
-		tip.Set(defaultMaxTip)
-	}
-	pool.gasTip.Store(uint256.MustFromBig(tip))
+	// Set the basic pool parameters
+	pool.gasTip.Store(uint256.NewInt(gasTip))
 
 	// Initialize the state with head block, or fallback to empty one in
 	// case the head state is not available (might occur when node is not
 	// fully synced).
-	statedb, err := pool.chain.StateAt(head.Root)
+	statedb, err := pool.chain.StateAt(head)
 	if err != nil {
-		statedb, err = pool.chain.StateAt(types.EmptyRootHash)
+		statedb, err = pool.chain.StateAt(pool.chain.Genesis().Header())
 	}
 	if err != nil {
 		return err
@@ -352,8 +368,11 @@ func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserver txpool.
 	pool.currentState = statedb
 	pool.pendingNonces = newNoncer(statedb)
 
-	pool.wg.Go(pool.scheduleReorgLoop)
-	pool.wg.Go(pool.loop)
+	pool.wg.Add(1)
+	go pool.scheduleReorgLoop()
+
+	pool.wg.Add(1)
+	go pool.loop()
 	return nil
 }
 
@@ -361,6 +380,8 @@ func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserver txpool.
 // outside blockchain events as well as for various reporting and transaction
 // eviction events.
 func (pool *LegacyPool) loop() {
+	defer pool.wg.Done()
+
 	var (
 		prevPending, prevQueued, prevStales int
 
@@ -423,32 +444,17 @@ func (pool *LegacyPool) Reset(oldHead, newHead *types.Header) {
 // supporting feeding only newly seen or also resurrected transactions.
 func (pool *LegacyPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) event.Subscription {
 	// The legacy pool has a very messed up internal shuffling, so it's kind of
-	// hard to separate newly discovered transactions from resurrected ones. This
+	// hard to separate newly discovered transaction from resurrected ones. This
 	// is because the new txs are added to the queue, resurrected ones too and
 	// reorgs run lazily, so separating the two would need a marker.
 	return pool.txFeed.Subscribe(ch)
 }
 
 // SetGasTip updates the minimum gas tip required by the transaction pool for a
-// new transaction, and drops all transactions below this threshold. Negative
-// gas prices and prices above defaultMaxTip are considered invalid and will be
-// rejected without updating the threshold.
-func (pool *LegacyPool) SetGasTip(tip *big.Int) error {
+// new transaction, and drops all transactions below this threshold.
+func (pool *LegacyPool) SetGasTip(tip *big.Int) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
-
-	if tip == nil {
-		log.Warn("Reject nil gas tip")
-		return errors.New("reject nil gas tip")
-	}
-	if tip.Sign() < 0 {
-		log.Warn("Reject invalid gas tip", "tip", tip)
-		return fmt.Errorf("reject negative gas tip: %v", tip)
-	}
-	if tip.Cmp(defaultMaxTip) > 0 {
-		log.Warn("Reject invalid gas tip", "tip", tip, "max", defaultMaxTip)
-		return fmt.Errorf("reject too high gas tip: %v, maximum: %v", tip, defaultMaxTip)
-	}
 
 	var (
 		newTip = uint256.MustFromBig(tip)
@@ -465,7 +471,6 @@ func (pool *LegacyPool) SetGasTip(tip *big.Int) error {
 		pool.priced.Removed(len(drop))
 	}
 	log.Info("Legacy pool tip threshold updated", "tip", newTip)
-	return nil
 }
 
 // Nonce returns the next nonce of an account, with all transactions executable
@@ -529,15 +534,26 @@ func (pool *LegacyPool) ContentFrom(addr common.Address) ([]*types.Transaction, 
 //
 // The transactions can also be pre-filtered by the dynamic fee components to
 // reduce allocations and load on downstream subsystems.
-func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address][]*txpool.LazyTransaction {
+func (pool *LegacyPool) Pending(filter txpool.PendingFilter) (map[common.Address][]*txpool.LazyTransaction, int) {
+	// If only blob transactions are requested, this pool is unsuitable as it
+	// contains none, don't even bother.
+	if filter.BlobTxs {
+		return nil, 0
+	}
 	pool.mu.RLock()
 	defer pool.mu.RUnlock()
 
+	var count int
 	pending := make(map[common.Address][]*txpool.LazyTransaction, len(pool.pending))
 	for addr, list := range pool.pending {
 		txs := list.Flatten()
 
-		// If the miner requests tip enforcement, cap the lists now
+		// If the miner requests tip enforcement, cap the lists now.
+		// XDC: special-txs (BlockSigners/RandomizeSMC) are created with
+		// gasPrice=0 and must NOT be filtered by tip enforcement — the miner
+		// must include them regardless of their effective tip.
+		// Mirrors XDPoSChain/core/txpool/txpool.go:572-574:
+		//   if !tx.IsSpecialTransaction() && tx.GasPrice().Cmp(baseFee) < 0
 		if filter.MinTip != nil || filter.GasLimitCap != 0 {
 			for i, tx := range txs {
 				if filter.MinTip != nil {
@@ -565,12 +581,14 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 					GasFeeCap: uint256.MustFromBig(txs[i].GasFeeCap()),
 					GasTipCap: uint256.MustFromBig(txs[i].GasTipCap()),
 					Gas:       txs[i].Gas(),
+					BlobGas:   txs[i].BlobGas(),
 				}
 			}
 			pending[addr] = lazies
+			count += len(lazies)
 		}
 	}
-	return pending
+	return pending, count
 }
 
 // ValidateTxBasics checks whether a transaction is valid according to the consensus
@@ -578,18 +596,32 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 // This check is meant as an early check which only needs to be performed once,
 // and does not require the pool mutex to be held.
 func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
+	// XDC: special-txs (BlockSigners/RandomizeSMC) are created with gasPrice=0
+	// by design — use MinTip=0 for them so ValidateTransaction's tip-cap check
+	// passes. Mirrors XDPoSChain/core/txpool/txpool.go:710-730 where the entire
+	// ErrZeroGasPrice / ErrUnderMinGasPrice block is guarded by
+	// !tx.IsSpecialTransaction().
+	minTip := pool.gasTip.Load().ToBig()
+	if tx.IsSpecialTransaction() {
+		minTip = new(big.Int) // zero — price-exempt
+	}
+	accept := uint8(0) |
+		1<<types.LegacyTxType |
+		1<<types.AccessListTxType |
+		1<<types.DynamicFeeTxType |
+		1<<types.SetCodeTxType
+	// EIP-8141: frame transactions enter the pool only once the FrameTx fork
+	// is active at the head. Every preset configuration leaves FrameTxTime
+	// unset, so the accept bit stays off and the pool keeps rejecting the
+	// type (the static fork gate is a second, independent layer).
+	if head := pool.currentHead.Load(); head != nil && pool.chainconfig.IsFrameTx(head.Number, head.Time) {
+		accept |= 1 << types.FrameTxType
+	}
 	opts := &txpool.ValidationOptions{
-		Config: pool.chainconfig,
-		Accept: 0 |
-			1<<types.LegacyTxType |
-			1<<types.AccessListTxType |
-			1<<types.DynamicFeeTxType |
-			1<<types.SetCodeTxType,
+		Config:  pool.chainconfig,
+		Accept:  accept,
 		MaxSize: txMaxSize,
-		MinTip:  pool.gasTip.Load().ToBig(),
-		NotSigner: func(from common.Address) bool {
-			return pool.isSigner != nil && !pool.isSigner(from)
-		},
+		MinTip:  minTip,
 	}
 	return txpool.ValidateTransaction(tx, pool.currentHead.Load(), pool.signer, opts)
 }
@@ -597,9 +629,23 @@ func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
+	// XDC: reject txs whose sender or recipient is on the XDC blacklist, once
+	// the chain has passed BlackListHFNumber. Canonical XDPoSChain enforces this
+	// at the mempool layer — without it we'd accept and propagate txs that the
+	// network will then drop on import.
+	if head := pool.currentHead.Load(); head != nil && head.Number.Uint64() >= common.BlackListHFNumber {
+		from, err := types.Sender(pool.signer, tx)
+		if err != nil {
+			return err
+		}
+		if common.IsInBlacklist(&from) {
+			return fmt.Errorf("%w: sender %v", ErrBlacklisted, from.Hex())
+		}
+		if common.IsInBlacklist(tx.To()) {
+			return fmt.Errorf("%w: recipient %v", ErrBlacklisted, tx.To().Hex())
+		}
+	}
 	opts := &txpool.ValidationOptionsWithState{
-		Config: pool.chainconfig,
-
 		State: pool.currentState,
 
 		FirstNonceGap:    nil, // Pool allows arbitrary arrival order, don't invalidate nonce gaps
@@ -613,42 +659,37 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
 		ExistingCost: func(addr common.Address, nonce uint64) *big.Int {
 			if list := pool.pending[addr]; list != nil {
 				if tx := list.txs.Get(nonce); tx != nil {
-					return tx.Cost()
+					// EIP-8141: share the frame sender-cost definition with
+					// the admission gate (raw tx.Cost() would multiply the
+					// frame fee cap by ~200k gas and produce negative
+					// bumps). now=0 — the state-free structural view — so
+					// that prev equals the transaction's totalcost
+					// contribution exactly, even for a sponsored tx whose
+					// expiry deadline passed while still pending (its
+					// totalcost entry was recorded with now=0; the head-time
+					// view would temporarily reclassify it as unsponsored
+					// and understate the replacement bump by up to feeCap).
+					return core.FrameTxSenderCost(tx, 0)
 				}
 			}
 			return nil
 		},
-
-		Trc21FeeCapacity: pool.trc21FeeCapacity,
-
-		PendingNonce: func(addr common.Address) uint64 {
-			return pool.pendingNonces.get(addr)
-		},
-
-		CurrentNumber: func() *big.Int {
-			header := pool.currentHead.Load()
-			if header == nil {
-				return nil
-			}
-			return header.Number
-		},
+		Now: headTime(pool),
 	}
 	if err := txpool.ValidateTransactionWithState(tx, pool.signer, opts); err != nil {
 		return err
 	}
-
-	// Validate minFee slot for XDCZ
-	if tx.IsXDCZApplyTransaction(pool.chainconfig) {
-		copyState := opts.State.Copy()
-		return core.ValidateXDCZApplyTransaction(pool.chain, nil, copyState, common.BytesToAddress(tx.Data()[4:]))
+	// EIP-8141: simulate the public-mempool validation prefix against an
+	// isolated state copy and reject trace-rule violations (banned opcodes,
+	// disallowed storage access, illegal call targets, reverting validation
+	// frames, missing APPROVEs). Inert while the FrameTx fork is inactive.
+	if tx.Type() == types.FrameTxType {
+		if head := pool.currentHead.Load(); head != nil && pool.chainconfig.IsFrameTx(head.Number, head.Time) {
+			if err := core.SimulateFrameValidation(pool.currentState, pool.chainconfig, head, tx); err != nil {
+				return err
+			}
+		}
 	}
-
-	// Validate balance slot, token decimal for XDCX
-	if tx.IsXDCXApplyTransaction(pool.chainconfig) {
-		copyState := opts.State.Copy()
-		return core.ValidateXDCXApplyTransaction(pool.chain, nil, copyState, common.BytesToAddress(tx.Data()[4:]))
-	}
-
 	return pool.validateAuth(tx)
 }
 
@@ -660,7 +701,22 @@ func (pool *LegacyPool) checkDelegationLimit(tx *types.Transaction) error {
 	from, _ := types.Sender(pool.signer, tx) // validated
 
 	// Short circuit if the sender has neither delegation nor pending delegation.
-	if pool.currentState.GetCodeHash(from) == types.EmptyCodeHash && !pool.all.hasAuth(from) {
+	//
+	// An account with no state object has no code hash at all: StateDB.GetCodeHash
+	// returns the zero hash (core/state/statedb.go GetCodeHash), not EmptyCodeHash.
+	// Treating the zero hash as "has code" misclassifies every never-touched
+	// account as EIP-7702 delegated. Reachable on XDC because gasless special
+	// txs (gasPrice=0, value=0) pass the balance check from a zero-balance,
+	// non-existent account, so validateAuth is reached where upstream it is not
+	// (upstream, such a tx is rejected with ErrInsufficientFunds first).
+	//
+	// This is safe: an EIP-7702 delegation indicator is the 23-byte sequence
+	// 0xef0100 || address, and keccak256 of that can be neither the zero hash
+	// nor keccak256(nil). So the zero hash provably means "no delegation", and
+	// the added disjunct removes only false positives — a genuinely delegated
+	// account still hits the one-in-flight cap below.
+	codeHash := pool.currentState.GetCodeHash(from)
+	if (codeHash == types.EmptyCodeHash || codeHash == (common.Hash{})) && !pool.all.hasAuth(from) {
 		return nil
 	}
 	pending := pool.pending[from]
@@ -716,6 +772,128 @@ func (pool *LegacyPool) validateAuth(tx *types.Transaction) error {
 	return nil
 }
 
+// promoteSpecialTx directly inserts a special XDC tx (BlockSigners/RandomizeSMC)
+// into the pending pool at its current nonce, bypassing pool-full eviction and
+// underpriced checks. It prevents duplicate special-txs at the same nonce.
+//
+// Called only when IsSigner confirms the sender is a registered masternode;
+// for remote special-txs without IsSigner confirmation the normal add() path
+// is used (price checks are still skipped via ValidateTxBasics/validateTx).
+//
+// Mirrors XDPoSChain/core/txpool/txpool.go:952-988 promoteSpecialTx.
+//
+// DEVIATION from canonical (fixes #932): canonical always returns
+// ErrDuplicateSpecialTransaction when an existing special-tx is at the nonce.
+// This port additionally allows replacement when the incumbent special-tx
+// targets a BlockSigners signing slot whose window has expired
+// (head > targetBlock + epoch*2, matching BlockSigner.sol:21 invariant).
+// Without this escape hatch, a stale signing tx submitted during a catch-up
+// burst would permanently jam the nonce sequence: the reverted tx blocks all
+// later txs, and ErrDuplicateSpecialTransaction blocks the replacement.
+func (pool *LegacyPool) promoteSpecialTx(from common.Address, tx *types.Transaction) (bool, error) {
+	if pool.pending[from] == nil {
+		pool.pending[from] = newList(true)
+	}
+	list := pool.pending[from]
+
+	// Reject if an existing special-tx is already at this nonce, UNLESS the
+	// existing tx is an expired BlockSigners signing tx.
+	// Mirrors XDPoSChain/core/txpool/txpool.go:960:
+	//   if old.IsSpecialTransaction() { return false, ErrDuplicateSpecialTransaction }
+	// Deviation: allow replacement when the old tx's signing window is expired.
+	if old := list.txs.Get(tx.Nonce()); old != nil {
+		if old.IsSpecialTransaction() && !pool.isSigningTxExpired(old) {
+			// Incumbent is a still-valid special tx — reject replacement.
+			// Mirrors XDPoSChain/core/txpool/txpool.go:960.
+			return false, ErrDuplicateSpecialTransaction
+		}
+		// Either the incumbent is a normal tx, or it is an expired signing tx.
+		// In both cases evict it from global index; Put() below overwrites list.txs.
+		if old.IsSpecialTransaction() {
+			log.Debug("XDC: replacing expired BlockSigners signing tx",
+				"nonce", tx.Nonce(), "from", from, "oldHash", old.Hash(), "newHash", tx.Hash())
+		}
+		pool.all.Remove(old.Hash())
+		pool.releaseFrameReservations(old)
+		pool.priced.Removed(1)
+		pendingReplaceMeter.Mark(1)
+	}
+
+	list.txs.Put(tx)
+	if cost, overflow := uint256.FromBig(tx.Cost()); !overflow {
+		if list.costcap.Cmp(cost) < 0 {
+			list.costcap = cost
+		}
+	}
+	if gas := tx.Gas(); list.gascap < gas {
+		list.gascap = gas
+	}
+	if pool.all.Get(tx.Hash()) == nil {
+		pool.all.Add(tx)
+		pool.priced.Put(tx)
+	}
+	pool.pendingNonces.set(from, tx.Nonce()+1)
+	pool.queueTxEvent(tx)
+	log.Trace("XDC: fast-pathed special signing tx to pending", "hash", tx.Hash(), "from", from, "to", tx.To(), "nonce", tx.Nonce())
+	return true, nil
+}
+
+// isSigningTxExpired reports whether tx is a BlockSigners signing tx whose
+// signing window has closed at the current chain head.
+//
+// BlockSigner.sol line 21:
+//
+//	require(block.number <= _blockNumber.add(epochNumber * 2));
+//
+// So the tx is expired when: currentHead > targetBlock + epoch*2.
+//
+// The tx data layout (from contracts.CreateTxSign / common.HexSignMethod):
+//
+//	bytes[0:4]   selector (0xe341eaa4)
+//	bytes[4:36]  uint256 blockNumber (big-endian)
+//	bytes[36:68] bytes32 blockHash
+//
+// Returns false (not expired) if:
+//   - tx is not a BlockSigners tx (no risk of expiry deadlock)
+//   - data is malformed (can't decode → play it safe, treat as fresh)
+//   - XDPoS config not available
+//   - current head is not yet past the expiry point
+func (pool *LegacyPool) isSigningTxExpired(tx *types.Transaction) bool {
+	if tx.To() == nil || *tx.To() != common.BlockSignersBinary {
+		return false // not a signing tx
+	}
+	cfg := pool.chainconfig
+	if cfg.XDPoS == nil {
+		return false
+	}
+	data := tx.Data()
+	if len(data) < 68 {
+		return false // malformed — can't decode, keep as-is
+	}
+	// data[4:36] is the uint256 blockNumber (big-endian, 32 bytes)
+	targetBlock := new(big.Int).SetBytes(data[4:36]).Uint64()
+	epoch := cfg.XDPoS.Epoch
+
+	currentHead := pool.currentHead.Load()
+	if currentHead == nil {
+		return false
+	}
+	headNum := currentHead.Number.Uint64()
+
+	// Expired when head > targetBlock + epoch*2.
+	// Use overflow-safe comparison: epoch*2 can exceed uint64 on a misconfigured
+	// chain (epoch=0 is the only risky case, and epoch=0 means the contract has
+	// no window, so nothing is ever expired → return false).
+	if epoch == 0 {
+		return false
+	}
+	expiry := targetBlock + epoch*2
+	if expiry < targetBlock {
+		return false // overflow guard
+	}
+	return headNum > expiry
+}
+
 // add validates a transaction and inserts it into the non-executable queue for later
 // pending promotion and execution. If the transaction is a replacement for an already
 // pending or queued one, it overwrites the previous transaction if its price is higher.
@@ -737,6 +915,34 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	// already validated by this point
 	from, _ := types.Sender(pool.signer, tx)
 
+	// XDC: fast-path for special-txs from registered masternode signers.
+	// When IsSigner is wired and the sender is a known signer, special-txs
+	// (BlockSigners/RandomizeSMC) go directly to pending at the expected nonce,
+	// bypassing pool-full eviction and underpriced checks entirely.
+	// Mirrors XDPoSChain/core/txpool/txpool.go:779-780:
+	//   if tx.IsSpecialTransaction() && pool.IsSigner != nil && pool.IsSigner(from)
+	//      && pool.pendingNonces.get(from) == tx.Nonce()
+	//
+	// Extension (#932): also route through promoteSpecialTx when the tx nonce
+	// is BELOW pendingNonces and there is an expired special tx at that nonce.
+	// This handles the "jammed nonce" recovery case: a stale signing tx is stuck
+	// in pending (pendingNonces advanced past it), and a fresh replacement tx
+	// cannot pass the price-bump check in list.Add (gasPrice=0 on both).
+	if tx.IsSpecialTransaction() && pool.IsSigner != nil && pool.IsSigner(from) {
+		pendingN := pool.pendingNonces.get(from)
+		if pendingN == tx.Nonce() {
+			// Normal case: tx nonce matches the expected next pending nonce.
+			return pool.promoteSpecialTx(from, tx)
+		}
+		if pendingN > tx.Nonce() && pool.pending[from] != nil {
+			if old := pool.pending[from].txs.Get(tx.Nonce()); old != nil && pool.isSigningTxExpired(old) {
+				// Expired special tx at a lower nonce — allow replacement via
+				// promoteSpecialTx which will evict the old tx and insert the new one.
+				return pool.promoteSpecialTx(from, tx)
+			}
+		}
+	}
+
 	// If the address is not yet known, request exclusivity to track the account
 	// only by this subpool until all transactions are evicted
 	var (
@@ -755,25 +961,23 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 			// by a return statement before running deferred methods. Take care with
 			// removing or subscoping err as it will break this clause.
 			if err != nil {
-				pool.releaseReservation(from)
+				pool.reserver.Release(from)
 			}
 		}()
 	}
-
-	// Special transactions must also honor the reservation semantics to keep
-	// the coordinator's ownership accounting balanced.
-	if tx.IsSpecialTransaction() && pool.IsSigner(from) && pool.pendingNonces.get(from) == tx.Nonce() {
-		return pool.promoteSpecialTx(from, tx)
-	}
-
-	// If the transaction pool is full, discard underpriced transactions
-	if uint64(pool.all.Slots()+numSlots(tx)) > pool.config.GlobalSlots+pool.config.GlobalQueue {
+	// If the transaction pool is full, discard underpriced transactions.
+	// XDC: special-txs are never price-evicted — they bypass pool-full discard
+	// entirely. Mirrors XDPoSChain/core/txpool/txpool.go:779 fast-path which
+	// returns before the pool-full check.
+	if uint64(pool.all.Slots()+numSlots(tx)) > pool.config.GlobalSlots+pool.config.GlobalQueue &&
+		!tx.IsSpecialTransaction() {
 		// If the new transaction is underpriced, don't accept it
 		if pool.priced.Underpriced(tx) {
 			log.Trace("Discarding underpriced transaction", "hash", hash, "gasTipCap", tx.GasTipCap(), "gasFeeCap", tx.GasFeeCap())
 			underpricedTxMeter.Mark(1)
 			return false, txpool.ErrUnderpriced
 		}
+
 		// We're about to replace a transaction. The reorg does a more thorough
 		// analysis of what to remove and how, but it runs async. We don't want to
 		// do too many replacements between reorg-runs, so we cap the number of
@@ -781,6 +985,38 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 		if pool.changesSinceReorg > int(pool.config.GlobalSlots/4) {
 			throttleTxMeter.Mark(1)
 			return false, ErrTxPoolOverflow
+		}
+
+		// EIP-8141 eviction ordering: expired frame transactions are
+		// evicted before price-based selection ("invalid transactions
+		// first" — an expired expiry deadline makes the transaction
+		// unexecutable, see the expiry verifier runtime).
+		if pool.chainconfig.IsFrameTx(pool.currentHead.Load().Number, pool.currentHead.Load().Time) {
+			pool.evictExpiredFrameTxs()
+		}
+
+		// EIP-8141 eviction ordering, second tier: among transactions
+		// with expiry deadlines, prefer evicting the nearest deadline
+		// before falling back to lowest-priority eviction.
+		if need := pool.all.Slots() - int(pool.config.GlobalSlots+pool.config.GlobalQueue) + numSlots(tx); need > 0 {
+			for _, info := range pool.frameRes.nearestExpiryReservations(pool.currentHead.Load().Time, need) {
+				var victim common.Hash
+				if l := pool.pending[info.sender]; l != nil {
+					if t := l.txs.Get(info.nonce); t != nil {
+						victim = t.Hash()
+					}
+				}
+				if victim == (common.Hash{}) {
+					if l, ok := pool.queue.get(info.sender); ok {
+						if t := l.txs.Get(info.nonce); t != nil {
+							victim = t.Hash()
+						}
+					}
+				}
+				if victim != (common.Hash{}) {
+					pool.removeTx(victim, false, true)
+				}
+			}
 		}
 
 		// New transaction is better than our worse ones, make room for it.
@@ -826,6 +1062,61 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 		}
 	}
 
+	// EIP-8141 payer reservations: the validation prefix was already
+	// simulated in validateTx (B4); here the payer's pending max-fee exposure
+	// is accounted. These checks are non-mutating and precede any pool
+	// mutation; reservations are taken only after the insertion below
+	// succeeds, so failed admissions cannot leak reservations. Inert while
+	// the FrameTx fork is inactive (validateTx rejects the type earlier).
+	var frameInfo *frameReservation
+	if tx.Type() == types.FrameTxType {
+		if head := pool.currentHead.Load(); head != nil && pool.chainconfig.IsFrameTx(head.Number, head.Time) {
+			ftx := tx.FramePayload()
+			info, err := frameTxPayerInfo(ftx, pool.currentState, head.Time)
+			if err != nil {
+				return false, err
+			}
+			frameInfo = info
+			balance := pool.currentState.GetBalance(info.payer).ToBig()
+			// Canonical paymaster instances additionally commit their
+			// pending delayed withdrawal (storage slot 1) against the
+			// reservation formula; zero for every other payer class.
+			withdrawal := pendingWithdrawalAmount(pool.currentState, info.payer, info.class)
+			// An existing frame transaction from this sender at the same nonce
+			// (pending or queued) is a replacement, not a competing admission:
+			// its reservation is shifted, not double-counted.
+			var oldTx *types.Transaction
+			if l := pool.pending[from]; l != nil {
+				oldTx = l.txs.Get(tx.Nonce())
+			}
+			if oldTx == nil {
+				if l, ok := pool.queue.get(from); ok {
+					oldTx = l.txs.Get(tx.Nonce())
+				}
+			}
+			switch {
+			case oldTx != nil:
+				if err := pool.frameRes.checkReplace(from, oldTx, tx, ftx, info, balance, withdrawal, pool.config.PriceBump); err != nil {
+					return false, err
+				}
+			case pool.frameSenderPending(from):
+				// Specification: at most one PENDING frame transaction per
+				// sender (a same-nonce replacement was handled above). The
+				// guard is PENDING-only: a queued (gapped) frame transaction
+				// holds a payer reservation but must not refuse the sender's
+				// further admissions — otherwise a gapped frame tx would
+				// brick the sender's fillable nonces (self-inflicted
+				// deadlock). The one-pending invariant is enforced at
+				// promotion time instead.
+				return false, ErrFrameSenderPendingLimit
+			default:
+				if err := pool.frameRes.checkAdmit(info, balance, withdrawal); err != nil {
+					return false, err
+				}
+			}
+		}
+	}
+
 	// Try to replace an existing transaction in the pending pool
 	if list := pool.pending[from]; list != nil && list.Contains(tx.Nonce()) {
 		// Nonce already pending, check if required price bump is met
@@ -839,6 +1130,17 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 			pool.all.Remove(old.Hash())
 			pool.priced.Removed(1)
 			pendingReplaceMeter.Mark(1)
+			// EIP-8141: shift the payer reservation atomically with the
+			// replacement; a non-frame replacement releases the frame
+			// reservation entirely.
+			if frameInfo != nil {
+				pool.frameRes.applyReplacement(from, frameInfo)
+			} else {
+				// A non-frame replacement displaces the frame transaction at
+				// this exact nonce; release only that reservation (the
+				// sender's other frame reservations, if any, stay intact).
+				pool.frameRes.release(from, old.Nonce())
+			}
 		}
 		pool.all.Add(tx)
 		pool.priced.Put(tx)
@@ -853,6 +1155,12 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	replaced, err = pool.enqueueTx(hash, tx, true)
 	if err != nil {
 		return false, err
+	}
+	if frameInfo != nil {
+		// The transaction is admitted (queued or promotable): take the
+		// reservation. A queued replacement it displaced was released through
+		// removeTx inside enqueueTx.
+		pool.frameRes.take(from, frameInfo)
 	}
 
 	log.Trace("Pooled new future transaction", "hash", hash, "from", from, "to", tx.To())
@@ -921,6 +1229,7 @@ func (pool *LegacyPool) promoteTx(addr common.Address, hash common.Hash, tx *typ
 	inserted, old := list.Add(tx, pool.config.PriceBump)
 	if !inserted {
 		// An older transaction was better, discard this
+		pool.releaseFrameReservations(tx)
 		pool.all.Remove(hash)
 		pool.priced.Removed(1)
 		pendingDiscardMeter.Mark(1)
@@ -928,6 +1237,7 @@ func (pool *LegacyPool) promoteTx(addr common.Address, hash common.Hash, tx *typ
 	}
 	// Otherwise discard any previous transaction and mark this
 	if old != nil {
+		pool.releaseFrameReservations(old)
 		pool.all.Remove(old.Hash())
 		pool.priced.Removed(1)
 		pendingReplaceMeter.Mark(1)
@@ -943,87 +1253,27 @@ func (pool *LegacyPool) promoteTx(addr common.Address, hash common.Hash, tx *typ
 	return true
 }
 
-func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transaction) (bool, error) {
-	list := pool.pending[addr]
-	newPending := list == nil
-	if newPending {
-		list = newList(true)
-	}
-
-	base := new(uint256.Int).Set(list.totalcost)
-	old := list.txs.Get(tx.Nonce())
-	if old != nil {
-		if old.IsSpecialTransaction() {
-			return false, txpool.ErrDuplicateSpecialTransaction
-		}
-		// Old is being replaced, subtract old cost
-		if _, underflow := base.SubOverflow(base, uint256.MustFromBig(old.Cost())); underflow {
-			panic("totalcost underflow")
-		}
-	}
-	// Keep overflow behavior aligned with list.Add.
-	cost, overflow := uint256.FromBig(tx.Cost())
-	if overflow {
-		return false, txpool.ErrSpecialTxCostOverflow
-	}
-	total, overflow := new(uint256.Int).AddOverflow(base, cost)
-	if overflow {
-		return false, txpool.ErrSpecialTxCostOverflow
-	}
-	list.totalcost = total
-	if newPending {
-		pool.pending[addr] = list
-		pendingAddrsGauge.Inc(1)
-	}
-
-	// Otherwise discard any previous transaction and mark this
-	if old != nil {
-		pool.all.Remove(old.Hash())
-		pool.priced.Removed(1)
-		pendingReplaceMeter.Mark(1)
-	} else {
-		// Nothing was replaced, bump the pending counter
-		pendingGauge.Inc(1)
-	}
-	list.txs.Put(tx)
-	if cost := tx.Cost(); list.costcap.Cmp(cost) < 0 {
-		list.costcap = cost
-	}
-	if gas := tx.Gas(); list.gascap < gas {
-		list.gascap = gas
-	}
-	// Failsafe to work around direct pending inserts (tests)
-	if pool.all.Get(tx.Hash()) == nil {
-		pool.all.Add(tx)
-	}
-	// Set the potentially new pending nonce and notify any subsystems of the new tx
-	pool.queue.bump(addr)
-	pool.pendingNonces.set(addr, tx.Nonce()+1)
-	pool.queueTxEvent(tx)
-	return true, nil
-}
-
-// AddRemotes enqueues a batch of transactions into the pool if they are valid.
+// addRemotes enqueues a batch of transactions into the pool if they are valid.
 // Full pricing constraints will apply.
 //
 // This method is used to add transactions from the p2p network and does not wait for pool
 // reorganization and internal event propagation.
-func (pool *LegacyPool) AddRemotes(txs []*types.Transaction) []error {
+func (pool *LegacyPool) addRemotes(txs []*types.Transaction) []error {
 	return pool.Add(txs, false)
 }
 
 // addRemote enqueues a single transaction into the pool if it is valid. This is a convenience
-// wrapper around AddRemotes.
+// wrapper around addRemotes.
 func (pool *LegacyPool) addRemote(tx *types.Transaction) error {
-	return pool.AddRemotes([]*types.Transaction{tx})[0]
+	return pool.addRemotes([]*types.Transaction{tx})[0]
 }
 
-// AddRemotesSync is like AddRemotes, but waits for pool reorganization. Tests use this method.
+// addRemotesSync is like addRemotes, but waits for pool reorganization. Tests use this method.
 func (pool *LegacyPool) addRemotesSync(txs []*types.Transaction) []error {
 	return pool.Add(txs, true)
 }
 
-// This is like AddRemotes with a single transaction, but waits for pool reorganization. Tests use this method.
+// This is like addRemotes with a single transaction, but waits for pool reorganization. Tests use this method.
 func (pool *LegacyPool) addRemoteSync(tx *types.Transaction) error {
 	return pool.Add([]*types.Transaction{tx}, true)[0]
 }
@@ -1050,6 +1300,7 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
 		// in transactions before obtaining lock
 		if err := pool.ValidateTxBasics(tx); err != nil {
 			errs[i] = err
+			log.Trace("Discarding invalid transaction", "hash", tx.Hash(), "err", err)
 			invalidTxMeter.Mark(1)
 			continue
 		}
@@ -1059,8 +1310,7 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
 		return errs
 	}
 
-	// While holding the pool lock, process all txs and let addTxsLocked
-	// populate errs in-place for those that passed the basic prechecks.
+	// Process all the new transaction and merge any errors into the original slice
 	pool.mu.Lock()
 	dirtyAddrs := pool.addTxsLocked(txs, errs)
 	pool.mu.Unlock()
@@ -1131,17 +1381,31 @@ func (pool *LegacyPool) get(hash common.Hash) *types.Transaction {
 	return pool.all.Get(hash)
 }
 
-type ownerReserver interface {
-	Owns(common.Address) bool
+// GetRLP returns a RLP-encoded transaction if it is contained in the pool.
+func (pool *LegacyPool) GetRLP(hash common.Hash, _ uint) []byte {
+	tx := pool.all.Get(hash)
+	if tx == nil {
+		return nil
+	}
+	encoded, err := rlp.EncodeToBytes(tx)
+	if err != nil {
+		log.Error("Failed to encoded transaction in legacy pool", "hash", hash, "err", err)
+		return nil
+	}
+	return encoded
 }
 
-func (pool *LegacyPool) releaseReservation(addr common.Address) {
-	if ownerAware, ok := pool.reserver.(ownerReserver); ok {
-		if !ownerAware.Owns(addr) {
-			return
-		}
+// GetMetadata returns the transaction type and transaction size with the
+// given transaction hash.
+func (pool *LegacyPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
+	tx := pool.all.Get(hash)
+	if tx == nil {
+		return nil
 	}
-	_ = pool.reserver.Release(addr)
+	return &txpool.TxMetadata{
+		Type: tx.Type(),
+		Size: tx.Size(),
+	}
 }
 
 // Has returns an indicator whether txpool has a transaction cached with the
@@ -1150,10 +1414,68 @@ func (pool *LegacyPool) Has(hash common.Hash) bool {
 	return pool.all.Get(hash) != nil
 }
 
+// releaseFrameReservations releases the frame payer reservation held by each
+// frame transaction in txs, keyed by the transaction's recovered sender and
+// nonce. Every removal path routes through here so a reservation is released
+// at most once (release is idempotent per (sender, nonce)); reservations of
+// the sender's other frame transactions stay intact.
+func (pool *LegacyPool) releaseFrameReservations(txs ...*types.Transaction) {
+	for _, tx := range txs {
+		if tx.Type() != types.FrameTxType {
+			continue
+		}
+		if from, err := types.Sender(pool.signer, tx); err == nil {
+			pool.frameRes.release(from, tx.Nonce())
+		}
+	}
+}
+
+// frameSenderPending reports whether the sender currently has a frame
+// transaction in the pending pool. The specification admits at most one
+// PENDING frame transaction per sender; queued frame transactions (which
+// hold a payer reservation) do not count. The pool mutex must be held.
+func (pool *LegacyPool) frameSenderPending(sender common.Address) bool {
+	list := pool.pending[sender]
+	if list == nil {
+		return false
+	}
+	for _, tx := range list.Flatten() {
+		if tx.Type() == types.FrameTxType {
+			return true
+		}
+	}
+	return false
+}
+
+// evictExpiredFrameTxs removes pending frame transactions whose expiry
+// deadline has passed at the current head time. This is the first tier of
+// the specification eviction ordering (invalid transactions first, then
+// nearest expiry, then lowest priority); the remaining tiers are served by
+// the priced list, which drops lowest-priced transactions.
+func (pool *LegacyPool) evictExpiredFrameTxs() {
+	head := pool.currentHead.Load()
+	if head == nil {
+		return
+	}
+	for _, info := range pool.frameRes.expiredReservations(head.Time) {
+		if l := pool.pending[info.sender]; l != nil {
+			if tx := l.txs.Get(info.nonce); tx != nil {
+				pool.removeTx(tx.Hash(), false, true)
+				continue
+			}
+		}
+		if l, ok := pool.queue.get(info.sender); ok {
+			if tx := l.txs.Get(info.nonce); tx != nil {
+				pool.removeTx(tx.Hash(), false, true)
+			}
+		}
+	}
+}
+
 // removeTx removes a single transaction from the queue, moving all subsequent
 // transactions back to the future queue.
 //
-// If unreserve is false, the account will not be relinquished to the main txpool
+// In unreserve is false, the account will not be relinquished to the main txpool
 // even if there are no more references to it. This is used to handle a race when
 // a tx being added, and it evicts a previously scheduled tx from the same account,
 // which could lead to a premature release of the lock.
@@ -1165,7 +1487,8 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 	if tx == nil {
 		return 0
 	}
-	addr, _ := types.Sender(pool.signer, tx) // already validated during insertion
+	pool.releaseFrameReservations(tx)
+	addr, _ := types.Sender(pool.signer, tx) // already validated (and cached)
 
 	// If after deletion there are no more transactions belonging to this account,
 	// relinquish the address reservation. It's a bit convoluted do this, via a
@@ -1177,7 +1500,7 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 				_, hasQueued  = pool.queue.get(addr)
 			)
 			if !hasPending && !hasQueued {
-				pool.releaseReservation(addr)
+				pool.reserver.Release(addr)
 			}
 		}()
 	}
@@ -1245,6 +1568,8 @@ func (pool *LegacyPool) queueTxEvent(tx *types.Transaction) {
 // call those methods directly, but request them being run using requestReset and
 // requestPromoteExecutables instead.
 func (pool *LegacyPool) scheduleReorgLoop() {
+	defer pool.wg.Done()
+
 	var (
 		curDone       chan struct{} // non-nil while runReorg is active
 		nextDone      = make(chan struct{})
@@ -1327,37 +1652,26 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 	}
 	pool.mu.Lock()
 	if reset != nil {
-		// Key the Osaka gas-cap discard off the heads the pool actually lands on:
-		// an aborted reset never reaches the requested heads, and the reorg loop
-		// coalesces pending resets by replacing only the new head, so the old
-		// head goes stale. Keying off the requested heads would drop transactions
-		// still valid under the head the pool remains on. This deliberately
-		// diverges from upstream geth, which keys the discard off the requested
-		// heads.
-		oldPoolHead := pool.currentHead.Load()
-
-		// Reset from the old head to the new, rescheduling any reorged transactions
-		pool.reset(reset.oldHead, reset.newHead)
-		newPoolHead := pool.currentHead.Load()
-
-		// Discard transactions whose gas limit exceeds the cap once the reset
-		// actually moved the pool across the Osaka fork boundary.
-		if newPoolHead != nil && oldPoolHead != nil &&
-			pool.chainconfig.IsOsaka(newPoolHead.Number) && !pool.chainconfig.IsOsaka(oldPoolHead.Number) {
-			pool.dropWhere(func(tx *types.Transaction) bool {
-				return tx.Gas() <= params.MaxTxGas
-			}, "gas-limit-cap")
-		}
-
-		// Discard transactions a gas schedule fork priced out of the pool. Sweeping
-		// must precede promoteExecutables, which does not check price and would
-		// otherwise pull them back into pending.
-		if floor, previous := pool.raisedGasPriceFloor(oldPoolHead, newPoolHead); floor != nil {
-			if dropped := pool.sweepUnderpriced(floor); dropped > 0 {
-				belowFloorMeter.Mark(int64(dropped))
-				log.Info("Dropped transactions below raised gas price floor", "dropped", dropped, "floor", floor, "previous", previous)
+		if reset.newHead != nil && reset.oldHead != nil {
+			// Discard the transactions with the gas limit higher than the cap at the
+			// Osaka fork boundary.
+			if pool.chainconfig.IsOsaka(reset.newHead.Number, reset.newHead.Time) &&
+				!pool.chainconfig.IsOsaka(reset.oldHead.Number, reset.oldHead.Time) {
+				var hashes []common.Hash
+				pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
+					if tx.Gas() > params.MaxTxGas {
+						hashes = append(hashes, hash)
+					}
+					return true
+				})
+				for _, hash := range hashes {
+					pool.removeTx(hash, true, true)
+				}
 			}
 		}
+		// Reset from the old head to the new, rescheduling any reorged transactions
+		pool.reset(reset.oldHead, reset.newHead)
+
 		// Nonces were reset, discard any events that became stale
 		for addr := range events {
 			events[addr].Forward(pool.pendingNonces.get(addr))
@@ -1377,9 +1691,8 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 	if reset != nil {
 		pool.demoteUnexecutables()
 		if reset.newHead != nil {
-			nextNumber := new(big.Int).Add(reset.newHead.Number, common.Big1)
-			if pool.chainconfig.IsEIP1559(nextNumber) {
-				pendingBaseFee := eip1559.CalcBaseFeeForBlockNumber(pool.chainconfig, nextNumber)
+			if pool.chainconfig.IsLondon(new(big.Int).Add(reset.newHead.Number, big.NewInt(1))) {
+				pendingBaseFee := eip1559.CalcBaseFee(pool.chainconfig, reset.newHead)
 				pool.priced.SetBaseFee(pendingBaseFee)
 			} else {
 				pool.priced.Reheap()
@@ -1502,14 +1815,21 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 	if newHead == nil {
 		newHead = pool.chain.CurrentBlock() // Special case during testing
 	}
-	statedb, err := pool.chain.StateAt(newHead.Root)
+	statedb, err := pool.chain.StateAt(newHead)
 	if err != nil {
+		// XDC A.99.6: fast-sync checkpointSyncNoState — real head state root not yet
+		// in trie DB. Keep old state and skip reset rather than flooding ERROR log.
+		// Refs: #1037.
+		if core.CheckpointSyncNoStateActive.Load() {
+			log.Debug("legacypool: head state not yet available (snap-heal pending), skipping reset",
+				"block", newHead.Number, "root", newHead.Root)
+			return
+		}
 		log.Error("Failed to reset txpool state", "err", err)
 		return
 	}
 	pool.currentHead.Store(newHead)
 	pool.currentState = statedb
-	pool.trc21FeeCapacity = statedb.GetTRC21FeeCapacityFromStateWithCache(newHead.Root)
 	pool.pendingNonces = newNoncer(statedb)
 
 	// Inject any transactions discarded due to reorgs
@@ -1522,18 +1842,13 @@ func (pool *LegacyPool) reset(oldHead, newHead *types.Header) {
 // future queue to the set of pending transactions. During this process, all
 // invalidated transactions (low nonce, low balance) are deleted.
 func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.Transaction {
-	head := pool.currentHead.Load()
-	gasLimit := head.GasLimit
-	// Pooled txs can only be included from the next block onwards, so affordability
-	// checks below resolve the gas schedule at that height.
-	nextNumber := new(big.Int).Add(head.Number, common.Big1)
-	promotable, dropped, removedAddresses := pool.queue.promoteExecutables(accounts, gasLimit, pool.currentState, pool.pendingNonces, pool.trc21FeeCapacity, nextNumber, pool.chainconfig)
+	gasLimit := pool.currentHead.Load().GasLimit
+	promotable, dropped, removedAddresses := pool.queue.promoteExecutables(accounts, gasLimit, pool.currentState, pool.pendingNonces, pool.frameSenderPending)
 
 	// promote all promotable transactions
 	promoted := make([]*types.Transaction, 0, len(promotable))
 	for _, tx := range promotable {
-		// already validated during pool admission
-		from, _ := types.Sender(pool.signer, tx)
+		from, _ := types.Sender(pool.signer, tx) // already validated
 		if pool.promoteTx(from, tx.Hash(), tx) {
 			promoted = append(promoted, tx)
 		}
@@ -1541,6 +1856,9 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 
 	// remove all removable transactions
 	for _, hash := range dropped {
+		if tx := pool.all.Get(hash); tx != nil {
+			pool.releaseFrameReservations(tx)
+		}
 		pool.all.Remove(hash)
 	}
 	pool.priced.Removed(len(dropped))
@@ -1549,7 +1867,7 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 	for _, addr := range removedAddresses {
 		_, hasPending := pool.pending[addr]
 		if !hasPending {
-			pool.releaseReservation(addr)
+			pool.reserver.Release(addr)
 		}
 	}
 	return promoted
@@ -1594,6 +1912,7 @@ func (pool *LegacyPool) truncatePending() {
 					list := pool.pending[offenders[i]]
 
 					caps := list.Cap(list.Len() - 1)
+					pool.releaseFrameReservations(caps...)
 					for _, tx := range caps {
 						// Drop the transaction from the global pools too
 						hash := tx.Hash()
@@ -1605,6 +1924,7 @@ func (pool *LegacyPool) truncatePending() {
 					}
 					pool.priced.Removed(len(caps))
 					pendingGauge.Dec(int64(len(caps)))
+
 					pending--
 				}
 			}
@@ -1618,6 +1938,7 @@ func (pool *LegacyPool) truncatePending() {
 				list := pool.pending[addr]
 
 				caps := list.Cap(list.Len() - 1)
+				pool.releaseFrameReservations(caps...)
 				for _, tx := range caps {
 					// Drop the transaction from the global pools too
 					hash := tx.Hash()
@@ -1642,6 +1963,9 @@ func (pool *LegacyPool) truncateQueue() {
 
 	// Remove all removable transactions from the lookup and global price list
 	for _, hash := range removed {
+		if tx := pool.all.Get(hash); tx != nil {
+			pool.releaseFrameReservations(tx)
+		}
 		pool.all.Remove(hash)
 	}
 	pool.priced.Removed(len(removed))
@@ -1649,7 +1973,7 @@ func (pool *LegacyPool) truncateQueue() {
 	for _, addr := range removedAddresses {
 		_, hasPending := pool.pending[addr]
 		if !hasPending {
-			pool.releaseReservation(addr)
+			pool.reserver.Release(addr)
 		}
 	}
 }
@@ -1663,11 +1987,7 @@ func (pool *LegacyPool) truncateQueue() {
 // to trigger a re-heap is this function
 func (pool *LegacyPool) demoteUnexecutables() {
 	// Iterate over all accounts and demote any non-executable transactions
-	head := pool.currentHead.Load()
-	gasLimit := head.GasLimit
-	// Pending txs can only be included from the next block onwards, so affordability
-	// checks below resolve the gas schedule at that height.
-	nextNumber := new(big.Int).Add(head.Number, common.Big1)
+	gasLimit := pool.currentHead.Load().GasLimit
 	for addr, list := range pool.pending {
 		nonce := pool.currentState.GetNonce(addr)
 
@@ -1678,13 +1998,15 @@ func (pool *LegacyPool) demoteUnexecutables() {
 			pool.all.Remove(hash)
 			log.Trace("Removed old pending transaction", "hash", hash)
 		}
+		pool.releaseFrameReservations(olds...)
 		// Drop all transactions that are too costly (low balance or out of gas), and queue any invalids back for later
-		drops, invalids := list.Filter(pool.currentState.GetBalance(addr), gasLimit, pool.trc21FeeCapacity, nextNumber, pool.chainconfig)
+		drops, invalids := list.Filter(pool.currentState.GetBalance(addr), gasLimit)
 		for _, tx := range drops {
 			hash := tx.Hash()
 			pool.all.Remove(hash)
 			log.Trace("Removed unpayable pending transaction", "hash", hash)
 		}
+		pool.releaseFrameReservations(drops...)
 		pendingNofundsMeter.Mark(int64(len(drops)))
 
 		for _, tx := range invalids {
@@ -1714,90 +2036,10 @@ func (pool *LegacyPool) demoteUnexecutables() {
 			delete(pool.pending, addr)
 			pendingAddrsGauge.Dec(1)
 			if _, ok := pool.queue.get(addr); !ok {
-				pool.releaseReservation(addr)
+				pool.reserver.Release(addr)
 			}
 		}
 	}
-}
-
-// raisedGasPriceFloor returns the minimum gas price of the block pending on top
-// of newHead when moving there raises it, plus the floor it replaces; nil
-// otherwise. The nil-number guard is defensive.
-func (pool *LegacyPool) raisedGasPriceFloor(oldHead, newHead *types.Header) (raised, previous *big.Int) {
-	if oldHead == nil || newHead == nil || oldHead.Number == nil || newHead.Number == nil {
-		return nil, nil
-	}
-	next := params.GetMinGasPrice(new(big.Int).Add(newHead.Number, common.Big1), pool.chainconfig)
-	prev := params.GetMinGasPrice(new(big.Int).Add(oldHead.Number, common.Big1), pool.chainconfig)
-	if next.Cmp(prev) <= 0 {
-		return nil, nil
-	}
-	return next, prev
-}
-
-// sweepUnderpriced drops every pooled transaction priced below the pool floor,
-// returning how many were dropped. A nil floor sweeps nothing.
-//
-// A gas schedule fork raises the floor above transactions admitted under the
-// previous tier; they can no longer be mined, yet keeping them pending would
-// leave pendingNonces pointing past them. The queue is swept too because
-// promoteExecutables does not check price and would promote them straight back
-// into pending. Special transactions are exempt exactly as during admission.
-//
-// The count is not split between the pending list and the queue: removing a
-// pending transaction demotes its successors into the queue, so which of the two
-// a given transaction is taken out of depends on the order the sweep reaches
-// them in, and that order comes out of a map range.
-func (pool *LegacyPool) sweepUnderpriced(minGasPrice *big.Int) int {
-	if minGasPrice == nil {
-		return 0
-	}
-	return pool.dropWhere(func(tx *types.Transaction) bool {
-		return tx.IsSpecialTransaction() || tx.GasPriceIntCmp(minGasPrice) >= 0
-	}, "below-gas-price-floor")
-}
-
-// dropWhere removes every pooled transaction the keep predicate rejects,
-// returning how many were dropped. reason lands in the per-transaction trace
-// log, so a transaction disappearing from the pool can be traced back to the
-// rule that removed it.
-//
-// The hashes to drop are collected before anything is removed: removeTx takes
-// the write lock of the lookup set, which the range below holds for reading.
-// The price heap is charged once for the whole batch rather than once per
-// removal, so it reheaps at most once instead of part way through, the way
-// SetGasTip charges its own. Hashes already gone by their turn are skipped and
-// left out of the count.
-func (pool *LegacyPool) dropWhere(keep func(tx *types.Transaction) bool, reason string) int {
-	var hashes []common.Hash
-	pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
-		if !keep(tx) {
-			hashes = append(hashes, hash)
-		}
-		return true
-	})
-
-	dropped := 0
-	for _, hash := range hashes {
-		if pool.all.Get(hash) == nil {
-			continue
-		}
-		pool.removeTx(hash, false, true)
-		log.Trace("Dropped pooled transaction", "hash", hash, "reason", reason)
-		dropped++
-	}
-	pool.priced.Removed(dropped)
-	return dropped
-}
-
-// SetSigner sets the function to identify signer addresses.
-func (pool *LegacyPool) SetSigner(f func(address common.Address) bool) {
-	pool.isSigner = f
-}
-
-// IsSigner checks if the given address is a signer.
-func (pool *LegacyPool) IsSigner(addr common.Address) bool {
-	return pool.isSigner != nil && pool.isSigner(addr)
 }
 
 // accountSet is simply a set of addresses to check for existence, and a signer
@@ -1805,7 +2047,7 @@ func (pool *LegacyPool) IsSigner(addr common.Address) bool {
 type accountSet struct {
 	accounts map[common.Address]struct{}
 	signer   types.Signer
-	cache    *[]common.Address
+	cache    []common.Address
 }
 
 // newAccountSet creates a new address set with an associated signer for sender
@@ -1838,10 +2080,9 @@ func (as *accountSet) addTx(tx *types.Transaction) {
 // reuse. The returned slice should not be changed!
 func (as *accountSet) flatten() []common.Address {
 	if as.cache == nil {
-		accounts := slices.Collect(maps.Keys(as.accounts))
-		as.cache = &accounts
+		as.cache = slices.Collect(maps.Keys(as.accounts))
 	}
-	return *as.cache
+	return as.cache
 }
 
 // merge adds all addresses from the 'other' set into 'as'.
@@ -1930,12 +2171,12 @@ func (t *lookup) Remove(hash common.Hash) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 
-	t.removeAuthorities(hash)
 	tx, ok := t.txs[hash]
 	if !ok {
 		log.Error("No transaction found to be deleted", "hash", hash)
 		return
 	}
+	t.removeAuthorities(tx)
 	t.slots -= numSlots(tx)
 	slotsGauge.Update(int64(t.slots))
 
@@ -1983,8 +2224,9 @@ func (t *lookup) addAuthorities(tx *types.Transaction) {
 
 // removeAuthorities stops tracking the supplied tx in relation to its
 // authorities.
-func (t *lookup) removeAuthorities(hash common.Hash) {
-	for addr := range t.auths {
+func (t *lookup) removeAuthorities(tx *types.Transaction) {
+	hash := tx.Hash()
+	for _, addr := range tx.SetCodeAuthorities() {
 		list := t.auths[addr]
 		// Remove tx from tracker.
 		if i := slices.Index(list, hash); i >= 0 {
@@ -2038,13 +2280,14 @@ func (pool *LegacyPool) Clear() {
 	// The transaction addition may attempt to reserve the sender addr which
 	// can't happen until Clear releases the reservation lock. Clear cannot
 	// acquire the subpool lock until the transaction addition is completed.
+
 	for addr := range pool.pending {
 		if _, ok := pool.queue.get(addr); !ok {
-			pool.releaseReservation(addr)
+			pool.reserver.Release(addr)
 		}
 	}
 	for _, addr := range pool.queue.addresses() {
-		pool.releaseReservation(addr)
+		pool.reserver.Release(addr)
 	}
 	pool.all.Clear()
 	pool.priced.Reheap()

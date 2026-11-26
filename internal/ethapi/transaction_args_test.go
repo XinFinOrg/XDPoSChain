@@ -18,116 +18,117 @@ package ethapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"math/big"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
-	ethereum "github.com/XinFinOrg/XDPoSChain"
-	"github.com/XinFinOrg/XDPoSChain/XDCx"
-	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
-	"github.com/XinFinOrg/XDPoSChain/XDCxlending"
+	"github.com/XinFinOrg/XDPoSChain"
 	"github.com/XinFinOrg/XDPoSChain/accounts"
-	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
+	"github.com/XinFinOrg/XDPoSChain/consensus/beacon"
+	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
-	"github.com/XinFinOrg/XDPoSChain/core/bloombits"
+	"github.com/XinFinOrg/XDPoSChain/core/filtermaps"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
-	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
+	"github.com/holiman/uint256"
 )
 
-// TestSetFeeDefaults tests set fee defaults.
+// TestSetFeeDefaults tests the logic for filling in default fee values works as expected.
 func TestSetFeeDefaults(t *testing.T) {
+	t.Parallel()
+
 	type test struct {
-		name     string
-		isLondon bool
-		in       *TransactionArgs
-		want     *TransactionArgs
-		err      error
+		name string
+		fork string // options: legacy, london, cancun
+		in   *TransactionArgs
+		want *TransactionArgs
+		err  error
 	}
 
 	var (
-		b           = newBackendMock()
-		zero        = (*hexutil.Big)(big.NewInt(0))
-		fortytwo    = (*hexutil.Big)(big.NewInt(42))
-		nextBaseFee = params.BaseFeeForBlock(b.config, new(big.Int).Add(b.current.Number, common.Big1))
-		maxFee      = (*hexutil.Big)(new(big.Int).Add(new(big.Int).Lsh(nextBaseFee, 1), fortytwo.ToInt()))
-		al          = &types.AccessList{types.AccessTuple{Address: common.Address{0xaa}, StorageKeys: []common.Hash{{0x01}}}}
-		authList    = []types.SetCodeAuthorization{{Address: common.Address{0xbb}}}
+		b        = newBackendMock()
+		zero     = (*hexutil.Big)(big.NewInt(0))
+		fortytwo = (*hexutil.Big)(big.NewInt(42))
+		maxFee   = (*hexutil.Big)(new(big.Int).Add(new(big.Int).Mul(b.current.BaseFee, big.NewInt(2)), fortytwo.ToInt()))
+		al       = &types.AccessList{types.AccessTuple{Address: common.Address{0xaa}, StorageKeys: []common.Hash{{0x01}}}}
+		authList = []types.SetCodeAuthorization{{Address: common.Address{0xbb}}}
 	)
 
 	tests := []test{
 		// Legacy txs
 		{
 			"legacy tx pre-London",
-			false,
+			"legacy",
 			&TransactionArgs{},
 			&TransactionArgs{GasPrice: fortytwo},
 			nil,
 		},
 		{
 			"legacy tx pre-London with zero price",
-			false,
+			"legacy",
 			&TransactionArgs{GasPrice: zero},
 			&TransactionArgs{GasPrice: zero},
 			nil,
 		},
 		{
 			"legacy tx post-London, explicit gas price",
-			true,
+			"london",
 			&TransactionArgs{GasPrice: fortytwo},
 			&TransactionArgs{GasPrice: fortytwo},
 			nil,
 		},
 		{
 			"legacy tx post-London with zero price",
-			true,
+			"london",
 			&TransactionArgs{GasPrice: zero},
 			nil,
-			errors.New("gasPrice must be non-zero after EIP-1559 fork"),
+			errors.New("gasPrice must be non-zero after london fork"),
 		},
 
 		// Access list txs
 		{
 			"access list tx pre-London",
-			false,
+			"legacy",
 			&TransactionArgs{AccessList: al},
 			&TransactionArgs{AccessList: al, GasPrice: fortytwo},
 			nil,
 		},
 		{
 			"access list tx post-London, explicit gas price",
-			false,
+			"legacy",
 			&TransactionArgs{AccessList: al, GasPrice: fortytwo},
 			&TransactionArgs{AccessList: al, GasPrice: fortytwo},
 			nil,
 		},
 		{
 			"access list tx post-London",
-			true,
+			"london",
 			&TransactionArgs{AccessList: al},
 			&TransactionArgs{AccessList: al, MaxFeePerGas: maxFee, MaxPriorityFeePerGas: fortytwo},
 			nil,
 		},
 		{
 			"access list tx post-London, only max fee",
-			true,
+			"london",
 			&TransactionArgs{AccessList: al, MaxFeePerGas: maxFee},
 			&TransactionArgs{AccessList: al, MaxFeePerGas: maxFee, MaxPriorityFeePerGas: fortytwo},
 			nil,
 		},
 		{
 			"access list tx post-London, only priority fee",
-			true,
+			"london",
 			&TransactionArgs{AccessList: al, MaxFeePerGas: maxFee},
 			&TransactionArgs{AccessList: al, MaxFeePerGas: maxFee, MaxPriorityFeePerGas: fortytwo},
 			nil,
@@ -136,56 +137,56 @@ func TestSetFeeDefaults(t *testing.T) {
 		// Dynamic fee txs
 		{
 			"dynamic tx post-London",
-			true,
+			"london",
 			&TransactionArgs{},
 			&TransactionArgs{MaxFeePerGas: maxFee, MaxPriorityFeePerGas: fortytwo},
 			nil,
 		},
 		{
 			"dynamic tx post-London, only max fee",
-			true,
+			"london",
 			&TransactionArgs{MaxFeePerGas: maxFee},
 			&TransactionArgs{MaxFeePerGas: maxFee, MaxPriorityFeePerGas: fortytwo},
 			nil,
 		},
 		{
 			"dynamic tx post-London, only priority fee",
-			true,
+			"london",
 			&TransactionArgs{MaxFeePerGas: maxFee},
 			&TransactionArgs{MaxFeePerGas: maxFee, MaxPriorityFeePerGas: fortytwo},
 			nil,
 		},
 		{
 			"dynamic fee tx pre-London, maxFee set",
-			false,
+			"legacy",
 			&TransactionArgs{MaxFeePerGas: maxFee},
 			nil,
-			errors.New("maxFeePerGas and maxPriorityFeePerGas are not valid before EIP-1559 is active"),
+			errors.New("maxFeePerGas and maxPriorityFeePerGas are not valid before London is active"),
 		},
 		{
 			"dynamic fee tx pre-London, priorityFee set",
-			false,
+			"legacy",
 			&TransactionArgs{MaxPriorityFeePerGas: fortytwo},
 			nil,
-			errors.New("maxFeePerGas and maxPriorityFeePerGas are not valid before EIP-1559 is active"),
+			errors.New("maxFeePerGas and maxPriorityFeePerGas are not valid before London is active"),
 		},
 		{
 			"dynamic fee tx, maxFee < priorityFee",
-			true,
-			&TransactionArgs{MaxFeePerGas: (*hexutil.Big)(big.NewInt(0x3e)), MaxPriorityFeePerGas: (*hexutil.Big)(big.NewInt(1000))},
+			"london",
+			&TransactionArgs{MaxFeePerGas: maxFee, MaxPriorityFeePerGas: (*hexutil.Big)(big.NewInt(1000))},
 			nil,
 			errors.New("maxFeePerGas (0x3e) < maxPriorityFeePerGas (0x3e8)"),
 		},
 		{
 			"dynamic fee tx, maxFee < priorityFee while setting default",
-			true,
+			"london",
 			&TransactionArgs{MaxFeePerGas: (*hexutil.Big)(big.NewInt(7))},
 			nil,
 			errors.New("maxFeePerGas (0x7) < maxPriorityFeePerGas (0x2a)"),
 		},
 		{
 			"dynamic fee tx post-London, explicit gas price",
-			true,
+			"london",
 			&TransactionArgs{MaxFeePerGas: zero, MaxPriorityFeePerGas: zero},
 			nil,
 			errors.New("maxFeePerGas must be non-zero"),
@@ -194,48 +195,73 @@ func TestSetFeeDefaults(t *testing.T) {
 		// Misc
 		{
 			"set all fee parameters",
-			false,
+			"legacy",
 			&TransactionArgs{GasPrice: fortytwo, MaxFeePerGas: maxFee, MaxPriorityFeePerGas: fortytwo},
 			nil,
 			errors.New("both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified"),
 		},
 		{
 			"set gas price and maxPriorityFee",
-			false,
+			"legacy",
 			&TransactionArgs{GasPrice: fortytwo, MaxPriorityFeePerGas: fortytwo},
 			nil,
 			errors.New("both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified"),
 		},
 		{
 			"set gas price and maxFee",
-			true,
+			"london",
 			&TransactionArgs{GasPrice: fortytwo, MaxFeePerGas: maxFee},
 			nil,
 			errors.New("both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified"),
 		},
 		{
 			"set gas price and authorization list",
-			true,
+			"london",
 			&TransactionArgs{GasPrice: fortytwo, AuthorizationList: authList},
 			nil,
 			errors.New("both gasPrice and authorizationList specified"),
+		},
+		// EIP-4844
+		{
+			"set gas price and maxFee for blob transaction",
+			"cancun",
+			&TransactionArgs{GasPrice: fortytwo, MaxFeePerGas: maxFee, BlobHashes: []common.Hash{}},
+			nil,
+			errors.New("both gasPrice and (maxFeePerGas or maxPriorityFeePerGas) specified"),
+		},
+		{
+			"fill maxFeePerBlobGas",
+			"cancun",
+			&TransactionArgs{BlobHashes: []common.Hash{}},
+			&TransactionArgs{BlobHashes: []common.Hash{}, BlobFeeCap: (*hexutil.Big)(big.NewInt(4)), MaxFeePerGas: maxFee, MaxPriorityFeePerGas: fortytwo},
+			nil,
+		},
+		{
+			"fill maxFeePerBlobGas when dynamic fees are set",
+			"cancun",
+			&TransactionArgs{BlobHashes: []common.Hash{}, MaxFeePerGas: maxFee, MaxPriorityFeePerGas: fortytwo},
+			&TransactionArgs{BlobHashes: []common.Hash{}, BlobFeeCap: (*hexutil.Big)(big.NewInt(4)), MaxFeePerGas: maxFee, MaxPriorityFeePerGas: fortytwo},
+			nil,
 		},
 	}
 
 	ctx := context.Background()
 	for i, test := range tests {
-		if test.isLondon {
-			b.activateLondon()
-		} else {
-			b.deactivateLondon()
+		if err := b.setFork(test.fork); err != nil {
+			t.Fatalf("failed to set fork: %v", err)
 		}
 		got := test.in
 		err := got.setFeeDefaults(ctx, b, b.CurrentHeader())
-		if err != nil && err.Error() == test.err.Error() {
-			// Test threw expected error.
+		if err != nil {
+			if test.err == nil {
+				t.Fatalf("test %d (%s): unexpected error: %s", i, test.name, err)
+			} else if err.Error() != test.err.Error() {
+				t.Fatalf("test %d (%s): unexpected error: (got: %s, want: %s)", i, test.name, err, test.err)
+			}
+			// Matching error.
 			continue
-		} else if err != nil {
-			t.Fatalf("test %d (%s): unexpected error: %s", i, test.name, err)
+		} else if test.err != nil {
+			t.Fatalf("test %d (%s): expected error: %s", i, test.name, test.err)
 		}
 		if !reflect.DeepEqual(got, test.want) {
 			t.Fatalf("test %d (%s): did not fill defaults as expected: (got: %v, want: %v)", i, test.name, got, test.want)
@@ -243,115 +269,30 @@ func TestSetFeeDefaults(t *testing.T) {
 	}
 }
 
-// TestSetFeeDefaultsUsesNextBlockGasTier checks that the default max fee cap is
-// derived from the base fee of the block the transaction can first be included
-// in. On the last block of a gas tier the head still carries the old tier
-// price, so a cap built from the head falls below the next block's base fee and
-// the transaction cannot be included.
-func TestSetFeeDefaultsUsesNextBlockGasTier(t *testing.T) {
-	const activationHeight = 200
-
-	backend := newBackendMock()
-	backend.config.EIP1559Block = big.NewInt(0)
-	backend.config.Gas2500xBlock = big.NewInt(activationHeight)
-	backend.current.Number = big.NewInt(activationHeight - 1)
-	backend.current.BaseFee = params.BaseFeeForBlock(backend.config, backend.current.Number)
-
-	headBaseFee := params.BaseFeeForBlock(backend.config, big.NewInt(activationHeight-1))
-	nextBaseFee := params.BaseFeeForBlock(backend.config, big.NewInt(activationHeight))
-	if headBaseFee.Cmp(nextBaseFee) >= 0 {
-		t.Fatalf("fixture is not a tier boundary: head base fee %v, next block base fee %v", headBaseFee, nextBaseFee)
-	}
-
-	args := new(TransactionArgs)
-	if err := args.setFeeDefaults(context.Background(), backend, backend.CurrentHeader()); err != nil {
-		t.Fatalf("setFeeDefaults failed: %v", err)
-	}
-	if args.MaxFeePerGas == nil || args.MaxPriorityFeePerGas == nil {
-		t.Fatal("setFeeDefaults did not fill both fee fields")
-	}
-	tip := args.MaxPriorityFeePerGas.ToInt()
-	want := new(big.Int).Add(tip, new(big.Int).Lsh(nextBaseFee, 1))
-	if got := args.MaxFeePerGas.ToInt(); got.Cmp(want) != 0 {
-		t.Fatalf("default max fee cap: have %v, want %v (tip %v, next block base fee %v)", got, want, tip, nextBaseFee)
-	}
-}
-
 type backendMock struct {
 	current *types.Header
 	config  *params.ChainConfig
-	engine  consensus.Engine
-}
-
-// TestCallDefaultsWithoutBaseFee tests that CallDefaults rejects 1559 fee fields
-// when there is no base fee, and accepts them when there is one.
-func TestCallDefaultsWithoutBaseFee(t *testing.T) {
-	t.Parallel()
-
-	zero := new(hexutil.Big)
-	baseFee := big.NewInt(1)
-	tests := []struct {
-		name    string
-		args    TransactionArgs
-		baseFee *big.Int
-		fail    bool
-	}{
-		{name: "no fee fields"},
-		{name: "gasPrice", args: TransactionArgs{GasPrice: zero}},
-		{name: "maxFeePerGas", args: TransactionArgs{MaxFeePerGas: zero}, fail: true},
-		{name: "maxPriorityFeePerGas", args: TransactionArgs{MaxPriorityFeePerGas: zero}, fail: true},
-		{name: "both fee fields", args: TransactionArgs{MaxFeePerGas: zero, MaxPriorityFeePerGas: zero}, fail: true},
-		{name: "base fee override", args: TransactionArgs{MaxFeePerGas: zero}, baseFee: baseFee},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.args.CallDefaults(0, tt.baseFee, big.NewInt(1))
-			if (err != nil) != tt.fail {
-				t.Fatalf("error mismatch, want fail=%v, have %v", tt.fail, err)
-			}
-		})
-	}
-}
-
-// TestToMessageDropsEmptyAccessList checks that an empty JSON access list
-// ("accessList": []) is treated like an omitted one: the decoder produces a
-// non-nil empty slice, which the state transition would otherwise read as a
-// type-1 transaction.
-func TestToMessageDropsEmptyAccessList(t *testing.T) {
-	t.Parallel()
-
-	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
-	empty := types.AccessList{}
-	args := TransactionArgs{From: &from, AccessList: &empty}
-	if err := args.CallDefaults(0, nil, big.NewInt(1)); err != nil {
-		t.Fatalf("CallDefaults: %v", err)
-	}
-	if msg := args.ToMessage(nil, nil, true); msg.AccessList != nil {
-		t.Fatalf("empty access list reached the message: %v", msg.AccessList)
-	}
 }
 
 func newBackendMock() *backendMock {
+	var cancunTime uint64 = 600
 	config := &params.ChainConfig{
-		ChainID:                big.NewInt(42),
-		HomesteadBlock:         big.NewInt(0),
-		DAOForkBlock:           nil,
-		DAOForkSupport:         true,
-		EIP150Block:            big.NewInt(0),
-		EIP155Block:            big.NewInt(0),
-		EIP158Block:            big.NewInt(0),
-		ByzantiumBlock:         big.NewInt(0),
-		ConstantinopleBlock:    big.NewInt(0),
-		PetersburgBlock:        big.NewInt(0),
-		IstanbulBlock:          big.NewInt(0),
-		TIPTRC21FeeBlock:       big.NewInt(0),
-		Gas50xBlock:            big.NewInt(0),
-		BerlinBlock:            big.NewInt(0),
-		EIP1559Block:           big.NewInt(1000),
-		TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
-		XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
-		RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
-		LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+		ChainID:             big.NewInt(42),
+		HomesteadBlock:      big.NewInt(0),
+		DAOForkBlock:        nil,
+		DAOForkSupport:      true,
+		EIP150Block:         big.NewInt(0),
+		EIP155Block:         big.NewInt(0),
+		EIP158Block:         big.NewInt(0),
+		ByzantiumBlock:      big.NewInt(0),
+		ConstantinopleBlock: big.NewInt(0),
+		PetersburgBlock:     big.NewInt(0),
+		IstanbulBlock:       big.NewInt(0),
+		MuirGlacierBlock:    big.NewInt(0),
+		BerlinBlock:         big.NewInt(0),
+		LondonBlock:         big.NewInt(1000),
+		CancunTime:          &cancunTime,
+		BlobScheduleConfig:  params.DefaultBlobSchedule,
 	}
 	return &backendMock{
 		current: &types.Header{
@@ -361,38 +302,47 @@ func newBackendMock() *backendMock {
 			GasUsed:    8_000_000,
 			Time:       555,
 			Extra:      make([]byte, 32),
-			BaseFee:    params.BaseFeeForBlock(config, big.NewInt(1100)),
+			BaseFee:    big.NewInt(10),
 		},
 		config: config,
 	}
 }
 
-func (b *backendMock) activateLondon() {
-	b.current.Number = big.NewInt(1100)
-}
-
-func (b *backendMock) deactivateLondon() {
-	b.current.Number = big.NewInt(900)
+func (b *backendMock) setFork(fork string) error {
+	if fork == "legacy" {
+		b.current.Number = big.NewInt(900)
+		b.current.Time = 555
+	} else if fork == "london" {
+		b.current.Number = big.NewInt(1100)
+		b.current.Time = 555
+	} else if fork == "cancun" {
+		b.current.Number = big.NewInt(1100)
+		b.current.Time = 700
+		// Blob base fee will be 2
+		excess := uint64(2314058)
+		b.current.ExcessBlobGas = &excess
+	} else {
+		return errors.New("invalid fork")
+	}
+	return nil
 }
 
 func (b *backendMock) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
 	return big.NewInt(42), nil
 }
+func (b *backendMock) BlobBaseFee(ctx context.Context) *big.Int { return big.NewInt(42) }
+func (b *backendMock) BaseFee(ctx context.Context) *big.Int     { return big.NewInt(42) }
 
-func (b *backendMock) CurrentHeader() *types.Header { return b.current }
-
+func (b *backendMock) CurrentHeader() *types.Header     { return b.current }
 func (b *backendMock) ChainConfig() *params.ChainConfig { return b.config }
 
 // Other methods needed to implement Backend interface.
-func (b *backendMock) SyncProgress() ethereum.SyncProgress { return ethereum.SyncProgress{} }
-func (b *backendMock) FeeHistory(context.Context, uint64, rpc.BlockNumber, []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, error) {
-	return nil, nil, nil, nil, nil
+func (b *backendMock) SyncProgress(ctx context.Context) ethereum.SyncProgress {
+	return ethereum.SyncProgress{}
 }
-
-func (b *backendMock) BlobBaseFee(ctx context.Context) *big.Int {
-	return new(big.Int)
+func (b *backendMock) FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, []*big.Int, []float64, error) {
+	return nil, nil, nil, nil, nil, nil, nil
 }
-
 func (b *backendMock) ChainDb() ethdb.Database           { return nil }
 func (b *backendMock) AccountManager() *accounts.Manager { return nil }
 func (b *backendMock) ExtRPCEnabled() bool               { return false }
@@ -400,68 +350,57 @@ func (b *backendMock) RPCGasCap() uint64                 { return 0 }
 func (b *backendMock) RPCEVMTimeout() time.Duration      { return time.Second }
 func (b *backendMock) RPCTxFeeCap() float64              { return 0 }
 func (b *backendMock) UnprotectedAllowed() bool          { return false }
-func (b *backendMock) SetHead(number uint64)             {}
-func (b *backendMock) GetPeer() int                      { return 0 }
-
+func (b *backendMock) SetHead(number uint64) error       { return nil }
 func (b *backendMock) HeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Header, error) {
 	return nil, nil
 }
-
 func (b *backendMock) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
 	return nil, nil
 }
-
 func (b *backendMock) HeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Header, error) {
 	return nil, nil
 }
-
 func (b *backendMock) CurrentBlock() *types.Header { return nil }
-
 func (b *backendMock) BlockByNumber(ctx context.Context, number rpc.BlockNumber) (*types.Block, error) {
 	return nil, nil
 }
-
 func (b *backendMock) BlockByHash(ctx context.Context, hash common.Hash) (*types.Block, error) {
 	return nil, nil
 }
-
 func (b *backendMock) BlockByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*types.Block, error) {
 	return nil, nil
 }
-
+func (b *backendMock) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
+	return nil, nil
+}
 func (b *backendMock) StateAndHeaderByNumber(ctx context.Context, number rpc.BlockNumber) (*state.StateDB, *types.Header, error) {
 	return nil, nil, nil
 }
-
 func (b *backendMock) StateAndHeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error) {
 	return nil, nil, nil
 }
-
-func (b *backendMock) PendingBlockAndReceipts() (*types.Block, types.Receipts) { return nil, nil }
-
+func (b *backendMock) Pending() (*types.Block, types.Receipts, *state.StateDB) { return nil, nil, nil }
 func (b *backendMock) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
 	return nil, nil
 }
-
-func (b *backendMock) GetTd(ctx context.Context, hash common.Hash) *big.Int {
+func (b *backendMock) GetCanonicalReceipt(tx *types.Transaction, blockHash common.Hash, blockNumber, blockIndex uint64) (*types.Receipt, error) {
+	return nil, nil
+}
+func (b *backendMock) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
+	return nil, nil
+}
+func (b *backendMock) GetEVM(ctx context.Context, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) *vm.EVM {
 	return nil
 }
-
-func (b *backendMock) GetEVM(context.Context, *state.StateDB, *tradingstate.TradingStateDB, *types.Header, *vm.Config, *vm.BlockContext) (*vm.EVM, func() error, error) {
-	return nil, nil, nil
-}
-
 func (b *backendMock) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription { return nil }
 func (b *backendMock) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription {
 	return nil
 }
-func (b *backendMock) SubscribeChainSideEvent(ch chan<- core.ChainSideEvent) event.Subscription {
-	return nil
-}
 func (b *backendMock) SendTx(ctx context.Context, signedTx *types.Transaction) error { return nil }
-func (b *backendMock) GetTransaction(ctx context.Context, txHash common.Hash) (*types.Transaction, common.Hash, uint64, uint64, error) {
-	return nil, [32]byte{}, 0, 0, nil
+func (b *backendMock) GetCanonicalTransaction(txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64) {
+	return false, nil, [32]byte{}, 0, 0
 }
+func (b *backendMock) TxIndexDone() bool                                        { return true }
 func (b *backendMock) GetPoolTransactions() (types.Transactions, error)         { return nil, nil }
 func (b *backendMock) GetPoolTransaction(txHash common.Hash) *types.Transaction { return nil }
 func (b *backendMock) GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error) {
@@ -475,77 +414,185 @@ func (b *backendMock) TxPoolContentFrom(addr common.Address) ([]*types.Transacti
 	return nil, nil
 }
 func (b *backendMock) SubscribeNewTxsEvent(chan<- core.NewTxsEvent) event.Subscription { return nil }
-func (b *backendMock) BloomStatus() (uint64, uint64)                                   { return 0, 0 }
-func (b *backendMock) GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error) {
-	return nil, nil
-}
-func (b *backendMock) ServiceFilter(ctx context.Context, session *bloombits.MatcherSession) {}
-func (b *backendMock) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription         { return nil }
-func (b *backendMock) SubscribePendingLogsEvent(ch chan<- []*types.Log) event.Subscription {
-	return nil
-}
+func (b *backendMock) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription    { return nil }
 func (b *backendMock) SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent) event.Subscription {
 	return nil
 }
 
-func (b *backendMock) Engine() consensus.Engine { return b.engine }
+func (b *backendMock) Engine() consensus.Engine { return nil }
 
-func (b *backendMock) AreTwoBlockSamePath(bh1 common.Hash, bh2 common.Hash) bool {
-	return true
-}
+func (b *backendMock) CurrentView() *filtermaps.ChainView           { return nil }
+func (b *backendMock) NewMatcherBackend() filtermaps.MatcherBackend { return nil }
 
-func (b *backendMock) Downloader() *downloader.Downloader {
+func (b *backendMock) HistoryPruningCutoff() uint64       { return 0 }
+func (b *backendMock) HistoryRetention() HistoryRetention { return HistoryRetention{} }
+
+// XDC-specific methods required by the Backend interface.
+func (b *backendMock) GetRewardByHash(hash common.Hash) map[string]map[string]map[string]*big.Int {
 	return nil
 }
+func (b *backendMock) BlockChain() *core.BlockChain               { return nil }
+func (b *backendMock) SnapHealStatus() *core.SnapHealStatusFields { return nil }
 
-func (b *backendMock) EventMux() *event.TypeMux {
-	return nil
-}
+// TestTransactionArgsFrameTx exercises the EIP-8141 frame transaction paths
+// of the RPC argument handling: JSON parsing, transaction construction, and
+// argument validation.
+func TestTransactionArgsFrameTx(t *testing.T) {
+	sender := common.HexToAddress("0x627306090abab3a6e1400e9345bc60c78a8bef57")
 
-func (b *backendMock) GetBlock(context.Context, common.Hash) (*types.Block, error) {
-	return nil, nil
-}
+	validFrame := func() types.Frame {
+		return types.Frame{
+			Mode:   types.FrameModeVerify,
+			Limits: types.FrameLimits{Execution: 50000, State: 10000},
+			Value:  uint256.NewInt(0),
+			Data:   []byte{0x01, 0x02},
+		}
+	}
 
-func (b *backendMock) GetBlocksHashCache(blockNr uint64) []common.Hash {
-	return []common.Hash{}
-}
+	t.Run("json parses frame fields", func(t *testing.T) {
+		raw := `{
+			"sender":"0x627306090abab3a6e1400e9345bc60c78a8bef57",
+			"frames":[{"mode":"0x1","flags":"0x0","limits":{"execution":"0xc350","state":"0x2710"},"value":"0x0","data":"0x1234"}],
+			"signatures":[{"scheme":"0x0","signer":"0x","msg":"0x","signature":"0xabcd"}],
+			"maxFeePerGas":"0x64","maxPriorityFeePerGas":"0x1"
+		}`
+		var args TransactionArgs
+		if err := json.Unmarshal([]byte(raw), &args); err != nil {
+			t.Fatalf("parse failed: %v", err)
+		}
+		if args.Sender == nil || *args.Sender != sender {
+			t.Fatalf("sender not parsed: %v", args.Sender)
+		}
+		if len(args.Frames) != 1 {
+			t.Fatalf("frames not parsed: %d", len(args.Frames))
+		}
+		frame := args.Frames[0]
+		if frame.Mode != types.FrameModeVerify || frame.Flags != 0 {
+			t.Fatalf("frame mode/flags mismatch: %d/%d", frame.Mode, frame.Flags)
+		}
+		if frame.Limits.Execution != 50000 || frame.Limits.State != 10000 {
+			t.Fatalf("frame limits mismatch: %+v", frame.Limits)
+		}
+		if len(frame.Data) != 2 || frame.Data[0] != 0x12 {
+			t.Fatalf("frame data mismatch: %x", frame.Data)
+		}
+		if len(args.Signatures) != 1 || args.Signatures[0].Scheme != types.FrameSigSchemeArbitrary {
+			t.Fatalf("signatures not parsed: %+v", args.Signatures)
+		}
+		if len(args.Signatures[0].Signature) != 2 {
+			t.Fatalf("signature bytes not parsed: %x", args.Signatures[0].Signature)
+		}
+	})
 
-func (b *backendMock) GetEpochDuration() *big.Int {
-	return nil
-}
+	t.Run("to transaction builds frame tx", func(t *testing.T) {
+		gas := hexutil.Uint64(21000)
+		nonce := hexutil.Uint64(3)
+		args := TransactionArgs{
+			From:                 &sender,
+			Sender:               &sender,
+			Frames:               []types.Frame{validFrame()},
+			Gas:                  &gas,
+			Nonce:                &nonce,
+			MaxFeePerGas:         (*hexutil.Big)(big.NewInt(100)),
+			MaxPriorityFeePerGas: (*hexutil.Big)(big.NewInt(1)),
+			ChainID:              (*hexutil.Big)(big.NewInt(20118)),
+		}
+		tx := args.ToTransaction(types.LegacyTxType)
+		if tx.Type() != types.FrameTxType {
+			t.Fatalf("wrong tx type %d", tx.Type())
+		}
+		if tx.ChainId().Cmp(big.NewInt(20118)) != 0 || tx.Nonce() != 3 {
+			t.Fatal("scalar fields mismatch")
+		}
+		if tx.Gas() == 0 {
+			t.Fatal("derived gas is zero")
+		}
+		out, err := json.Marshal(tx)
+		if err != nil {
+			t.Fatalf("marshal failed: %v", err)
+		}
+		if !strings.Contains(string(out), `"frames"`) || !strings.Contains(string(out), `"sender"`) {
+			t.Fatalf("frame fields missing in JSON: %s", out)
+		}
+		// The produced transaction must round-trip through the typed codec.
+		if _, err := tx.MarshalBinary(); err != nil {
+			t.Fatalf("binary marshal failed: %v", err)
+		}
+	})
 
-func (b *backendMock) GetIPCClient() (bind.ContractBackend, error) {
-	return nil, nil
-}
+	t.Run("call defaults rejects frames", func(t *testing.T) {
+		args := TransactionArgs{Frames: []types.Frame{validFrame()}}
+		if err := args.CallDefaults(0, nil, big.NewInt(1)); err == nil {
+			t.Fatal("CallDefaults accepted frame args")
+		}
+	})
 
-func (b *backendMock) GetMasternodesCap(uint64) map[common.Address]*big.Int {
-	return nil
-}
+	// The remaining cases go through setDefaults, which needs a backend.
+	backend := newTestBackend(t, 1, &core.Genesis{
+		Config: params.AllDevChainProtocolChanges,
+		Alloc:  core.GenesisAlloc{},
+	}, beacon.New(ethash.NewFaker()), nil)
 
-func (b *backendMock) GetBody(ctx context.Context, hash common.Hash, number rpc.BlockNumber) (*types.Body, error) {
-	return nil, nil
-}
+	baseArgs := func() *TransactionArgs {
+		gas := hexutil.Uint64(21000)
+		nonce := hexutil.Uint64(3)
+		return &TransactionArgs{
+			From:                 &sender,
+			Sender:               &sender,
+			Frames:               []types.Frame{validFrame()},
+			Gas:                  &gas,
+			Nonce:                &nonce,
+			MaxFeePerGas:         (*hexutil.Big)(big.NewInt(100)),
+			MaxPriorityFeePerGas: (*hexutil.Big)(big.NewInt(1)),
+		}
+	}
 
-func (b *backendMock) GetRewardByHash(common.Hash) map[string]map[string]map[string]*big.Int {
-	return nil
-}
+	t.Run("setDefaults accepts valid frame args", func(t *testing.T) {
+		args := baseArgs()
+		if err := args.setDefaults(context.Background(), backend, sidecarConfig{}); err != nil {
+			t.Fatalf("valid frame args rejected: %v", err)
+		}
+	})
 
-func (b *backendMock) GetVotersCap(*big.Int, common.Address, []common.Address) map[common.Address]*big.Int {
-	return nil
-}
+	t.Run("setDefaults rejects gasPrice with frames", func(t *testing.T) {
+		args := baseArgs()
+		args.GasPrice = (*hexutil.Big)(big.NewInt(5))
+		if err := args.setDefaults(context.Background(), backend, sidecarConfig{}); err == nil {
+			t.Fatal("gasPrice with frames accepted")
+		}
+	})
 
-func (b *backendMock) GetVotersRewards(common.Address) map[common.Address]*big.Int {
-	return nil
-}
+	t.Run("setDefaults rejects missing sender", func(t *testing.T) {
+		args := baseArgs()
+		args.Sender = nil
+		if err := args.setDefaults(context.Background(), backend, sidecarConfig{}); err == nil {
+			t.Fatal("frame args without sender accepted")
+		}
+	})
 
-func (b *backendMock) LendingService() *XDCxlending.Lending {
-	return nil
-}
+	t.Run("setDefaults rejects empty frames", func(t *testing.T) {
+		args := baseArgs()
+		args.Frames = []types.Frame{}
+		if err := args.setDefaults(context.Background(), backend, sidecarConfig{}); err == nil {
+			t.Fatal("empty frames accepted")
+		}
+	})
 
-func (b *backendMock) ProtocolVersion() int {
-	return 0
-}
+	t.Run("setDefaults rejects invalid frame payload", func(t *testing.T) {
+		args := baseArgs()
+		bad := validFrame()
+		bad.Mode = 0x3
+		args.Frames = []types.Frame{bad}
+		if err := args.setDefaults(context.Background(), backend, sidecarConfig{}); err == nil {
+			t.Fatal("invalid frame payload accepted")
+		}
+	})
 
-func (b *backendMock) XDCxService() *XDCx.XDCX {
-	return nil
+	t.Run("setDefaults rejects blob fee without blobs", func(t *testing.T) {
+		args := baseArgs()
+		args.BlobFeeCap = (*hexutil.Big)(big.NewInt(7))
+		if err := args.setDefaults(context.Background(), backend, sidecarConfig{}); err == nil {
+			t.Fatal("blob fee without blobs accepted")
+		}
+	})
 }

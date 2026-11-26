@@ -19,10 +19,12 @@ package types
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
+	"github.com/XinFinOrg/XDPoSChain/crypto/kzg4844"
 	"github.com/holiman/uint256"
 )
 
@@ -37,14 +39,26 @@ type txJSON struct {
 	GasPrice             *hexutil.Big           `json:"gasPrice"`
 	MaxPriorityFeePerGas *hexutil.Big           `json:"maxPriorityFeePerGas"`
 	MaxFeePerGas         *hexutil.Big           `json:"maxFeePerGas"`
+	MaxFeePerBlobGas     *hexutil.Big           `json:"maxFeePerBlobGas,omitempty"`
 	Value                *hexutil.Big           `json:"value"`
 	Input                *hexutil.Bytes         `json:"input"`
 	AccessList           *AccessList            `json:"accessList,omitempty"`
+	BlobVersionedHashes  []common.Hash          `json:"blobVersionedHashes,omitempty"`
 	AuthorizationList    []SetCodeAuthorization `json:"authorizationList,omitempty"`
-	V                    *hexutil.Big           `json:"v"`
-	R                    *hexutil.Big           `json:"r"`
-	S                    *hexutil.Big           `json:"s"`
-	YParity              *hexutil.Uint64        `json:"yParity,omitempty"`
+
+	// EIP-8141 frame transaction fields.
+	Sender     *common.Address  `json:"sender,omitempty"`
+	Frames     []Frame          `json:"frames,omitempty"`
+	Signatures []FrameSignature `json:"signatures,omitempty"`
+	V          *hexutil.Big     `json:"v"`
+	R          *hexutil.Big     `json:"r"`
+	S          *hexutil.Big     `json:"s"`
+	YParity    *hexutil.Uint64  `json:"yParity,omitempty"`
+
+	// Blob transaction sidecar encoding:
+	Blobs       []kzg4844.Blob       `json:"blobs,omitempty"`
+	Commitments []kzg4844.Commitment `json:"commitments,omitempty"`
+	Proofs      []kzg4844.Proof      `json:"proofs,omitempty"`
 
 	// Only used for encoding:
 	Hash common.Hash `json:"hash"`
@@ -77,7 +91,7 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 	enc.Hash = tx.Hash()
 	enc.Type = hexutil.Uint64(tx.Type())
 
-	// Other fields are set conditionally depending on itx type.
+	// Other fields are set conditionally depending on tx type.
 	switch itx := tx.inner.(type) {
 	case *LegacyTx:
 		enc.Nonce = (*hexutil.Uint64)(&itx.Nonce)
@@ -124,6 +138,28 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 		yparity := itx.V.Uint64()
 		enc.YParity = (*hexutil.Uint64)(&yparity)
 
+	case *BlobTx:
+		enc.ChainID = (*hexutil.Big)(itx.ChainID.ToBig())
+		enc.Nonce = (*hexutil.Uint64)(&itx.Nonce)
+		enc.Gas = (*hexutil.Uint64)(&itx.Gas)
+		enc.MaxFeePerGas = (*hexutil.Big)(itx.GasFeeCap.ToBig())
+		enc.MaxPriorityFeePerGas = (*hexutil.Big)(itx.GasTipCap.ToBig())
+		enc.MaxFeePerBlobGas = (*hexutil.Big)(itx.BlobFeeCap.ToBig())
+		enc.Value = (*hexutil.Big)(itx.Value.ToBig())
+		enc.Input = (*hexutil.Bytes)(&itx.Data)
+		enc.AccessList = &itx.AccessList
+		enc.BlobVersionedHashes = itx.BlobHashes
+		enc.To = tx.To()
+		enc.V = (*hexutil.Big)(itx.V.ToBig())
+		enc.R = (*hexutil.Big)(itx.R.ToBig())
+		enc.S = (*hexutil.Big)(itx.S.ToBig())
+		yparity := itx.V.Uint64()
+		enc.YParity = (*hexutil.Uint64)(&yparity)
+		if sidecar := itx.Sidecar; sidecar != nil {
+			enc.Blobs = itx.Sidecar.Blobs
+			enc.Commitments = itx.Sidecar.Commitments
+			enc.Proofs = itx.Sidecar.Proofs
+		}
 	case *SetCodeTx:
 		enc.ChainID = (*hexutil.Big)(itx.ChainID.ToBig())
 		enc.Nonce = (*hexutil.Uint64)(&itx.Nonce)
@@ -140,6 +176,21 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 		enc.S = (*hexutil.Big)(itx.S.ToBig())
 		yparity := itx.V.Uint64()
 		enc.YParity = (*hexutil.Uint64)(&yparity)
+	case *FrameTx:
+		enc.ChainID = (*hexutil.Big)(itx.ChainID.ToBig())
+		enc.Nonce = (*hexutil.Uint64)(&itx.Nonce)
+		enc.Sender = &itx.Sender
+		gas := tx.Gas()
+		enc.Gas = (*hexutil.Uint64)(&gas)
+		enc.MaxFeePerGas = (*hexutil.Big)(itx.Fees.GasFeeCap.ToBig())
+		enc.MaxPriorityFeePerGas = (*hexutil.Big)(itx.Fees.GasTipCap.ToBig())
+		if itx.Fees.BlobFeeCap != nil {
+			enc.MaxFeePerBlobGas = (*hexutil.Big)(itx.Fees.BlobFeeCap.ToBig())
+		}
+		enc.Value = (*hexutil.Big)(itx.value())
+		enc.BlobVersionedHashes = itx.BlobHashes
+		enc.Frames = itx.Frames
+		enc.Signatures = itx.Signatures
 	}
 	return json.Marshal(&enc)
 }
@@ -317,6 +368,91 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 			}
 		}
 
+	case BlobTxType:
+		var itx BlobTx
+		inner = &itx
+		if dec.ChainID == nil {
+			return errors.New("missing required field 'chainId' in transaction")
+		}
+		var overflow bool
+		itx.ChainID, overflow = uint256.FromBig(dec.ChainID.ToInt())
+		if overflow {
+			return errors.New("'chainId' value overflows uint256")
+		}
+		if dec.Nonce == nil {
+			return errors.New("missing required field 'nonce' in transaction")
+		}
+		itx.Nonce = uint64(*dec.Nonce)
+		if dec.To == nil {
+			return errors.New("missing required field 'to' in transaction")
+		}
+		itx.To = *dec.To
+		if dec.Gas == nil {
+			return errors.New("missing required field 'gas' for txdata")
+		}
+		itx.Gas = uint64(*dec.Gas)
+		if dec.MaxPriorityFeePerGas == nil {
+			return errors.New("missing required field 'maxPriorityFeePerGas' for txdata")
+		}
+		itx.GasTipCap = uint256.MustFromBig((*big.Int)(dec.MaxPriorityFeePerGas))
+		if dec.MaxFeePerGas == nil {
+			return errors.New("missing required field 'maxFeePerGas' for txdata")
+		}
+		itx.GasFeeCap = uint256.MustFromBig((*big.Int)(dec.MaxFeePerGas))
+		if dec.MaxFeePerBlobGas == nil {
+			return errors.New("missing required field 'maxFeePerBlobGas' for txdata")
+		}
+		itx.BlobFeeCap = uint256.MustFromBig((*big.Int)(dec.MaxFeePerBlobGas))
+		if dec.Value == nil {
+			return errors.New("missing required field 'value' in transaction")
+		}
+		itx.Value = uint256.MustFromBig((*big.Int)(dec.Value))
+		if dec.Input == nil {
+			return errors.New("missing required field 'input' in transaction")
+		}
+		itx.Data = *dec.Input
+		if dec.AccessList != nil {
+			itx.AccessList = *dec.AccessList
+		}
+		if dec.BlobVersionedHashes == nil {
+			return errors.New("missing required field 'blobVersionedHashes' in transaction")
+		}
+		if len(dec.BlobVersionedHashes) == 0 {
+			return errors.New("'blobVersionedHashes' must contain at least one hash")
+		}
+		itx.BlobHashes = dec.BlobVersionedHashes
+
+		// signature R
+		if dec.R == nil {
+			return errors.New("missing required field 'r' in transaction")
+		}
+		itx.R, overflow = uint256.FromBig((*big.Int)(dec.R))
+		if overflow {
+			return errors.New("'r' value overflows uint256")
+		}
+		// signature S
+		if dec.S == nil {
+			return errors.New("missing required field 's' in transaction")
+		}
+		itx.S, overflow = uint256.FromBig((*big.Int)(dec.S))
+		if overflow {
+			return errors.New("'s' value overflows uint256")
+		}
+		// signature V
+		vbig, err := dec.yParityValue()
+		if err != nil {
+			return err
+		}
+		itx.V, overflow = uint256.FromBig(vbig)
+		if overflow {
+			return errors.New("'v' value overflows uint256")
+		}
+		if itx.V.Sign() != 0 || itx.R.Sign() != 0 || itx.S.Sign() != 0 {
+			if err := sanityCheckSignature(vbig, itx.R.ToBig(), itx.S.ToBig(), false); err != nil {
+				return err
+			}
+		}
+
 	case SetCodeTxType:
 		var itx SetCodeTx
 		inner = &itx
@@ -393,6 +529,70 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 			if err := sanityCheckSignature(vbig, itx.R.ToBig(), itx.S.ToBig(), false); err != nil {
 				return err
 			}
+		}
+
+	case FrameTxType:
+		var itx FrameTx
+		inner = &itx
+		if dec.ChainID == nil {
+			return errors.New("missing required field 'chainId' in transaction")
+		}
+		var overflow bool
+		itx.ChainID, overflow = uint256.FromBig(dec.ChainID.ToInt())
+		if overflow {
+			return errors.New("'chainId' value overflows uint256")
+		}
+		if dec.Nonce == nil {
+			return errors.New("missing required field 'nonce' in transaction")
+		}
+		itx.Nonce = uint64(*dec.Nonce)
+		if dec.Sender == nil {
+			return errors.New("missing required field 'sender' in transaction")
+		}
+		itx.Sender = *dec.Sender
+		if dec.MaxPriorityFeePerGas == nil {
+			return errors.New("missing required field 'maxPriorityFeePerGas' for txdata")
+		}
+		itx.Fees.GasTipCap, overflow = uint256.FromBig((*big.Int)(dec.MaxPriorityFeePerGas))
+		if overflow {
+			return errors.New("'maxPriorityFeePerGas' value overflows uint256")
+		}
+		if dec.MaxFeePerGas == nil {
+			return errors.New("missing required field 'maxFeePerGas' for txdata")
+		}
+		itx.Fees.GasFeeCap, overflow = uint256.FromBig((*big.Int)(dec.MaxFeePerGas))
+		if overflow {
+			return errors.New("'maxFeePerGas' value overflows uint256")
+		}
+		if dec.MaxFeePerBlobGas != nil {
+			itx.Fees.BlobFeeCap, overflow = uint256.FromBig((*big.Int)(dec.MaxFeePerBlobGas))
+			if overflow {
+				return errors.New("'maxFeePerBlobGas' value overflows uint256")
+			}
+		}
+		if dec.Frames == nil {
+			return errors.New("missing required field 'frames' in transaction")
+		}
+		if len(dec.Frames) == 0 {
+			return errors.New("'frames' must contain at least one frame")
+		}
+		if len(dec.Frames) > FrameMaxFrames {
+			return fmt.Errorf("too many frames in transaction (have=%d, max=%d)", len(dec.Frames), FrameMaxFrames)
+		}
+		itx.Frames = dec.Frames
+		// The signatures field is optional; an absent list decodes to an
+		// empty one. An empty list is not statically forbidden (DEFAULT-mode
+		// frames need no protocol-validated signatures).
+		itx.Signatures = dec.Signatures
+		if dec.BlobVersionedHashes != nil {
+			itx.BlobHashes = dec.BlobVersionedHashes
+		}
+
+		// Enforce the statically-checkable EIP-8141 payload rules here so
+		// that malformed transactions are rejected at the RPC boundary
+		// rather than later in the pool or block processing.
+		if err := itx.validateStatic(); err != nil {
+			return err
 		}
 
 	default:

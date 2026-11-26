@@ -18,25 +18,26 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"math/big"
-	"runtime"
-	"sync"
 	"sync/atomic"
 
-	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/core/types/bal"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/internal/telemetry"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/trie"
+	"github.com/holiman/uint256"
 )
 
 // StateProcessor is a basic Processor, which takes care of transitioning
@@ -44,96 +45,31 @@ import (
 //
 // StateProcessor implements Processor.
 type StateProcessor struct {
-	config *params.ChainConfig // Chain configuration options
-	bc     *BlockChain         // Canonical block chain
-	engine consensus.Engine    // Consensus engine used for block rewards
-}
-type CalculatedBlock struct {
-	block *types.Block
-	// stop is set by the insertion that stops a calculation it found in flight
-	// (getResultBlock) and polled by the goroutine running that calculation
-	// (ProcessBlockNoValidator), with nothing ordering the two, hence atomic.
-	stop atomic.Bool
+	chain ChainContext // Chain context interface
 }
 
 // NewStateProcessor initialises a new StateProcessor.
-func NewStateProcessor(config *params.ChainConfig, bc *BlockChain, engine consensus.Engine) *StateProcessor {
+func NewStateProcessor(chain ChainContext) *StateProcessor {
 	return &StateProcessor{
-		config: config,
-		bc:     bc,
-		engine: engine,
+		chain: chain,
 	}
 }
 
-// ApplyTIPSigningHardFork clears the legacy block signers account at the block that
-// activates TIPSigning, the same way misc.ApplyDAOHardFork mutates the state at the DAO
-// fork block. Block processing runs it before the first transaction of the block.
-//
-// A replay of a block has to run it too: the pre-state of debug_traceTransaction and the
-// intermediate roots of debug_intermediateRoots are rebuilt from the parent state, and
-// without this call they keep the account canonical execution had already removed. The
-// traces and every intermediate root of the activation block would then describe a state
-// the chain never had.
-//
-// The state may be a tracing wrapper: the removal is then reported to the tracer hooks as a
-// balance change.
-func ApplyTIPSigningHardFork(config *params.ChainConfig, statedb vm.StateDB, blockNumber *big.Int) {
-	if blockNumber.Sign() > 0 && config.TIPSigningBlock != nil && config.TIPSigningBlock.Cmp(blockNumber) == 0 {
-		statedb.DeleteAddress(common.BlockSignersBinary)
-	}
+// chainConfig returns the chain configuration.
+func (p *StateProcessor) chainConfig() *params.ChainConfig {
+	return p.chain.Config()
 }
 
-// ApplyMulticall3HardFork installs the canonical Multicall3 code into the state of
-// a Prague-active block, the way misc.ApplyDAOHardFork mutates the state at the DAO
-// fork block. Block processing and every block replay run it before the first
-// transaction, so without it a replay lacks the account canonical execution created.
-//
-// A chain that activates Prague at genesis has no activation block and block zero is
-// never processed, so its first processed block installs the code instead, the way
-// ProcessParentBlockHash installs the EIP-2935 history contract there.
-//
-// A chain whose Prague blocks were produced without this account, because it
-// activated Prague before the code existed, has to be re-created instead of upgraded
-// in place: the install moves the state root of every block it processes.
-//
-// Like ProcessParentBlockHash the install is not limited to the activation block:
-// any Prague-active block re-installs the code when the address has none, so a node
-// that lost the account recovers. Neither hook resets an existing account, so the
-// balance and the storage stay; this install alone sets the nonce 1 a CREATE-deployed
-// contract carries since EIP-161.
-//
-// The state may be a tracing wrapper: the install is then reported to the tracer
-// hooks as a code change and a nonce change.
-func ApplyMulticall3HardFork(config *params.ChainConfig, statedb vm.StateDB, blockNumber *big.Int) {
-	if blockNumber.Sign() == 0 || !config.IsPrague(blockNumber) {
-		return
-	}
-	// Refuse code that is not the canonical runtime code, the way
-	// ProcessParentBlockHash rejects a history contract whose code does not match.
-	if code := statedb.GetCode(params.Multicall3Address); len(code) > 0 {
-		if !bytes.Equal(code, params.Multicall3RuntimeCode) {
-			log.Error("Multicall3 code mismatch",
-				"have", crypto.Keccak256Hash(code),
-				"want", crypto.Keccak256Hash(params.Multicall3RuntimeCode),
-			)
-			panic("Multicall3 code mismatch")
-		}
-		return
-	}
-	statedb.SetCode(params.Multicall3Address, params.Multicall3RuntimeCode)
-	// A contract created by CREATE carries nonce 1 since EIP-161.
-	statedb.SetNonce(params.Multicall3Address, 1, tracing.NonceChangeUnspecified)
-}
-
-// ApplyBlockLevelHooks applies the block level state changes block processing
-// performs before the first transaction: the two statedb mutations, then the
-// parent hash history write. The caller owns the EVM; the DAO fork stays out,
-// as upstream core.PreExecution leaves it out (ethereum/go-ethereum#34812).
-func ApplyBlockLevelHooks(parentHash common.Hash, evm *vm.EVM) {
-	config, blockNumber := evm.ChainConfig(), evm.Context.BlockNumber
-	ApplyTIPSigningHardFork(config, evm.StateDB, blockNumber)
-	ApplyMulticall3HardFork(config, evm.StateDB, blockNumber)
-	ProcessParentBlockHash(parentHash, evm)
+// getCoinbaseOwner resolves the TRC21 fee recipient for the block. After
+// TIPTRC21Fee (Apothem 23,779,191; mainnet 38,383,838), the masternode's
+// owner — looked up from the validator contract (0x88) via GetCandidateOwner —
+// receives the transaction-fee credit instead of the masternode itself. When
+// no owner is registered the candidate-owner lookup returns the zero address
+// and state_transition.go falls back to the standard coinbase routing.
+// Mirrors XDPoSChain v2.6.8 core/state_processor.go getCoinbaseOwner.
+func getCoinbaseOwner(engine consensus.Engine, statedb *state.StateDB, header *types.Header) common.Address {
+	beneficiary, _ := engine.Author(header)
+	return state.GetCandidateOwner(statedb, beneficiary)
 }
 
 // Process processes the state changes according to the Ethereum rules by running
@@ -143,643 +79,462 @@ func ApplyBlockLevelHooks(parentHash common.Hash, evm *vm.EVM) {
 // Process returns the receipts and logs accumulated during the process and
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
-func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, tokensFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
-	if err := statedb.EnsureChainConfig(p.config); err != nil {
-		return nil, nil, 0, err
-	}
+func (p *StateProcessor) Process(ctx context.Context, block *types.Block, statedb *state.StateDB, jumpDestCache vm.JumpDestCache, cfg vm.Config, execIndex *atomic.Int64) (*ProcessResult, error) {
+	// XDC: capture pre-tx state for the XDPoS engine reward calculation.
+	// Reward computation at checkpoint blocks must read account balances
+	// BEFORE tx execution; without this, reward calculation uses post-tx
+	// state and merkle root diverges at every Epoch checkpoint.
+	parentState := statedb.Copy()
 	var (
-		receipts    = make([]*types.Receipt, 0, len(block.Transactions()))
-		usedGas     = new(uint64)
+		config      = p.chainConfig()
+		receipts    = make(types.Receipts, 0, len(block.Transactions()))
 		header      = block.Header()
 		blockHash   = block.Hash()
 		blockNumber = block.Number()
 		allLogs     []*types.Log
-		gp          = new(GasPool).AddGas(block.GasLimit())
+		gp          = NewGasPool(block.GasLimit())
 	)
-
 	var tracingStateDB = vm.StateDB(statedb)
 	if hooks := cfg.Tracer; hooks != nil {
 		tracingStateDB = state.NewHookedState(statedb, hooks)
 	}
-
 	// Mutate the block and state according to any hard-fork specs
-	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
+	if config.DAOForkSupport && config.DAOForkBlock != nil && config.DAOForkBlock.Cmp(block.Number()) == 0 {
 		misc.ApplyDAOHardFork(tracingStateDB)
 	}
-	// parentState is the snapshot Finalize hands to HookReward: take it before
-	// the block level hooks, as the miner does. HookReward reads only masternode
-	// slots, which the hooks do not write, and the root comes from statedb, so
-	// output is unchanged; at DAOForkBlock the DAO balances still differ.
-	parentState := statedb.Copy()
-	// Apply the block level hooks.
-	context := NewEVMBlockContext(header, p.bc, nil)
-	evm := vm.NewEVM(context, tracingStateDB, tradingState, p.config, cfg)
-	signer := types.MakeSigner(p.config, blockNumber)
-	ApplyBlockLevelHooks(block.ParentHash(), evm)
-	InitSignerInTransactions(p.config, header, block.Transactions())
-	balanceUpdated := map[common.Address]*big.Int{}
-	totalFeeUsed := big.NewInt(0)
+
+	// XDC: at the TIPSigning fork block (mainnet 3,000,000; Apothem
+	// 23,779,191), canonical XDPoSChain wipes the BlockSigners contract
+	// (0x89). After this block, signing transactions are handled by
+	// ApplySigningTransaction without invoking the contract's EVM code,
+	// so the on-chain code+storage at 0x89 is no longer needed and
+	// removing it shrinks the state trie. We MUST match the canonical
+	// behaviour exactly or the state root diverges at the fork block.
+	//
+	// Implementation note: the IntermediateRoot(false) call BEFORE
+	// SelfDestruct is required for pathdb correctness. Modern geth's
+	// pathdb commits mutations against the trie that was opened during
+	// the previous IntermediateRoot. Without first opening the trie here
+	// (against the pre-deletion originalRoot), the subsequent
+	// SelfDestruct + Finalise + IntermediateRoot path leaves the trie in
+	// a state where the deletion is recorded in mutations but does not
+	// produce the canonical post-deletion root.
+	//
+	// This must run in exactly this order, and before the parent-header
+	// lookup below has any chance to matter: IntermediateRoot(false) →
+	// SelfDestruct → Finalise(true) → IntermediateRoot(true).
+	if common.TIPSigning.Cmp(block.Number()) == 0 {
+		_ = statedb.IntermediateRoot(false)
+		statedb.SelfDestruct(common.BlockSignersBinary)
+		statedb.Finalise(true)
+		_ = statedb.IntermediateRoot(true)
+	}
+
+	parent := p.chain.GetHeader(block.ParentHash(), block.NumberU64()-1)
+	if parent == nil {
+		return nil, fmt.Errorf("missing parent %#x", block.ParentHash())
+	}
+	var (
+		context         = NewEVMBlockContext(header, p.chain, nil)
+		signer          = types.MakeSigner(config, header.Number, header.Time)
+		evm             = vm.NewEVM(context, tracingStateDB, config, cfg)
+		blockAccessList = bal.NewConstructionBlockAccessList()
+	)
+	defer evm.Release()
+
+	if jumpDestCache != nil {
+		evm.SetJumpDestCache(jumpDestCache)
+	}
+	// Run the pre-execution system calls
+	blockAccessList.Merge(PreExecution(ctx, block.BeaconRoot(), parent, config, evm, block.Number(), block.Time()))
+
+	// XDC: resolve TRC21 fee recipient once per block. After TIPTRC21Fee
+	// (Apothem 23,779,191), the masternode's registered candidate-owner —
+	// looked up from the validator contract (0x88) — receives the per-tx
+	// gas-fee credit instead of the masternode. Computed before the loop so
+	// that within-block balance mutations on the owner do not influence the
+	// lookup. Passed through to ApplyTransactionWithEVM where it routes the
+	// fee in state_transition.go.
+	coinbaseOwner := getCoinbaseOwner(p.chain.Engine(), statedb, header)
 
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
-		// check denylist txs after hf
-		if p.config.IsDenylist(block.Number()) {
-			// check if sender is in denylist
-			if common.IsInDenylist(tx.From()) {
-				return nil, nil, 0, fmt.Errorf("block contains transaction with sender in denylist: %v", tx.From().Hex())
-			}
-			// check if receiver is in denylist
-			if common.IsInDenylist(tx.To()) {
-				return nil, nil, 0, fmt.Errorf("block contains transaction with receiver in denylist: %v", tx.To().Hex())
-			}
+		// Publish the progress, letting the prefetcher skip caught up work.
+		// Must come before the XDC dispatch shortcuts below: a block composed
+		// entirely of special (0x89/0x92/0x93) txs that `continue` past the
+		// normal path would otherwise never publish progress, stalling the
+		// coordinated prefetcher against a never-advancing index.
+		if execIndex != nil {
+			execIndex.Store(int64(i))
 		}
-		// validate minFee slot for XDCZ
-		if tx.IsXDCZApplyTransaction(p.config) {
-			copyState := statedb.Copy()
-			if err := ValidateXDCZApplyTransaction(p.bc, block.Number(), copyState, common.BytesToAddress(tx.Data()[4:])); err != nil {
-				return nil, nil, 0, err
+		statedb.SetTxContext(tx.Hash(), i, uint32(i))
+
+		// XDC: signing transactions at the TIPSigning fork are routed to
+		// ApplySigningTransaction, which bumps the sender's nonce and emits a
+		// minimal receipt without invoking the EVM (zero gas). The contract
+		// at 0x89 (BlockSignersBinary) is wiped at TIPSigning, so dispatching
+		// here through EVM would fail. Canonical XDPoSChain mirrors this exact
+		// dispatch and the parity gates depend on it producing byte-identical
+		// receipts.
+		if to := tx.To(); to != nil && *to == common.BlockSignersBinary && config.IsTIPSigning(blockNumber) {
+			receipt, err := ApplySigningTransaction(config, statedb, blockNumber, blockHash, tx, gp.Used())
+			if err != nil {
+				return nil, fmt.Errorf("could not apply signing tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 			}
+			receipts = append(receipts, receipt)
+			allLogs = append(allLogs, receipt.Logs...)
+			continue
 		}
-		// validate balance slot, token decimal for XDCX
-		if tx.IsXDCXApplyTransaction(p.config) {
-			copyState := statedb.Copy()
-			if err := ValidateXDCXApplyTransaction(p.bc, block.Number(), copyState, common.BytesToAddress(tx.Data()[4:])); err != nil {
-				return nil, nil, 0, err
+
+		// XDC: between TIPXDCX (Apothem 23,779,191) and TIPXDCXReceiverDisable
+		// (Apothem 66,825,000), transactions targeting TradingStateAddrBinary
+		// (0x92) or XDCXLendingAddressBinary (0x93) are emitted by the XDCx
+		// subsystem as "empty" notifier transactions. Canonical XDPoSChain
+		// routes them to ApplyEmptyTransaction: no EVM execution, zero gas,
+		// minimal receipt with a single log carrying only the To address.
+		// Running them through the normal EVM path produces a non-zero gas
+		// receipt and diverges from canonical at the very first TIPXDCX block.
+		if config.IsTIPXDCXReceiver(blockNumber) {
+			if to := tx.To(); to != nil && (*to == common.TradingStateAddrBinary || *to == common.XDCXLendingAddressBinary) {
+				receipt, err := ApplyEmptyTransaction(config, statedb, blockNumber, blockHash, tx, gp.Used())
+				if err != nil {
+					return nil, fmt.Errorf("could not apply empty tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+				}
+				receipts = append(receipts, receipt)
+				allLogs = append(allLogs, receipt.Logs...)
+				continue
 			}
 		}
 
-		var balanceFee *big.Int
-		if tx.To() != nil {
-			if value, ok := tokensFee[*tx.To()]; ok {
-				balanceFee = value
-			}
-		}
-		msg, err := TransactionToMessage(tx, signer, balanceFee, blockNumber, header.BaseFee, p.config)
+		msg, err := TransactionToMessage(tx, signer, header.BaseFee)
 		if err != nil {
-			return nil, nil, 0, err
+			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
-		statedb.SetTxContext(tx.Hash(), i)
-
-		receipt, gas, tokenFeeUsed, err := ApplyTransactionWithEVM(msg, gp, statedb, blockNumber, blockHash, tx, usedGas, evm, balanceFee)
+		statedb.SetTxContext(tx.Hash(), i, uint32(i+1))
+		_, _, spanEnd := telemetry.StartSpan(ctx, "core.ApplyTransactionWithEVM",
+			telemetry.StringAttribute("tx.hash", tx.Hash().Hex()),
+			telemetry.IntAttribute("tx.index", i),
+		)
+		receipt, bal, err := ApplyTransactionWithEVM(msg, gp, statedb, blockNumber, blockHash, context.Time, tx, evm, coinbaseOwner)
 		if err != nil {
-			return nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+			spanEnd(&err)
+			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
-		if tokenFeeUsed {
-			fee := params.GetGasFee(block.Header().Number.Uint64(), gas, p.config)
-			tokensFee[*tx.To()] = new(big.Int).Sub(tokensFee[*tx.To()], fee)
-			balanceUpdated[*tx.To()] = tokensFee[*tx.To()]
-			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
-		}
+		blockAccessList.Merge(bal)
+		spanEnd(nil)
 	}
-	tracingStateDB.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
+	requests, bal, err := PostExecution(ctx, config, block.Number(), block.Time(), allLogs, evm, uint32(len(block.Transactions())+1))
+	if err != nil {
+		return nil, err
+	}
+	blockAccessList.Merge(bal)
 
-	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts)
+	// XDC: Set parentState on the engine for reward calculation.
+	if xdposEngine, ok := p.chain.Engine().(interface{ SetParentState(*state.StateDB) }); ok {
+		xdposEngine.SetParentState(parentState)
+	}
 
-	return receipts, allLogs, *usedGas, nil
+	// Finalize the block, applying any consensus engine specific extras
+	// (e.g. block rewards).
+	p.chain.Engine().Finalize(p.chain, header, tracingStateDB, block.Body(), uint32(len(block.Transactions())+1), blockAccessList)
+
+	return &ProcessResult{
+		Receipts: receipts,
+		Requests: requests,
+		Logs:     allLogs,
+		GasUsed:  gp.Used(),
+		Bal:      blockAccessList,
+	}, nil
 }
 
-func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, tokensFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
-	if err := statedb.EnsureChainConfig(p.config); err != nil {
-		return nil, nil, 0, err
-	}
-	block := cBlock.block
-	var (
-		receipts    types.Receipts
-		usedGas     = new(uint64)
-		header      = block.Header()
-		blockHash   = block.Hash()
-		blockNumber = block.Number()
-		allLogs     []*types.Log
-		gp          = new(GasPool).AddGas(block.GasLimit())
-	)
+// PreExecution processes pre-execution state changes and system calls.
+func PreExecution(ctx context.Context, beaconRoot *common.Hash, parent *types.Header, config *params.ChainConfig, evm *vm.EVM, number *big.Int, time uint64) *bal.ConstructionBlockAccessList {
+	_, _, spanEnd := telemetry.StartSpan(ctx, "core.preExecution")
+	defer spanEnd(nil)
 
-	var tracingStateDB = vm.StateDB(statedb)
-	if hooks := cfg.Tracer; hooks != nil {
-		tracingStateDB = state.NewHookedState(statedb, hooks)
-	}
+	var blockAccessList *bal.ConstructionBlockAccessList
+	if config.IsAmsterdam(number, time) {
+		blockAccessList = bal.NewConstructionBlockAccessList()
 
-	// Mutate the block and state according to any hard-fork specs
-	if p.config.DAOForkSupport && p.config.DAOForkBlock != nil && p.config.DAOForkBlock.Cmp(block.Number()) == 0 {
-		misc.ApplyDAOHardFork(tracingStateDB)
-	}
-	// A stop abandons the block before the snapshot, the EVM and the hooks; the
-	// state is discarded. The DAO fork above already ran, as in the baseline; a
-	// stop arriving during the hooks is caught below them, so all three run
-	// where the baseline ran two and skipped the EIP-2935 write.
-	if cBlock.stop.Load() {
-		return nil, nil, 0, ErrStopPreparingBlock
-	}
-	// See Process: the snapshot Finalize hands to HookReward predates the
-	// block level hooks, matching the miner's work.parentState.
-	parentState := statedb.Copy()
-	// Apply the block level hooks.
-	context := NewEVMBlockContext(header, p.bc, nil)
-	evm := vm.NewEVM(context, tracingStateDB, tradingState, p.config, cfg)
-	signer := types.MakeSigner(p.config, blockNumber)
-	ApplyBlockLevelHooks(block.ParentHash(), evm)
-	InitSignerInTransactions(p.config, header, block.Transactions())
-	balanceUpdated := map[common.Address]*big.Int{}
-	totalFeeUsed := big.NewInt(0)
-
-	if cBlock.stop.Load() {
-		return nil, nil, 0, ErrStopPreparingBlock
-	}
-
-	// Iterate over and process the individual transactions
-	receipts = make([]*types.Receipt, block.Transactions().Len())
-	for i, tx := range block.Transactions() {
-		// check denylist txs after hf
-		if p.config.IsDenylist(block.Number()) {
-			// check if sender is in denylist
-			if common.IsInDenylist(tx.From()) {
-				return nil, nil, 0, fmt.Errorf("block contains transaction with sender in denylist: %v", tx.From().Hex())
-			}
-			// check if receiver is in denylist
-			if common.IsInDenylist(tx.To()) {
-				return nil, nil, 0, fmt.Errorf("block contains transaction with receiver in denylist: %v", tx.To().Hex())
-			}
-		}
-		// validate minFee slot for XDCZ
-		if tx.IsXDCZApplyTransaction(p.config) {
-			copyState := statedb.Copy()
-			if err := ValidateXDCZApplyTransaction(p.bc, block.Number(), copyState, common.BytesToAddress(tx.Data()[4:])); err != nil {
-				return nil, nil, 0, err
-			}
-		}
-		// validate balance slot, token decimal for XDCX
-		if tx.IsXDCXApplyTransaction(p.config) {
-			copyState := statedb.Copy()
-			if err := ValidateXDCXApplyTransaction(p.bc, block.Number(), copyState, common.BytesToAddress(tx.Data()[4:])); err != nil {
-				return nil, nil, 0, err
-			}
-		}
-		var balanceFee *big.Int
-		if tx.To() != nil {
-			if value, ok := tokensFee[*tx.To()]; ok {
-				balanceFee = value
-			}
-		}
-		msg, err := TransactionToMessage(tx, signer, balanceFee, blockNumber, header.BaseFee, p.config)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		statedb.SetTxContext(tx.Hash(), i)
-
-		receipt, gas, tokenFeeUsed, err := ApplyTransactionWithEVM(msg, gp, statedb, blockNumber, blockHash, tx, usedGas, evm, balanceFee)
-		if err != nil {
-			return nil, nil, 0, err
-		}
-		if cBlock.stop.Load() {
-			return nil, nil, 0, ErrStopPreparingBlock
-		}
-		receipts[i] = receipt
-		allLogs = append(allLogs, receipt.Logs...)
-		if tokenFeeUsed {
-			fee := params.GetGasFee(block.Header().Number.Uint64(), gas, p.config)
-			tokensFee[*tx.To()] = new(big.Int).Sub(tokensFee[*tx.To()], fee)
-			balanceUpdated[*tx.To()] = tokensFee[*tx.To()]
-			totalFeeUsed = totalFeeUsed.Add(totalFeeUsed, fee)
+		// EIP-7997: insert the deterministic deployment factory at the Amsterdam
+		// activation block via an irregular state transition.
+		if !config.IsAmsterdam(parent.Number, parent.Time) {
+			misc.ApplyEIP7997(evm.StateDB)
 		}
 	}
-	tracingStateDB.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
-
-	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts)
-	return receipts, allLogs, *usedGas, nil
+	// EIP-4788
+	if beaconRoot != nil {
+		ProcessBeaconBlockRoot(*beaconRoot, evm, blockAccessList)
+	}
+	// EIP-2935: serve parent block hash from state. Upstream gates this on
+	// Prague/UBT; on XDC the ring is also populated from Bogotá onward so
+	// EIP-7709's state-serving BLOCKHASH has history to read.
+	if config.IsPrague(number, time) || config.IsUBT(number, time) || config.IsBogota(number, time) {
+		ProcessParentBlockHash(parent.Hash(), evm, blockAccessList)
+	}
+	return blockAccessList
 }
 
-// txRoute describes how a transaction is handled while a block is processed.
-type txRoute uint8
+// PostExecution processes post-execution system calls when Prague is enabled.
+// If Prague is not activated, it returns null requests to differentiate from
+// empty requests.
+func PostExecution(ctx context.Context, config *params.ChainConfig, number *big.Int, time uint64, allLogs []*types.Log, evm *vm.EVM, blockAccessIndex uint32) (requests [][]byte, blockAccessList *bal.ConstructionBlockAccessList, err error) {
+	_, _, spanEnd := telemetry.StartSpan(ctx, "core.postExecution")
+	defer spanEnd(&err)
 
-const (
-	// routeEVM is an ordinary transaction executed by the EVM.
-	routeEVM txRoute = iota
-	// routeSign is a sign transaction handled by ApplySignTransaction.
-	routeSign
-	// routeEmpty is a transaction to the XDCX system addresses handled by
-	// ApplyEmptyTransaction: no EVM execution, no nonce check, no nonce increment
-	// and no state change.
-	routeEmpty
-)
-
-// routeTransaction is the single place that decides which handler a transaction goes
-// through. ApplyTransactionWithEVM and the replay path both call it so state
-// replay can never drift from block processing.
-func routeTransaction(config *params.ChainConfig, blockNumber *big.Int, tx *types.Transaction) txRoute {
-	to := tx.To()
-	if to != nil {
-		if *to == common.BlockSignersBinary && config.IsTIPSigning(blockNumber) {
-			return routeSign
+	if config.IsAmsterdam(number, time) {
+		blockAccessList = bal.NewConstructionBlockAccessList()
+	}
+	rules := config.Rules(number, true, time) // IsMerge is always true
+	// Read requests if Prague is enabled.
+	if config.IsPrague(number, time) {
+		requests = [][]byte{}
+		// EIP-6110
+		if err := ParseDepositLogs(&requests, allLogs, config); err != nil {
+			return nil, nil, fmt.Errorf("failed to parse deposit logs: %w", err)
 		}
-		if *to == common.TradingStateAddrBinary && config.IsTIPXDCXReceiver(blockNumber) {
-			return routeEmpty
+		// EIP-7002
+		if err := ProcessWithdrawalQueue(&requests, rules, evm, blockAccessIndex, blockAccessList); err != nil {
+			return nil, nil, fmt.Errorf("failed to process withdrawal queue: %w", err)
 		}
-		if *to == common.XDCXLendingAddressBinary && config.IsTIPXDCXReceiver(blockNumber) {
-			return routeEmpty
+		// EIP-7251
+		if err := ProcessConsolidationQueue(&requests, rules, evm, blockAccessIndex, blockAccessList); err != nil {
+			return nil, nil, fmt.Errorf("failed to process consolidation queue: %w", err)
 		}
 	}
-	if tx.IsTradingTransaction() && config.IsTIPXDCXReceiver(blockNumber) {
-		return routeEmpty
-	}
-	if tx.IsLendingFinalizedTradeTransaction() && config.IsTIPXDCXReceiver(blockNumber) {
-		return routeEmpty
-	}
-	return routeEVM
-}
 
-// finaliseTxState writes the pending state changes of a single transaction to the trie,
-// the same way block processing does before it builds the receipt: the state is finalised
-// once per transaction, and the pre-Byzantium root is only kept for the receipt.
-//
-// Callers must hand it the state the EVM executes against (evm.StateDB), not the
-// *state.StateDB behind it. With a tracer configured that state is a hookedStateDB, and
-// its Finalise reports the balance burnt by self-destructed accounts to the tracer
-// (core/state/statedb_hooked.go); finalising the raw state instead would drop those
-// events. hookedStateDB.IntermediateRoot forwards unchanged, so the pre-Byzantium branch
-// is equivalent either way.
-//
-// The sign and empty routes hand in evm.StateDB as well, even though they never enter the
-// EVM: no account self-destructs on those paths, so the hooked state reports no extra event.
-func finaliseTxState(config *params.ChainConfig, statedb vm.StateDB, blockNumber *big.Int) []byte {
-	if config.IsByzantium(blockNumber) {
-		statedb.Finalise(true)
-		return nil
+	if config.IsAmsterdam(number, time) {
+		// EIP-8282
+		if err := ProcessBuilderDepositQueue(&requests, rules, evm, blockAccessIndex, blockAccessList); err != nil {
+			return nil, nil, fmt.Errorf("failed to process builder deposit queue: %w", err)
+		}
+		if err := ProcessBuilderExitQueue(&requests, rules, evm, blockAccessIndex, blockAccessList); err != nil {
+			return nil, nil, fmt.Errorf("failed to process builder exit queue: %w", err)
+		}
 	}
-	return statedb.IntermediateRoot(config.IsEIP158(blockNumber)).Bytes()
+	return requests, blockAccessList, nil
 }
 
 // ApplyTransactionWithEVM attempts to apply a transaction to the given state database
 // and uses the input parameters for its environment similar to ApplyTransaction. However,
 // this method takes an already created EVM instance as input.
-func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM, balanceFee *big.Int) (receipt *types.Receipt, gasUsed uint64, tokenFeeUsed bool, err error) {
+//
+// The optional owner parameter (XDC) specifies the coinbase-owner address used for
+// TRC21 fee routing post-TIPTRC21Fee. When no owner is supplied behaviour is
+// bit-identical to upstream v1.17.4 (refs #740/#742).
+func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, blockTime uint64, tx *types.Transaction, evm *vm.EVM, owner ...common.Address) (receipt *types.Receipt, bal *bal.ConstructionBlockAccessList, err error) {
 	if hooks := evm.Config.Tracer; hooks != nil {
 		if hooks.OnTxStart != nil {
-			// OnTxStart runs before ApplyMessage, so the execution tx context must be visible
-			// here too. This is XDPoS-specific because msg.GasPrice can differ from the raw tx.
-			evm.SetTxContext(NewEVMTxContext(msg))
 			hooks.OnTxStart(evm.GetVMContext(), tx, msg.From)
 		}
 		if hooks.OnTxEnd != nil {
 			defer func() { hooks.OnTxEnd(receipt, err) }()
 		}
 	}
-
-	to := tx.To()
-	config := evm.ChainConfig()
-	switch routeTransaction(config, blockNumber, tx) {
-	case routeSign:
-		return ApplySignTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
-	case routeEmpty:
-		return ApplyEmptyTransaction(msg, config, statedb, blockNumber, blockHash, tx, usedGas, evm)
-	}
-
-	applyHistoricalBalanceBypass(statedb, blockNumber, msg.From)
-
-	// Apply the transaction to the current state (included in the env)
-	coinbaseOwner := statedb.GetOwner(evm.Context.Coinbase)
-	result, err := ApplyMessage(evm, msg, gp, coinbaseOwner)
+	// Apply the transaction to the current state (included in the env).
+	// Thread the optional owner through to ApplyMessage for TRC21 fee routing.
+	result, err := ApplyMessage(evm, msg, gp, owner...)
 	if err != nil {
-		return nil, 0, false, err
+		return nil, nil, err
 	}
-
-	// Update the state with pending changes. evm.StateDB, not statedb: see finaliseTxState.
-	root := finaliseTxState(config, evm.StateDB, blockNumber)
-	*usedGas += result.UsedGas
-
-	if balanceFee != nil && result.Failed() {
-		statedb.PayFeeWithTRC21TxFail(msg.From, *to)
+	// Update the state with pending changes.
+	var root []byte
+	if evm.ChainConfig().IsByzantium(blockNumber) {
+		bal = evm.StateDB.Finalise(true)
+	} else {
+		root = statedb.IntermediateRoot(evm.ChainConfig().IsEIP158(blockNumber)).Bytes()
 	}
-
-	return MakeReceipt(evm, result, statedb, blockNumber, blockHash, tx, *usedGas, root), result.UsedGas, balanceFee != nil, nil
+	// Merge the tx-local access event into the "block-local" one, in order to collect
+	// all values, so that the witness can be built.
+	if statedb.Database().Type().Is(state.TypeUBT) {
+		statedb.AccessEvents().Merge(evm.AccessEvents)
+	}
+	return MakeReceipt(evm, result, statedb, blockNumber, blockHash, blockTime, tx, gp.CumulativeUsed(), root), bal, nil
 }
 
 // MakeReceipt generates the receipt object for a transaction given its execution result.
-func MakeReceipt(evm *vm.EVM, result *ExecutionResult, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas uint64, root []byte) *types.Receipt {
-	// Create a new receipt for the transaction, storing the intermediate root and gas used
-	// by the tx.
-	receipt := &types.Receipt{Type: tx.Type(), PostState: root, CumulativeGasUsed: usedGas}
+func MakeReceipt(evm *vm.EVM, result *ExecutionResult, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, blockTime uint64, tx *types.Transaction, cumulativeGas uint64, root []byte) *types.Receipt {
+	// Create a new receipt for the transaction, storing the intermediate root
+	// and gas used by the tx.
+	//
+	// The cumulative gas used equals the sum of gasUsed across all preceding
+	// txs with refunded gas deducted.
+	receipt := &types.Receipt{Type: tx.Type(), PostState: root, CumulativeGasUsed: cumulativeGas}
 	if result.Failed() {
 		receipt.Status = types.ReceiptStatusFailed
 	} else {
 		receipt.Status = types.ReceiptStatusSuccessful
 	}
 	receipt.TxHash = tx.Hash()
+
+	// GasUsed = max(tx_gas_used - gas_refund, calldata_floor_gas_cost), unchanged
+	// in the Amsterdam fork.
 	receipt.GasUsed = result.UsedGas
 
-	// If the transaction created a contract, store the creation address in the receipt.
-	if tx.To() == nil {
+	if tx.Type() == types.BlobTxType {
+		receipt.BlobGasUsed = uint64(len(tx.BlobHashes()) * params.BlobTxBlobGasPerBlob)
+		receipt.BlobGasPrice = evm.Context.BlobBaseFee
+	}
+
+	// If the transaction created a contract, store the creation address in
+	// the receipt. Frame transactions never create contracts.
+	if tx.To() == nil && tx.Type() != types.FrameTxType {
 		receipt.ContractAddress = crypto.CreateAddress(evm.TxContext.Origin, tx.Nonce())
 	}
 
 	// Set the receipt logs and create the bloom filter.
-	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash)
-	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
+	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash, blockTime)
+	receipt.Bloom = types.CreateBloom(receipt)
 	receipt.BlockHash = blockHash
 	receipt.BlockNumber = blockNumber
 	receipt.TransactionIndex = uint(statedb.TxIndex())
+
+	// EIP-8141: attach the frame receipts and the fee payer. The
+	// transaction's logs are the concatenation of the frame logs in frame
+	// order (the driver discards rolled-back logs via the state journal), so
+	// the per-frame grouping must partition receipt.Logs exactly.
+	if tx.Type() == types.FrameTxType {
+		if result.Payer != nil {
+			receipt.Payer = result.Payer
+		}
+		if len(result.FrameReceipts) > 0 {
+			receipt.FrameReceipts = make([]*types.FrameReceipt, len(result.FrameReceipts))
+			frameLogCount := 0
+			for i := range result.FrameReceipts {
+				receipt.FrameReceipts[i] = &result.FrameReceipts[i]
+				frameLogCount += len(result.FrameReceipts[i].Logs)
+			}
+			if frameLogCount != len(receipt.Logs) {
+				log.Error("FrameTx receipt log mismatch", "tx", tx.Hash(),
+					"frameLogs", frameLogCount, "txLogs", len(receipt.Logs))
+			}
+			// The payload carries no transaction-level status; derive one
+			// from the per-frame statuses for interfaces that need it.
+			receipt.Status = types.DeriveFrameTxStatus(receipt.FrameReceipts)
+		}
+	}
 	return receipt
 }
 
 // ApplyTransaction attempts to apply a transaction to the given state database
 // and uses the input parameters for its environment. It returns the receipt
-// for the transaction, gas used and an error if the transaction failed,
+// for the transaction and an error if the transaction failed,
 // indicating the block was invalid.
-func ApplyTransaction(tokensFee map[common.Address]*big.Int, evm *vm.EVM, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, uint64, bool, error) {
-	var balanceFee *big.Int
-	if tx.To() != nil {
-		if value, ok := tokensFee[*tx.To()]; ok {
-			balanceFee = value
-		}
-	}
-
-	signer := types.MakeSigner(evm.ChainConfig(), header.Number)
-	msg, err := TransactionToMessage(tx, signer, balanceFee, header.Number, header.BaseFee, evm.ChainConfig())
+func ApplyTransaction(evm *vm.EVM, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction) (*types.Receipt, *bal.ConstructionBlockAccessList, error) {
+	msg, err := TransactionToMessage(tx, types.MakeSigner(evm.ChainConfig(), header.Number, header.Time), header.BaseFee)
 	if err != nil {
-		return nil, 0, false, err
+		return nil, nil, err
 	}
-	return ApplyTransactionWithEVM(msg, gp, statedb, header.Number, header.Hash(), tx, usedGas, evm, balanceFee)
+	// Create a new context to be used in the EVM environment
+	return ApplyTransactionWithEVM(msg, gp, statedb, header.Number, header.Hash(), header.Time, tx, evm)
 }
 
-// ApplySignTransaction handles a transaction to the block signers address: it finalises
-// the pending state and bumps the sender nonce, without entering the EVM. evm must not
-// be nil; the state it finalises is evm.StateDB (see finaliseTxState), while the nonce and
-// the log it records go to statedb. statedb therefore has to be the *state.StateDB behind
-// evm.StateDB: block processing hands in the pair it built the EVM from, and pairing the
-// EVM with a foreign statedb would split those two effects across two states.
-func ApplySignTransaction(msg *Message, config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (receipt *types.Receipt, gasUsed uint64, tokenFeeUsed bool, err error) {
-	// Update the state with pending changes
-	root := finaliseTxState(config, evm.StateDB, blockNumber)
-	if err := applySignTransactionNonce(msg, config, statedb, blockNumber, tx); err != nil {
-		return nil, 0, false, err
+// systemCallGasBudget returns the gas budget for system calls.
+func systemCallGasBudget(evm *vm.EVM) (gasLimit uint64, gasBudget vm.GasBudget) {
+	if !evm.GetRules().IsAmsterdam {
+		gasLimit = 30_000_000
+		gasBudget = vm.NewGasBudget(gasLimit, 0)
+	} else {
+		// SYSTEM_MAX_SSTORES_PER_CALL = 16 is the upper bound on the number of
+		// new storage slots a single system call is expected to write.
+		stateBudget := params.SystemMaxSStoresPerCall * evm.Context.CostPerStateByte * params.StorageCreationSize
+		gasLimit = 30_000_000
+		gasBudget = vm.NewGasBudget(gasLimit, stateBudget)
 	}
-	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
-	// based on the eip phase, we're passing whether the root touch-delete accounts.
-	receipt = types.NewReceipt(root, false, *usedGas)
-	receipt.TxHash = tx.Hash()
-	receipt.GasUsed = 0
-	// if the transaction created a contract, store the creation address in the receipt.
-	// Set the receipt logs and create a bloom for filtering
-	addNonEVMTxLog(statedb, common.BlockSignersBinary, blockNumber)
-	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash)
-	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
-	receipt.BlockHash = blockHash
-	receipt.BlockNumber = blockNumber
-	receipt.TransactionIndex = uint(statedb.TxIndex())
-	return receipt, 0, false, nil
+	return gasLimit, gasBudget
 }
 
-// ApplyEmptyTransaction handles a transaction to one of the XDCX system addresses: it
-// finalises the pending state and builds the receipt, without entering the EVM and
-// without touching any account. evm must not be nil; the state it finalises is
-// evm.StateDB (see finaliseTxState) and the log it records goes to statedb, so statedb has
-// to be the *state.StateDB behind evm.StateDB, the way ApplySignTransaction documents it.
-func ApplyEmptyTransaction(msg *Message, config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (receipt *types.Receipt, gasUsed uint64, tokenFeeUsed bool, err error) {
-	// Update the state with pending changes
-	root := finaliseTxState(config, evm.StateDB, blockNumber)
-	// Create a new receipt for the transaction, storing the intermediate root and gas used by the tx
-	// based on the eip phase, we're passing whether the root touch-delete accounts.
-	receipt = types.NewReceipt(root, false, *usedGas)
-	receipt.TxHash = tx.Hash()
-	receipt.GasUsed = 0
-	// if the transaction created a contract, store the creation address in the receipt.
-	// Set the receipt logs and create a bloom for filtering
-	addNonEVMTxLog(statedb, *tx.To(), blockNumber)
-	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash)
-	receipt.Bloom = types.CreateBloom(types.Receipts{receipt})
-	receipt.BlockHash = blockHash
-	receipt.BlockNumber = blockNumber
-	receipt.TransactionIndex = uint(statedb.TxIndex())
-	return receipt, 0, false, nil
-}
-
-// Errors a caller of ApplyTransactionForReplay can pick out with errors.Is. Both say how
-// the EVM was handed over, not how the transaction went, so a caller must not report them
-// as a transaction failure.
-var (
-	ErrReplayTracingEVM = errors.New("ApplyTransactionForReplay must not be used with a tracing EVM")
-	// ErrReplayStateType reports an EVM that carries a wrapped state although no tracer is
-	// configured. Such an EVM is buildable: eth/tracers/api.go wraps the state with
-	// NewHookedState without checking whether the tracer carries hooks. No caller of
-	// ApplyTransactionForReplay hands one over today; the guard is what keeps the type
-	// assertion below from replaying on a state its finalisation never reaches.
-	ErrReplayStateType = errors.New("ApplyTransactionForReplay requires a *state.StateDB")
-)
-
-// addNonEVMTxLog records the log entry block processing stores for a transaction the EVM
-// never executes, shared by ApplySignTransaction, ApplyEmptyTransaction and the replay of
-// both routes. It is deliberately not a receipt artefact: StateDB.AddLog advances the block
-// wide log count, so a caller that skipped it would give every log the following
-// transactions emit an index the chain never had.
-func addNonEVMTxLog(statedb *state.StateDB, address common.Address, blockNumber *big.Int) {
-	log := &types.Log{}
-	log.Address = address
-	log.BlockNumber = blockNumber.Uint64()
-	statedb.AddLog(log)
-}
-
-// ApplyTransactionForReplay applies tx to the state the EVM executes against, through
-// exactly the same routing as ApplyTransactionWithEVM, including the log it records for a
-// transaction the EVM never executes, but without building a receipt or its bloom. That log
-// is not a receipt artefact: StateDB.AddLog advances the block wide log count the following
-// transactions take their log indexes from, so dropping it would hand out indexes the chain
-// never had.
-//
-// It exists because replaying transactions to rebuild the pre-state of a block must not
-// diverge from block processing. A plain ApplyMessage call gets three things wrong: it
-// executes transactions to the XDCX system addresses with the EVM, while block
-// processing routes them to ApplyEmptyTransaction once the receiver fork is active (no
-// nonce check, no nonce increment and no state change); it executes sign transactions
-// with the EVM, while block processing routes them to ApplySignTransaction, which only
-// bumps the sender nonce; and it is called with the zero address as the coinbase owner,
-// so the block gas fee is credited there instead of to the owner of the block's
-// coinbase. applyHistoricalBalanceBypass is applied here as well.
-//
-// balanceFee is the TRC21 fee capacity of tx.To(), the same value ApplyTransactionWithEVM
-// receives. A non nil balanceFee implies that tx.To() is non nil: callers only look the
-// capacity up by recipient address, so a contract creation never carries one, and the fee
-// failure branch below relies on that.
-//
-// evm must not carry a Tracer and its StateDB must be a *state.StateDB: this function
-// never fires OnTxStart/OnTxEnd, it only produces state, and the finalisation, the nonce
-// and the TRC21 fee handling below need the concrete state type. Paths that need the
-// hooks must go through ApplyTransactionWithEVM.
-//
-// The caller must set the transaction context with StateDB.SetTxContext first, the way
-// block processing does: the log a native route records carries the transaction hash and
-// the index the state has at that moment, and only the caller knows the index. Nothing
-// checks it here, so forgetting it is not an error: the log then silently takes the hash
-// and the index the caller set last.
-func ApplyTransactionForReplay(msg *Message, gp *GasPool, blockNumber *big.Int, tx *types.Transaction, evm *vm.EVM, balanceFee *big.Int) error {
-	// A tracing EVM would silently lose its hooks here, so refuse it instead of
-	// returning a state the caller cannot explain.
-	if evm.Config.Tracer != nil {
-		return ErrReplayTracingEVM
-	}
-	// The state to replay on is the one the EVM executes against. Deriving it from the EVM
-	// instead of taking it as a second argument makes it impossible for the finalisation,
-	// the nonce handling and the TRC21 fee handling below to land on a state other than the
-	// one the execution wrote to. A wrapped state (state.NewHookedState) is only ever built
-	// when a Tracer is configured, which the guard above already rejected.
-	statedb, ok := evm.StateDB.(*state.StateDB)
-	if !ok {
-		return ErrReplayStateType
-	}
-	config := evm.ChainConfig()
-	switch routeTransaction(config, blockNumber, tx) {
-	case routeSign:
-		// ApplySignTransaction finalises the pending state, bumps the sender nonce and only
-		// then records its log; the receipt and its bloom are block processing artefacts.
-		// Keep the same order here so a replay cannot drift from block processing.
-		finaliseTxState(config, evm.StateDB, blockNumber)
-		if err := applySignTransactionNonce(msg, config, statedb, blockNumber, tx); err != nil {
-			return err
-		}
-		addNonEVMTxLog(statedb, common.BlockSignersBinary, blockNumber)
-		return nil
-	case routeEmpty:
-		// ApplyEmptyTransaction changes nothing but the finalisation of the pending state
-		// and the log it records for the transaction.
-		finaliseTxState(config, evm.StateDB, blockNumber)
-		addNonEVMTxLog(statedb, *tx.To(), blockNumber)
-		return nil
-	}
-
-	applyHistoricalBalanceBypass(statedb, blockNumber, msg.From)
-
-	coinbaseOwner := statedb.GetOwner(evm.Context.Coinbase)
-	result, err := ApplyMessage(evm, msg, gp, coinbaseOwner)
-	if err != nil {
-		return err
-	}
-
-	// Update the state with pending changes, mirroring ApplyTransactionWithEVM.
-	finaliseTxState(config, evm.StateDB, blockNumber)
-
-	if balanceFee != nil && result.Failed() {
-		statedb.PayFeeWithTRC21TxFail(msg.From, *tx.To())
-	}
-	return nil
-}
-
-// applySignTransactionNonce performs the state part of ApplySignTransaction: it recovers
-// the sender when the message does not carry it, then enforces and increments the sender
-// nonce. It is shared with the replay path so the two cannot drift.
-func applySignTransactionNonce(msg *Message, config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, tx *types.Transaction) error {
-	// Defensive fallback: msg.From should already be populated by the caller through one of these paths:
-	// 1. Normal block processing: TransactionToMessage recovers from via signature (types.Sender)
-	// 2. TraceCall/debug_traceCall: args.ToMessage directly uses the provided args.From parameter
-	// This zero-check should rarely execute. If it does, signature recovery is attempted as a last resort,
-	// which will fail if the transaction lacks a valid signature (e.g., unsigned simulation transactions).
-	from := msg.From
-	if from.IsZero() {
-		var err error
-		from, err = types.Sender(types.MakeSigner(config, blockNumber), tx)
-		if err != nil {
-			return err
+// ProcessBeaconBlockRoot applies the EIP-4788 system call to the beacon block root
+// contract. This method is exported to be used in tests.
+func ProcessBeaconBlockRoot(beaconRoot common.Hash, evm *vm.EVM, blockAccessList *bal.ConstructionBlockAccessList) {
+	if tracer := evm.Config.Tracer; tracer != nil {
+		onSystemCallStart(tracer, evm.GetVMContext())
+		if tracer.OnSystemCallEnd != nil {
+			defer tracer.OnSystemCallEnd()
 		}
 	}
-	nonce := statedb.GetNonce(from)
-	// For tracing/simulation calls (e.g., debug_traceCall), SkipNonceChecks is true,
-	// so nonce checks and incrementing are skipped, allowing the transaction to be processed
-	// regardless of the current account nonce. For regular transactions, nonce checks are enforced.
-	if !msg.SkipNonceChecks {
-		if nonce < tx.Nonce() {
-			return ErrNonceTooHigh
-		} else if nonce > tx.Nonce() {
-			return ErrNonceTooLow
-		}
-		// Only increment the nonce for real transactions.
-		statedb.SetNonce(from, nonce+1, tracing.NonceChangeEoACall)
+	gasLimit, gasBudget := systemCallGasBudget(evm)
+	msg := &Message{
+		From:      params.SystemAddress,
+		GasLimit:  gasLimit,
+		GasPrice:  uint256.NewInt(0),
+		GasFeeCap: uint256.NewInt(0),
+		GasTipCap: uint256.NewInt(0),
+		To:        &params.BeaconRootsAddress,
+		Data:      beaconRoot[:],
 	}
-	return nil
+	evm.SetTxContext(NewEVMTxContext(msg))
+	evm.StateDB.Prepare(evm.GetRules(), common.Address{}, common.Address{}, nil, nil, nil)
+	evm.StateDB.SetTxContext(common.Hash{}, 0, 0)
+	evm.StateDB.AddAddressToAccessList(params.BeaconRootsAddress)
+	_, _, _ = evm.Call(msg.From, *msg.To, msg.Data, gasBudget, common.U2560)
+	if evm.StateDB.AccessEvents() != nil {
+		evm.StateDB.AccessEvents().Merge(evm.AccessEvents)
+	}
+	blockAccessList.Merge(evm.StateDB.Finalise(true))
 }
 
-func InitSignerInTransactions(config *params.ChainConfig, header *types.Header, txs types.Transactions) {
-	if txs.Len() == 0 {
-		return
-	}
-	nWorker := min(runtime.NumCPU(), txs.Len())
-	signer := types.MakeSigner(config, header.Number)
-	chunkSize := txs.Len() / nWorker
-	if txs.Len()%nWorker != 0 {
-		chunkSize++
-	}
-	wg := sync.WaitGroup{}
-	for i := 0; i < nWorker; i++ {
-		from := i * chunkSize
-		to := from + chunkSize
-		if to > txs.Len() {
-			to = txs.Len()
-		}
-		wg.Go(func() {
-			for j := from; j < to; j++ {
-				types.CacheSigner(signer, txs[j])
-			}
-		})
-	}
-	wg.Wait()
-}
-
-// ProcessParentBlockHash writes the parent hash to the EIP-2935 history contract
-// and enforces the expected code. When Prague is active and the contract has no
-// code, it is deployed and backfilled on the spot: normally that happens once at
-// the activation block, but any Prague-active call re-runs the deploy and the
-// backfill if the code went missing. It is a no-op unless Prague is active at the
-// block being processed.
-func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
-	blockNumber := evm.Context.BlockNumber
-	if !evm.ChainConfig().IsPrague(blockNumber) {
-		return
-	}
-
-	// Fail fast if the deployed history contract does not have the expected code:
-	// diverging history semantics would fork the chain silently. The panic hits
-	// block processing and debug_trace* replay alike, so a restart reaches the same
-	// block again and the node stays down until the binary is fixed.
+// ProcessParentBlockHash stores the parent block hash in the history storage contract
+// as per EIP-2935/7709.
+func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM, blockAccessList *bal.ConstructionBlockAccessList) {
+	// EIP-2935: if the history contract already carries code, it must be the
+	// canonical bytecode. (Guards against a mis-seeded genesis alloc.)
 	code := evm.StateDB.GetCode(params.HistoryStorageAddress)
 	if len(code) > 0 && !bytes.Equal(code, params.HistoryStorageCode) {
-		log.Error("History storage code mismatch",
-			"have", crypto.Keccak256Hash(code),
-			"want", crypto.Keccak256Hash(params.HistoryStorageCode),
-		)
-		panic("history storage code mismatch")
+		panic(fmt.Sprintf("history storage code mismatch: have %s want %s",
+			crypto.Keccak256Hash(code), crypto.Keccak256Hash(params.HistoryStorageCode)))
 	}
 
-	forkBlock := evm.ChainConfig().PragueBlock
-
-	// Only deploy and backfill if the contract is missing at/after Prague activation.
-	if len(code) == 0 {
-		if !evm.StateDB.Exist(params.HistoryStorageAddress) {
-			evm.StateDB.CreateAccount(params.HistoryStorageAddress)
-		}
-		if evm.StateDB.GetNonce(params.HistoryStorageAddress) == 0 {
-			evm.StateDB.SetNonce(params.HistoryStorageAddress, 1, tracing.NonceChangeUnspecified)
-		}
-		evm.StateDB.SetCode(params.HistoryStorageAddress, params.HistoryStorageCode)
-
-		if blockNumber.Sign() > 0 {
-			end := blockNumber.Uint64() - 1
-			start := end
-			if end+1 > params.HistoryServeWindow {
-				start = end + 1 - params.HistoryServeWindow
+	// XDC activates Prague by BLOCK number and does NOT ship the history contract
+	// in genesis. So at/after the Prague block, if the contract is absent, deploy
+	// it and backfill the recent block-hash ring buffer directly — this is the
+	// per-block state mutation canonical XDPoSChain applies at the Prague block
+	// (e.g. devnet 5551 block 50,000 → stateRoot c0060c78…). Upstream time-based
+	// Prague chains ship the contract pre-deployed, so len(code) > 0 and this is
+	// skipped. Refs XDCIndia/ethOne#39.
+	blockNumber := evm.Context.BlockNumber
+	if len(code) == 0 && blockNumber != nil {
+		forkBlock := evm.ChainConfig().PragueBlock
+		bogota := evm.ChainConfig().IsBogota(blockNumber, evm.Context.Time)
+		if (forkBlock != nil && blockNumber.Cmp(forkBlock) >= 0) || bogota {
+			if !evm.StateDB.Exist(params.HistoryStorageAddress) {
+				evm.StateDB.CreateAccount(params.HistoryStorageAddress)
 			}
-			// Prague can activate at block zero, where forkBlock-1 would underflow.
-			if forkBlock.Sign() > 0 {
-				forkStart := forkBlock.Uint64() - 1
-				if forkStart > start {
-					start = forkStart
-				}
+			if evm.StateDB.GetNonce(params.HistoryStorageAddress) == 0 {
+				evm.StateDB.SetNonce(params.HistoryStorageAddress, 1, tracing.NonceChangeUnspecified)
 			}
-			for n := start; n <= end; n++ {
-				hash := evm.Context.GetHash(n)
-				if hash == (common.Hash{}) {
-					log.Debug("History backfill missing hash", "number", n)
-					continue
+			evm.StateDB.SetCode(params.HistoryStorageAddress, params.HistoryStorageCode, tracing.CodeChangeGenesis)
+			if blockNumber.Sign() > 0 {
+				end := blockNumber.Uint64() - 1
+				start := end
+				if bogota && forkBlock == nil {
+					// EIP-7709 (Bogotá without Prague): no fork-block bound
+					// exists to limit the backfill, so fill the full window
+					// available from genesis (saturating at HISTORY_SERVE_
+					// WINDOW) — the first Bogotá block must be able to serve
+					// its whole BLOCKHASH window immediately.
+					if end+1 > params.HistoryServeWindow {
+						start = end + 1 - params.HistoryServeWindow
+					} else {
+						start = 0
+					}
+				} else if end+1 > params.HistoryServeWindow {
+					start = end + 1 - params.HistoryServeWindow
 				}
-				evm.StateDB.SetState(params.HistoryStorageAddress, historyStorageKey(n), hash)
+				if forkBlock != nil && forkBlock.Sign() > 0 {
+					if forkStart := forkBlock.Uint64() - 1; forkStart > start {
+						start = forkStart
+					}
+				}
+				for n := start; n <= end; n++ {
+					hash := evm.Context.GetHash(n)
+					if hash == (common.Hash{}) {
+						continue
+					}
+					evm.StateDB.SetState(params.HistoryStorageAddress, historyStorageKey(n), hash)
+				}
 			}
 		}
 	}
@@ -790,30 +545,123 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 			defer tracer.OnSystemCallEnd()
 		}
 	}
-
+	gasLimit, gasBudget := systemCallGasBudget(evm)
 	msg := &Message{
 		From:      params.SystemAddress,
-		GasLimit:  30_000_000,
-		GasPrice:  common.Big0,
-		GasFeeCap: common.Big0,
-		GasTipCap: common.Big0,
+		GasLimit:  gasLimit,
+		GasPrice:  uint256.NewInt(0),
+		GasFeeCap: uint256.NewInt(0),
+		GasTipCap: uint256.NewInt(0),
 		To:        &params.HistoryStorageAddress,
 		Data:      prevHash.Bytes(),
 	}
 	evm.SetTxContext(NewEVMTxContext(msg))
+	evm.StateDB.Prepare(evm.GetRules(), common.Address{}, common.Address{}, nil, nil, nil)
+	evm.StateDB.SetTxContext(common.Hash{}, 0, 0)
 	evm.StateDB.AddAddressToAccessList(params.HistoryStorageAddress)
-	_, _, err := evm.Call(msg.From, *msg.To, msg.Data, 30_000_000, common.U2560)
+	_, _, err := evm.Call(msg.From, *msg.To, msg.Data, gasBudget, common.U2560)
 	if err != nil {
 		panic(err)
 	}
-	evm.StateDB.Finalise(true)
+	if evm.StateDB.AccessEvents() != nil {
+		evm.StateDB.AccessEvents().Merge(evm.AccessEvents)
+	}
+	blockAccessList.Merge(evm.StateDB.Finalise(true))
 }
 
+// historyStorageKey maps a block number to its slot in the EIP-2935 history
+// ring buffer (HISTORY_SERVE_WINDOW entries).
 func historyStorageKey(number uint64) common.Hash {
 	ringIndex := number % params.HistoryServeWindow
 	var key common.Hash
 	binary.BigEndian.PutUint64(key[24:], ringIndex)
 	return key
+}
+
+// ProcessWithdrawalQueue calls the EIP-7002 withdrawal queue contract.
+// It returns the opaque request data returned by the contract.
+func ProcessWithdrawalQueue(requests *[][]byte, rules params.Rules, evm *vm.EVM, blockAccessIndex uint32, blockAccessList *bal.ConstructionBlockAccessList) error {
+	return processRequestsSystemCall(requests, rules, evm, 0x01, params.WithdrawalQueueAddress, blockAccessIndex, blockAccessList)
+}
+
+// ProcessConsolidationQueue calls the EIP-7251 consolidation queue contract.
+// It returns the opaque request data returned by the contract.
+func ProcessConsolidationQueue(requests *[][]byte, rules params.Rules, evm *vm.EVM, blockAccessIndex uint32, blockAccessList *bal.ConstructionBlockAccessList) error {
+	return processRequestsSystemCall(requests, rules, evm, 0x02, params.ConsolidationQueueAddress, blockAccessIndex, blockAccessList)
+}
+
+// ProcessBuilderDepositQueue calls the EIP-8282 builder deposit contract.
+// It returns the opaque request data returned by the contract.
+func ProcessBuilderDepositQueue(requests *[][]byte, rules params.Rules, evm *vm.EVM, blockAccessIndex uint32, blockAccessList *bal.ConstructionBlockAccessList) error {
+	return processRequestsSystemCall(requests, rules, evm, 0x03, params.BuilderDepositAddress, blockAccessIndex, blockAccessList)
+}
+
+// ProcessBuilderExitQueue calls the EIP-8282 builder exit contract.
+// It returns the opaque request data returned by the contract.
+func ProcessBuilderExitQueue(requests *[][]byte, rules params.Rules, evm *vm.EVM, blockAccessIndex uint32, blockAccessList *bal.ConstructionBlockAccessList) error {
+	return processRequestsSystemCall(requests, rules, evm, 0x04, params.BuilderExitAddress, blockAccessIndex, blockAccessList)
+}
+
+func processRequestsSystemCall(requests *[][]byte, rules params.Rules, evm *vm.EVM, requestType byte, addr common.Address, blockAccessIndex uint32, blockAccessList *bal.ConstructionBlockAccessList) error {
+	if tracer := evm.Config.Tracer; tracer != nil {
+		onSystemCallStart(tracer, evm.GetVMContext())
+		if tracer.OnSystemCallEnd != nil {
+			defer tracer.OnSystemCallEnd()
+		}
+	}
+	gasLimit, gasBudget := systemCallGasBudget(evm)
+	msg := &Message{
+		From:      params.SystemAddress,
+		GasLimit:  gasLimit,
+		GasPrice:  uint256.NewInt(0),
+		GasFeeCap: uint256.NewInt(0),
+		GasTipCap: uint256.NewInt(0),
+		To:        &addr,
+	}
+	evm.SetTxContext(NewEVMTxContext(msg))
+	evm.StateDB.Prepare(rules, common.Address{}, common.Address{}, nil, nil, nil)
+	evm.StateDB.SetTxContext(common.Hash{}, 0, blockAccessIndex)
+	evm.StateDB.AddAddressToAccessList(addr)
+	ret, _, err := evm.Call(msg.From, *msg.To, msg.Data, gasBudget, common.U2560)
+	if evm.StateDB.AccessEvents() != nil {
+		evm.StateDB.AccessEvents().Merge(evm.AccessEvents)
+	}
+	bal := evm.StateDB.Finalise(true)
+	if err != nil {
+		return fmt.Errorf("system call failed to execute: %v", err)
+	}
+	blockAccessList.Merge(bal)
+
+	if len(ret) == 0 {
+		return nil // skip empty output
+	}
+	// Append prefixed requestsData to the requests list.
+	requestsData := make([]byte, len(ret)+1)
+	requestsData[0] = requestType
+	copy(requestsData[1:], ret)
+	*requests = append(*requests, requestsData)
+	return nil
+}
+
+var depositTopic = common.HexToHash("0x649bbc62d0e31342afea4e5cd82d4049e7e1ee912fc0889aa790803be39038c5")
+
+// ParseDepositLogs extracts the EIP-6110 deposit values from logs emitted by
+// BeaconDepositContract.
+func ParseDepositLogs(requests *[][]byte, logs []*types.Log, config *params.ChainConfig) error {
+	deposits := make([]byte, 1) // note: first byte is 0x00 (== deposit request type)
+	for _, log := range logs {
+		if log.Address == config.DepositContractAddress && len(log.Topics) > 0 && log.Topics[0] == depositTopic {
+			request, err := types.DepositLogToRequest(log.Data)
+			if err != nil {
+				return fmt.Errorf("unable to parse deposit data: %v", err)
+			}
+			deposits = append(deposits, request...)
+		}
+	}
+	if len(deposits) > 1 {
+		*requests = append(*requests, deposits)
+	}
+	return nil
 }
 
 func onSystemCallStart(tracer *tracing.Hooks, ctx *tracing.VMContext) {
@@ -822,4 +670,117 @@ func onSystemCallStart(tracer *tracing.Hooks, ctx *tracing.VMContext) {
 	} else if tracer.OnSystemCallStart != nil {
 		tracer.OnSystemCallStart()
 	}
+}
+
+// AssembleBlock finalizes the state and assembles the block with provided
+// body and receipts.
+func AssembleBlock(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt, blockAccessList *bal.ConstructionBlockAccessList) *types.Block {
+	// Assign the post-transition state root
+	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
+
+	if !chain.Config().IsAmsterdam(header.Number, header.Time) {
+		return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil))
+	}
+	// Assign the BlockAccessListHash if Amsterdam has been enabled
+	bal := blockAccessList.ToEncodingObj()
+	balHash := bal.Hash()
+	header.BlockAccessListHash = &balHash
+	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil)).WithAccessListUnsafe(bal)
+}
+
+// ApplySigningTransaction handles XDC signing transactions at the tipSigning
+// fork. Signing transactions to BlockSignersBinary (0x89) are processed without
+// consuming gas — matches XDPoSChain behavior at block >= tipSigning
+// (3,000,000 on mainnet). The EVM is bypassed entirely; only the sender's nonce
+// is bumped and a minimal log is emitted.
+//
+// The optional cumulativeGasUsed parameter (XDC) is the receipt's cumulative
+// gas counter at this index; passed by Process() from gp.CumulativeUsed().
+// usedGas is NOT modified (signing txs consume zero gas). Refs #740/#742.
+func ApplySigningTransaction(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, cumulativeGasUsed uint64) (*types.Receipt, error) {
+	var root []byte
+	if config.IsByzantium(blockNumber) {
+		statedb.Finalise(true)
+	} else {
+		root = statedb.IntermediateRoot(config.IsEIP158(blockNumber)).Bytes()
+	}
+	from, err := types.Sender(types.MakeSigner(config, blockNumber, 0), tx)
+	if err != nil {
+		return nil, err
+	}
+	nonce := statedb.GetNonce(from)
+	if nonce != tx.Nonce() {
+		return nil, fmt.Errorf("signing tx nonce mismatch: state=%d tx=%d", nonce, tx.Nonce())
+	}
+	statedb.SetNonce(from, nonce+1, tracing.NonceChangeUnspecified)
+
+	// Canonical XDPoSChain emits a minimal log with only Address (=
+	// BlockSignersBinary) and BlockNumber set. The signing path short-circuits
+	// EVM execution entirely, so the BlockSigner contract's
+	// Sign(address,uint256,bytes32) event never actually fires on canonical —
+	// only the Address bit contributes to the bloom. PR #654 attempted to mint
+	// the contract's event manually, but canonical does not, so the rich form
+	// caused bloom/receipt-root divergence past TIPSigning.
+	sigLog := &types.Log{
+		Address:     common.BlockSignersBinary,
+		BlockNumber: blockNumber.Uint64(),
+	}
+	statedb.AddLog(sigLog)
+
+	// Build receipt — gasUsed=0, cumulativeGasUsed unchanged.
+	receipt := &types.Receipt{
+		Type:              tx.Type(),
+		PostState:         root,
+		Status:            types.ReceiptStatusSuccessful,
+		CumulativeGasUsed: cumulativeGasUsed,
+		TxHash:            tx.Hash(),
+		GasUsed:           0,
+		BlockHash:         blockHash,
+		BlockNumber:       blockNumber,
+		TransactionIndex:  uint(statedb.TxIndex()),
+	}
+	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash, 0)
+	receipt.Bloom = types.CreateBloom(receipt)
+	return receipt, nil
+}
+
+// ApplyEmptyTransaction handles XDCx "empty" notifier transactions emitted
+// between TIPXDCX (Apothem 23,779,191; mainnet 38,383,838) and
+// TIPXDCXReceiverDisable (Apothem 66,825,000; mainnet 80,370,900) that target
+// the XDCx trading-state (0x92) or lending-engine (0x93) contracts. Canonical
+// XDPoSChain records the receipt with zero gas, a minimal single log carrying
+// only the To address, and no nonce bump. cumulativeGasUsed is passed through
+// unchanged. Without this dispatch the tx is run through the EVM, the receipt
+// reports non-zero gas, and the state root + receipts root diverge starting
+// at the very first TIPXDCX block.
+func ApplyEmptyTransaction(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, cumulativeGasUsed uint64) (*types.Receipt, error) {
+	var root []byte
+	if config.IsByzantium(blockNumber) {
+		statedb.Finalise(true)
+	} else {
+		root = statedb.IntermediateRoot(config.IsEIP158(blockNumber)).Bytes()
+	}
+
+	emptyLog := &types.Log{
+		BlockNumber: blockNumber.Uint64(),
+	}
+	if to := tx.To(); to != nil {
+		emptyLog.Address = *to
+	}
+	statedb.AddLog(emptyLog)
+
+	receipt := &types.Receipt{
+		Type:              tx.Type(),
+		PostState:         root,
+		Status:            types.ReceiptStatusSuccessful,
+		CumulativeGasUsed: cumulativeGasUsed,
+		TxHash:            tx.Hash(),
+		GasUsed:           0,
+		BlockHash:         blockHash,
+		BlockNumber:       blockNumber,
+		TransactionIndex:  uint(statedb.TxIndex()),
+	}
+	receipt.Logs = statedb.GetLogs(tx.Hash(), blockNumber.Uint64(), blockHash, 0)
+	receipt.Bloom = types.CreateBloom(receipt)
+	return receipt, nil
 }

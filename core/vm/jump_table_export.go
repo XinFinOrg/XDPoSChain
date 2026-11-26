@@ -17,17 +17,21 @@
 package vm
 
 import (
+	"errors"
+
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 // LookupInstructionSet returns the instruction set for the fork configured by
 // the rules.
-//
-// It has no production caller: the EVM selects its table inline in NewEVM. Keep
-// the two in sync; TestAmsterdamJumpTableSelection pins this one against the
-// table NewEVM picks for the same rules.
 func LookupInstructionSet(rules params.Rules) (JumpTable, error) {
 	switch {
+	case rules.IsUBT:
+		return newCancunInstructionSet(), errors.New("verkle-fork not defined yet")
+	case rules.IsFrameTx:
+		return newFrameTxInstructionSet(), nil
+	case rules.IsBogota:
+		return newBogotaInstructionSet(), nil
 	case rules.IsAmsterdam:
 		return newAmsterdamInstructionSet(), nil
 	case rules.IsOsaka:
@@ -36,8 +40,6 @@ func LookupInstructionSet(rules params.Rules) (JumpTable, error) {
 		return newPragueInstructionSet(), nil
 	case rules.IsCancun:
 		return newCancunInstructionSet(), nil
-	case rules.IsEIP1559:
-		return newEip1559InstructionSet(), nil
 	case rules.IsShanghai:
 		return newShanghaiInstructionSet(), nil
 	case rules.IsMerge:

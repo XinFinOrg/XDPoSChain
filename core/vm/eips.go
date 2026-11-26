@@ -18,15 +18,19 @@ package vm
 
 import (
 	"fmt"
+	"math"
+	"sort"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/params"
-	"github.com/holiman/uint256"
 )
 
 var activators = map[int]func(*JumpTable){
 	5656: enable5656,
 	6780: enable6780,
+	7709: enable7709,
+	5920: enable5920,
 	3855: enable3855,
 	3860: enable3860,
 	3529: enable3529,
@@ -36,9 +40,14 @@ var activators = map[int]func(*JumpTable){
 	1884: enable1884,
 	1344: enable1344,
 	1153: enable1153,
+	4762: enable4762,
 	7702: enable7702,
 	7939: enable7939,
 	8024: enable8024,
+	7843: enable7843,
+	8037: enable8037And8038,
+	8038: enable8037And8038,
+	8141: enable8141,
 }
 
 // EnableEIP enables the given EIP on the config.
@@ -51,6 +60,19 @@ func EnableEIP(eipNum int, jt *JumpTable) error {
 	}
 	enablerFn(jt)
 	return nil
+}
+
+func ValidEip(eipNum int) bool {
+	_, ok := activators[eipNum]
+	return ok
+}
+func ActivateableEips() []string {
+	var nums []string
+	for k := range activators {
+		nums = append(nums, fmt.Sprintf("%d", k))
+	}
+	sort.Strings(nums)
+	return nums
 }
 
 // enable1884 applies EIP-1884 to the given jump table:
@@ -74,8 +96,7 @@ func enable1884(jt *JumpTable) {
 }
 
 func opSelfBalance(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
-	balance, _ := uint256.FromBig(evm.StateDB.GetBalance(scope.Contract.Address()))
-	scope.Stack.push(balance)
+	scope.Stack.get().Set(evm.StateDB.GetBalance(scope.Contract.Address()))
 	return nil, nil
 }
 
@@ -93,8 +114,7 @@ func enable1344(jt *JumpTable) {
 
 // opChainID implements CHAINID opcode
 func opChainID(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
-	chainId, _ := uint256.FromBig(evm.chainConfig.ChainID)
-	scope.Stack.push(chainId)
+	scope.Stack.get().SetFromBig(evm.chainConfig.ChainID)
 	return nil, nil
 }
 
@@ -196,24 +216,14 @@ func opTstore(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	if evm.readOnly {
 		return nil, ErrWriteProtection
 	}
-	loc := scope.Stack.pop()
-	val := scope.Stack.pop()
+	loc, val := scope.Stack.pop2()
 	evm.StateDB.SetTransientState(scope.Contract.Address(), loc.Bytes32(), val.Bytes32())
 	return nil, nil
 }
 
-// baseFeeForOpcode is what BASEFEE reports when the header carries no base fee.
-// Precomputed because the London-to-EIP1559 window spans millions of blocks.
-var baseFeeForOpcode = *uint256.MustFromBig(params.BaseFeeForOpcode())
-
 // opBaseFee implements BASEFEE opcode
-func opBaseFee(pc *uint64, evm *EVM, callContext *ScopeContext) ([]byte, error) {
-	if value := evm.Context.BaseFee; value != nil {
-		baseFee, _ := uint256.FromBig(value)
-		callContext.Stack.push(baseFee)
-		return nil, nil
-	}
-	callContext.Stack.push(&baseFeeForOpcode)
+func opBaseFee(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	scope.Stack.get().SetFromBig(evm.Context.BaseFee)
 	return nil, nil
 }
 
@@ -229,12 +239,12 @@ func enable3855(jt *JumpTable) {
 }
 
 // opPush0 implements the PUSH0 opcode
-func opPush0(pc *uint64, evm *EVM, callContext *ScopeContext) ([]byte, error) {
-	callContext.Stack.push(new(uint256.Int))
+func opPush0(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	scope.Stack.get().Clear()
 	return nil, nil
 }
 
-// ebnable3860 enables "EIP-3860: Limit and meter initcode"
+// enable3860 enables "EIP-3860: Limit and meter initcode"
 // https://eips.ethereum.org/EIPS/eip-3860
 func enable3860(jt *JumpTable) {
 	jt[CREATE].dynamicGas = gasCreateEip3860
@@ -256,37 +266,39 @@ func enable5656(jt *JumpTable) {
 
 // opMcopy implements the MCOPY opcode (https://eips.ethereum.org/EIPS/eip-5656)
 func opMcopy(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
-	var (
-		dst    = scope.Stack.pop()
-		src    = scope.Stack.pop()
-		length = scope.Stack.pop()
-	)
+	dst, src, length := scope.Stack.pop3()
 	// These values are checked for overflow during memory expansion calculation
 	// (the memorySize function on the opcode).
 	scope.Memory.Copy(dst.Uint64(), src.Uint64(), length.Uint64())
 	return nil, nil
 }
 
-// opBlobHash implements the BLOBHASH opcode.
-//
-// XDC carries no blobs: there is no blob transaction type and no blob field in
-// the block header, so the blob hash list is always empty. Clearing the index is
-// the EIP-4844 out-of-bounds result, not a fabricated success - a contract
-// requiring a non-zero blob hash still reverts.
+// opBlobHash implements the BLOBHASH opcode
 func opBlobHash(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	index := scope.Stack.peek()
-	index.Clear()
+	if index.LtUint64(uint64(len(evm.TxContext.BlobHashes))) {
+		blobHash := evm.TxContext.BlobHashes[index.Uint64()]
+		index.SetBytes32(blobHash[:])
+	} else {
+		index.Clear()
+	}
 	return nil, nil
 }
 
 // opBlobBaseFee implements BLOBBASEFEE opcode.
 //
-// XDC runs no blob fee market, so the value stays 0 even though EIP-7516 sets a
-// floor of 1 wei. Changing it on an already activated fork would replay past
-// blocks differently, so the deviation is documented instead of "fixed".
+// XDC mainnet does not activate EIP-4844 (blob transactions); blocks have no
+// ExcessBlobGas so evm.Context.BlobBaseFee remains nil. uint256.SetFromBig(nil)
+// panics. Treat nil as zero — semantically correct (no blob fee) and matches
+// the EIP-7516 specification ("MUST push 0 if blob transactions are not
+// supported by the chain"). Upstream Ethereum mainnet sets BlobBaseFee in
+// every Cancun-era block, so the nil branch is dead code there.
 func opBlobBaseFee(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
-	blobBaseFee := new(uint256.Int)
-	scope.Stack.push(blobBaseFee)
+	if evm.Context.BlobBaseFee == nil {
+		scope.Stack.get().Clear()
+		return nil, nil
+	}
+	scope.Stack.get().SetFromBig(evm.Context.BlobBaseFee)
 	return nil, nil
 }
 
@@ -297,8 +309,7 @@ func opCLZ(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	return nil, nil
 }
 
-// enable4844 applies the opcode half of EIP-4844 (BLOBHASH). XDC has no blob
-// transactions and no blob header fields, so the opcode has no blob to read.
+// enable4844 applies EIP-4844 (BLOBHASH opcode)
 func enable4844(jt *JumpTable) {
 	jt[BLOBHASH] = &operation{
 		execute:     opBlobHash,
@@ -318,8 +329,7 @@ func enable7939(jt *JumpTable) {
 	}
 }
 
-// enable7516 applies the opcode half of EIP-7516 (BLOBBASEFEE). XDC has no blob
-// fee market, so the opcode reports a constant 0 rather than a computed price.
+// enable7516 applies EIP-7516 (BLOBBASEFEE opcode)
 func enable7516(jt *JumpTable) {
 	jt[BLOBBASEFEE] = &operation{
 		execute:     opBlobBaseFee,
@@ -362,10 +372,311 @@ func enable8024(jt *JumpTable) {
 	}
 }
 
-// enable7702 enables the EIP-7702 changes to support delegation designators.
+func opExtCodeCopyEIP4762(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	var (
+		stack                            = scope.Stack
+		a, memOffset, codeOffset, length = stack.pop4()
+	)
+	uint64CodeOffset, overflow := codeOffset.Uint64WithOverflow()
+	if overflow {
+		uint64CodeOffset = math.MaxUint64
+	}
+	addr := common.Address(a.Bytes20())
+	code := evm.StateDB.GetCode(addr)
+	paddedCodeCopy, copyOffset, nonPaddedCopyLength := getDataAndAdjustedBounds(code, uint64CodeOffset, length.Uint64())
+	consumed, wanted := evm.AccessEvents.CodeChunksRangeGas(addr, copyOffset, nonPaddedCopyLength, uint64(len(code)), false, scope.Contract.Gas.RegularGas)
+	scope.Contract.chargeRegular(consumed, evm.Config.Tracer, tracing.GasChangeUnspecified)
+	if consumed < wanted {
+		return nil, ErrOutOfGas
+	}
+	scope.Memory.Set(memOffset.Uint64(), length.Uint64(), paddedCodeCopy)
+
+	return nil, nil
+}
+
+// opPush1EIP4762 handles the special case of PUSH1 opcode for EIP-4762, which
+// need not worry about the adjusted bound logic when adding the PUSHDATA to
+// the list of access events.
+func opPush1EIP4762(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	var (
+		codeLen = uint64(len(scope.Contract.Code))
+		elem    = scope.Stack.get()
+	)
+	*pc += 1
+	if *pc < codeLen {
+		elem.SetUint64(uint64(scope.Contract.Code[*pc]))
+
+		if !scope.Contract.IsDeployment && !scope.Contract.IsSystemCall && *pc%31 == 0 {
+			// touch next chunk if PUSH1 is at the boundary. if so, *pc has
+			// advanced past this boundary.
+			contractAddr := scope.Contract.Address()
+			consumed, wanted := evm.AccessEvents.CodeChunksRangeGas(contractAddr, *pc+1, uint64(1), uint64(len(scope.Contract.Code)), false, scope.Contract.Gas.RegularGas)
+			scope.Contract.chargeRegular(wanted, evm.Config.Tracer, tracing.GasChangeUnspecified)
+			if consumed < wanted {
+				return nil, ErrOutOfGas
+			}
+		}
+	} else {
+		elem.Clear()
+	}
+	return nil, nil
+}
+
+func makePushEIP4762(size uint64, pushByteSize int) executionFunc {
+	return func(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+		var (
+			codeLen = len(scope.Contract.Code)
+			start   = min(codeLen, int(*pc+1))
+			end     = min(codeLen, start+pushByteSize)
+		)
+		scope.Stack.get().SetBytes(
+			common.RightPadBytes(
+				scope.Contract.Code[start:end],
+				pushByteSize,
+			))
+
+		if !scope.Contract.IsDeployment && !scope.Contract.IsSystemCall {
+			contractAddr := scope.Contract.Address()
+			consumed, wanted := evm.AccessEvents.CodeChunksRangeGas(contractAddr, uint64(start), uint64(pushByteSize), uint64(len(scope.Contract.Code)), false, scope.Contract.Gas.RegularGas)
+			scope.Contract.chargeRegular(consumed, evm.Config.Tracer, tracing.GasChangeUnspecified)
+			if consumed < wanted {
+				return nil, ErrOutOfGas
+			}
+		}
+
+		*pc += size
+		return nil, nil
+	}
+}
+
+func enable4762(jt *JumpTable) {
+	jt[SSTORE] = &operation{
+		dynamicGas: gasSStore4762,
+		execute:    opSstore,
+		minStack:   minStack(2, 0),
+		maxStack:   maxStack(2, 0),
+	}
+	jt[SLOAD] = &operation{
+		dynamicGas: gasSLoad4762,
+		execute:    opSload,
+		minStack:   minStack(1, 1),
+		maxStack:   maxStack(1, 1),
+	}
+
+	jt[BALANCE] = &operation{
+		execute:    opBalance,
+		dynamicGas: gasBalance4762,
+		minStack:   minStack(1, 1),
+		maxStack:   maxStack(1, 1),
+	}
+
+	jt[EXTCODESIZE] = &operation{
+		execute:    opExtCodeSize,
+		dynamicGas: gasExtCodeSize4762,
+		minStack:   minStack(1, 1),
+		maxStack:   maxStack(1, 1),
+	}
+
+	jt[EXTCODEHASH] = &operation{
+		execute:    opExtCodeHash,
+		dynamicGas: gasExtCodeHash4762,
+		minStack:   minStack(1, 1),
+		maxStack:   maxStack(1, 1),
+	}
+
+	jt[EXTCODECOPY] = &operation{
+		execute:    opExtCodeCopyEIP4762,
+		dynamicGas: gasExtCodeCopyEIP4762,
+		minStack:   minStack(4, 0),
+		maxStack:   maxStack(4, 0),
+		memorySize: memoryExtCodeCopy,
+	}
+
+	jt[CODECOPY] = &operation{
+		execute:     opCodeCopy,
+		constantGas: GasFastestStep,
+		dynamicGas:  gasCodeCopyEip4762,
+		minStack:    minStack(3, 0),
+		maxStack:    maxStack(3, 0),
+		memorySize:  memoryCodeCopy,
+	}
+
+	jt[SELFDESTRUCT] = &operation{
+		execute:     opSelfdestruct6780,
+		dynamicGas:  gasSelfdestructEIP4762,
+		constantGas: params.SelfdestructGasEIP150,
+		minStack:    minStack(1, 0),
+		maxStack:    maxStack(1, 0),
+	}
+
+	jt[CREATE] = &operation{
+		execute:     opCreate,
+		constantGas: params.CreateNGasEip4762,
+		dynamicGas:  gasCreateEip3860,
+		minStack:    minStack(3, 1),
+		maxStack:    maxStack(3, 1),
+		memorySize:  memoryCreate,
+	}
+
+	jt[CREATE2] = &operation{
+		execute:     opCreate2,
+		constantGas: params.CreateNGasEip4762,
+		dynamicGas:  gasCreate2Eip3860,
+		minStack:    minStack(4, 1),
+		maxStack:    maxStack(4, 1),
+		memorySize:  memoryCreate2,
+	}
+
+	jt[CALL] = &operation{
+		execute:    opCall,
+		dynamicGas: gasCallEIP4762,
+		minStack:   minStack(7, 1),
+		maxStack:   maxStack(7, 1),
+		memorySize: memoryCall,
+	}
+
+	jt[CALLCODE] = &operation{
+		execute:    opCallCode,
+		dynamicGas: gasCallCodeEIP4762,
+		minStack:   minStack(7, 1),
+		maxStack:   maxStack(7, 1),
+		memorySize: memoryCall,
+	}
+
+	jt[STATICCALL] = &operation{
+		execute:    opStaticCall,
+		dynamicGas: gasStaticCallEIP4762,
+		minStack:   minStack(6, 1),
+		maxStack:   maxStack(6, 1),
+		memorySize: memoryStaticCall,
+	}
+
+	jt[DELEGATECALL] = &operation{
+		execute:    opDelegateCall,
+		dynamicGas: gasDelegateCallEIP4762,
+		minStack:   minStack(6, 1),
+		maxStack:   maxStack(6, 1),
+		memorySize: memoryDelegateCall,
+	}
+
+	jt[PUSH1] = &operation{
+		execute:     opPush1EIP4762,
+		constantGas: GasFastestStep,
+		minStack:    minStack(0, 1),
+		maxStack:    maxStack(0, 1),
+	}
+	for i := 1; i < 32; i++ {
+		jt[PUSH1+OpCode(i)] = &operation{
+			execute:     makePushEIP4762(uint64(i+1), i+1),
+			constantGas: GasFastestStep,
+			minStack:    minStack(0, 1),
+			maxStack:    maxStack(0, 1),
+		}
+	}
+}
+
+// enable7702 the EIP-7702 changes to support delegation designators.
 func enable7702(jt *JumpTable) {
 	jt[CALL].dynamicGas = gasCallEIP7702
 	jt[CALLCODE].dynamicGas = gasCallCodeEIP7702
 	jt[STATICCALL].dynamicGas = gasStaticCallEIP7702
 	jt[DELEGATECALL].dynamicGas = gasDelegateCallEIP7702
+}
+
+// opSlotNum enables the SLOTNUM opcode
+func opSlotNum(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	scope.Stack.get().SetUint64(evm.Context.SlotNum)
+	return nil, nil
+}
+
+// enable7843 enables the SLOTNUM opcode as specified in EIP-7843.
+func enable7843(jt *JumpTable) {
+	jt[SLOTNUM] = &operation{
+		execute:     opSlotNum,
+		constantGas: GasQuickStep,
+		minStack:    minStack(0, 1),
+		maxStack:    maxStack(0, 1),
+	}
+}
+
+// enable8037And8038 enables EIP-8037 (multidimensional state-gas metering)
+// together with EIP-8038 (state-access gas cost update).
+func enable8037And8038(jt *JumpTable) {
+	jt[CREATE].constantGas = params.CreateAccessAmsterdam
+	jt[CREATE].dynamicGas = gasCreateEip8037
+	jt[CREATE2].constantGas = params.CreateAccessAmsterdam
+	jt[CREATE2].dynamicGas = gasCreate2Eip8037
+
+	// Storage-access opcodes
+	jt[SLOAD].dynamicGas = gasSLoad8038
+	jt[SSTORE].dynamicGas = gasSStore8037And8038
+
+	// Account-access opcodes
+	jt[BALANCE].dynamicGas = gasEip8038AccountCheck
+	jt[EXTCODEHASH].dynamicGas = gasEip8038AccountCheck
+	jt[EXTCODESIZE].dynamicGas = gasExtCodeSize8038
+	jt[EXTCODECOPY].dynamicGas = gasExtCodeCopy8038
+
+	// Call family
+	jt[CALL].dynamicGas = gasCall8038
+	jt[CALLCODE].dynamicGas = gasCallCode8038
+	jt[STATICCALL].dynamicGas = gasStaticCall8038
+	jt[DELEGATECALL].dynamicGas = gasDelegateCall8038
+
+	// SELFDESTRUCT
+	jt[SELFDESTRUCT].dynamicGas = gasSelfdestruct8037And8038
+}
+
+// enable7709 enables "EIP-7709: Read BLOCKHASH from storage and update
+// cost", activated in the Bogotá instruction set. In-window BLOCKHASH reads
+// (parent down to n-BLOCKHASH_SERVE_WINDOW) resolve from the EIP-2935
+// history ring and take on the full semantics of an SLOAD against
+// HISTORY_STORAGE_ADDRESS as defined by the active fork: the original
+// GasExtStep base cost is preserved and the (cold or warm) storage cost is
+// charged additionally, the slot is warmed, and state-access recording
+// applies. Out-of-window args keep the exact legacy behavior — GasExtStep,
+// zero result, no state effects. Spec: https://eips.ethereum.org/EIPS/eip-7709
+func enable7709(jt *JumpTable) {
+	jt[BLOCKHASH] = &operation{
+		execute:     opBlockhash7709,
+		constantGas: GasExtStep,
+		dynamicGas:  gasBlockhash7709,
+		minStack:    minStack(1, 1),
+		maxStack:    maxStack(1, 1),
+	}
+}
+
+// gasBlockhash7709 charges the additional SLOAD cost for in-window reads of
+// the history ring slot (mirroring gasSLoad8038 against
+// HISTORY_STORAGE_ADDRESS). Out-of-window and non-uint64 args add nothing
+// and touch no state.
+func gasBlockhash7709(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (GasCosts, error) {
+	arg, overflow := stack.peek().Uint64WithOverflow()
+	upper := evm.Context.BlockNumber.Uint64()
+	if overflow || arg >= upper || upper-arg > params.BlockhashServeWindow {
+		return GasCosts{}, nil
+	}
+	slot := params.HistoryStorageKey(arg)
+	if _, slotPresent := evm.StateDB.SlotInAccessList(params.HistoryStorageAddress, slot); !slotPresent {
+		evm.StateDB.AddSlotToAccessList(params.HistoryStorageAddress, slot)
+		return GasCosts{RegularGas: params.ColdStorageAccessAmsterdam}, nil
+	}
+	return GasCosts{RegularGas: params.WarmStorageReadCostEIP2929}, nil
+}
+
+// opBlockhash7709 serves BLOCKHASH from the EIP-2935 history ring. The
+// window is parent..n-256 inclusive (spec: arg >= n or arg+256 < n → 0);
+// all comparisons are done on uint64 values that passed Uint64WithOverflow,
+// so huge uint256 args and n < 256 underflow are handled without wrapping.
+func opBlockhash7709(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	num := scope.Stack.peek()
+	arg, overflow := num.Uint64WithOverflow()
+	upper := evm.Context.BlockNumber.Uint64()
+	if overflow || arg >= upper || upper-arg > params.BlockhashServeWindow {
+		num.Clear()
+		return nil, nil
+	}
+	res := evm.StateDB.GetState(params.HistoryStorageAddress, params.HistoryStorageKey(arg))
+	num.SetBytes(res.Bytes())
+	return nil, nil
 }

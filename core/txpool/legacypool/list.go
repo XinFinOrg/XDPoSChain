@@ -27,8 +27,8 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
-	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
 )
 
@@ -48,7 +48,7 @@ func (h *nonceHeap) Pop() interface{} {
 	old := *h
 	n := len(old)
 	x := old[n-1]
-	old[n-1] = 0 // avoid memory leak
+	old[n-1] = 0
 	*h = old[0 : n-1]
 	return x
 }
@@ -113,8 +113,8 @@ func (m *SortedMap) Forward(threshold uint64) types.Transactions {
 // Filter, as opposed to 'filter', re-initialises the heap after the operation is done.
 // If you want to do several consecutive filterings, it's therefore better to first
 // do a .filter(func1) followed by .Filter(func2) or reheap()
-func (m *SortedMap) Filter(filterFunc func(*types.Transaction) bool) types.Transactions {
-	removed := m.filter(filterFunc)
+func (m *SortedMap) Filter(filter func(*types.Transaction) bool) types.Transactions {
+	removed := m.filter(filter)
 	// If transactions were removed, the heap and cache are ruined
 	if len(removed) > 0 {
 		m.reheap()
@@ -135,12 +135,12 @@ func (m *SortedMap) reheap() {
 
 // filter is identical to Filter, but **does not** regenerate the heap. This method
 // should only be used if followed immediately by a call to Filter or reheap()
-func (m *SortedMap) filter(filterFunc func(*types.Transaction) bool) types.Transactions {
+func (m *SortedMap) filter(filter func(*types.Transaction) bool) types.Transactions {
 	var removed types.Transactions
 
 	// Collect all the transactions to filter out
 	for nonce, tx := range m.items {
-		if filterFunc(tx) {
+		if filter(tx) {
 			removed = append(removed, tx)
 			delete(m.items, nonce)
 		}
@@ -162,7 +162,6 @@ func (m *SortedMap) Cap(threshold int) types.Transactions {
 	}
 	// Otherwise gather and drop the highest nonce'd transactions
 	var drops types.Transactions
-
 	slices.Sort(*m.index)
 	for size := len(m.items); size > threshold; size-- {
 		drops = append(drops, m.items[(*m.index)[size-1]])
@@ -275,10 +274,9 @@ type list struct {
 	strict bool       // Whether nonces are strictly continuous or not
 	txs    *SortedMap // Heap indexed sorted hash map of the transactions
 
-	costcap   *big.Int     // Price of the highest costing transaction (reset only if exceeds balance)
+	costcap   *uint256.Int // Price of the highest costing transaction (reset only if exceeds balance)
 	gascap    uint64       // Gas limit of the highest spending transaction (reset only if exceeds block limit)
 	totalcost *uint256.Int // Total cost of all transactions in the list
-	receivers map[common.Address]uint64
 }
 
 // newList creates a new transaction list for maintaining nonce-indexable fast,
@@ -287,13 +285,12 @@ func newList(strict bool) *list {
 	return &list{
 		strict:    strict,
 		txs:       NewSortedMap(),
-		costcap:   new(big.Int),
+		costcap:   new(uint256.Int),
 		totalcost: new(uint256.Int),
-		receivers: make(map[common.Address]uint64),
 	}
 }
 
-// Contains returns whether the list contains a transaction
+// Contains returns whether the  list contains a transaction
 // with the provided nonce.
 func (l *list) Contains(nonce uint64) bool {
 	return l.txs.Get(nonce) != nil
@@ -305,75 +302,51 @@ func (l *list) Contains(nonce uint64) bool {
 // If the new transaction is accepted into the list, the lists' cost and gas
 // thresholds are also potentially updated.
 func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transaction) {
-	base := new(uint256.Int).Set(l.totalcost)
 	// If there's an older better transaction, abort
 	old := l.txs.Get(tx.Nonce())
 	if old != nil {
-		// A transaction already occupies this nonce; decide whether the incoming
-		// one may replace it. Cases by (old, new) kind:
-		//
-		//   new special               -> replace: a special (block-signing/randomize)
-		//                                 tx always claims its nonce, evicting whatever
-		//                                 is there, bypassing the price-bump rules.
-		//                                 These txs are typically generated with a 0
-		//                                 gas price and are consensus-critical, so they
-		//                                 must never be blocked by a same-nonce tx.
-		//   old special, new regular  -> reject: a regular tx must not evict a pending
-		//                                 special tx.
-		//   old regular, new regular  -> replace only if the new tx beats the old on
-		//                                 both fee cap and tip by at least priceBump%.
-		//
-		// In every accepted case we fall through to the cost accounting below.
-		if tx.IsSpecialTransaction() {
-			// new special: always wins its nonce, no further checks.
-		} else if old.IsSpecialTransaction() {
-			// old special, new regular: protect the pending special tx.
+		if old.GasFeeCapCmp(tx) >= 0 || old.GasTipCapCmp(tx) >= 0 {
 			return false, nil
-		} else {
-			// regular replacing regular: enforce the price-bump rules.
-			if old.GasFeeCapCmp(tx) >= 0 || old.GasTipCapCmp(tx) >= 0 {
-				return false, nil
-			}
-			// thresholdFeeCap = oldFC  * (100 + priceBump) / 100
-			a := big.NewInt(100 + int64(priceBump))
-			aFeeCap := new(big.Int).Mul(a, old.GasFeeCap())
-			aTip := a.Mul(a, old.GasTipCap())
-
-			// thresholdTip    = oldTip * (100 + priceBump) / 100
-			b := big.NewInt(100)
-			thresholdFeeCap := aFeeCap.Div(aFeeCap, b)
-			thresholdTip := aTip.Div(aTip, b)
-
-			// Have to ensure that either the new fee cap or tip is higher than the
-			// old ones as well as checking the percentage threshold to ensure that
-			// this is accurate for low (Wei-level) gas price replacements
-			if tx.GasFeeCapIntCmp(thresholdFeeCap) < 0 || tx.GasTipCapIntCmp(thresholdTip) < 0 {
-				return false, nil
-			}
 		}
-		// Old is being replaced, subtract old cost
-		if _, underflow := base.SubOverflow(base, uint256.MustFromBig(old.Cost())); underflow {
-			panic("totalcost underflow")
+		// thresholdFeeCap = oldFC  * (100 + priceBump) / 100
+		a := big.NewInt(100 + int64(priceBump))
+		aFeeCap := new(big.Int).Mul(a, old.GasFeeCap())
+		aTip := a.Mul(a, old.GasTipCap())
+
+		// thresholdTip    = oldTip * (100 + priceBump) / 100
+		b := big.NewInt(100)
+		thresholdFeeCap := aFeeCap.Div(aFeeCap, b)
+		thresholdTip := aTip.Div(aTip, b)
+
+		// We have to ensure that both the new fee cap and tip are higher than the
+		// old ones as well as checking the percentage threshold to ensure that
+		// this is accurate for low (Wei-level) gas price replacements.
+		if tx.GasFeeCapIntCmp(thresholdFeeCap) < 0 || tx.GasTipCapIntCmp(thresholdTip) < 0 {
+			return false, nil
 		}
 	}
-	// Add new tx cost to totalcost
-	cost, overflow := uint256.FromBig(tx.Cost())
+	// Add new tx cost to totalcost. EIP-8141 frame transactions use the
+	// shared sender-cost definition (now=0: state-free, structural prefix)
+	// so totalcost matches the admission gate and ExistingCost; now must be
+	// fixed here because the list has no head context.
+	cost, overflow := uint256.FromBig(core.FrameTxSenderCost(tx, 0))
 	if overflow {
 		return false, nil
 	}
-	total, overflow := new(uint256.Int).AddOverflow(base, cost)
+	total, overflow := new(uint256.Int).AddOverflow(l.totalcost, cost)
 	if overflow {
 		return false, nil
 	}
 	l.totalcost = total
 
-	// Otherwise overwrite the old transaction with the current one
+	// Old is being replaced, subtract old cost
 	if old != nil {
-		l.removeTxReceiver(old)
+		l.subTotalCost([]*types.Transaction{old})
 	}
+
+	// Otherwise overwrite the old transaction with the current one
 	l.txs.Put(tx)
-	l.addTxReceiver(tx)
-	if cost := tx.Cost(); l.costcap.Cmp(cost) < 0 {
+	if l.costcap.Cmp(cost) < 0 {
 		l.costcap = cost
 	}
 	if gas := tx.Gas(); l.gascap < gas {
@@ -387,7 +360,6 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 // maintenance.
 func (l *list) Forward(threshold uint64) types.Transactions {
 	txs := l.txs.Forward(threshold)
-	l.removeTxReceivers(txs)
 	l.subTotalCost(txs)
 	return txs
 }
@@ -401,25 +373,17 @@ func (l *list) Forward(threshold uint64) types.Transactions {
 // a point in calculating all the costs or if the balance covers all. If the threshold
 // is lower than the costgas cap, the caps will be reset to a new high after removing
 // the newly invalidated transactions.
-func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[common.Address]*big.Int, number *big.Int, cfg *params.ChainConfig) (types.Transactions, types.Transactions) {
+func (l *list) Filter(costLimit *uint256.Int, gasLimit uint64) (types.Transactions, types.Transactions) {
 	// If all transactions are below the threshold, short circuit
 	if l.costcap.Cmp(costLimit) <= 0 && l.gascap <= gasLimit {
-		if !l.hasUnaffordableTRC21Tx(costLimit, trc21Issuers, number, cfg) {
-			return nil, nil
-		}
+		return nil, nil
 	}
-	l.costcap = new(big.Int).Set(costLimit) // Lower the caps to the thresholds
+	l.costcap = new(uint256.Int).Set(costLimit) // Lower the caps to the thresholds
 	l.gascap = gasLimit
 
 	// Filter out all the transactions above the account's funds
 	removed := l.txs.Filter(func(tx *types.Transaction) bool {
-		maximum := costLimit
-		if tx.To() != nil {
-			if feeCapacity, ok := trc21Issuers[*tx.To()]; ok {
-				return tx.Gas() > gasLimit || new(big.Int).Add(costLimit, feeCapacity).Cmp(tx.TxCost(number, cfg)) < 0
-			}
-		}
-		return tx.Gas() > gasLimit || tx.Cost().Cmp(maximum) > 0
+		return tx.Gas() > gasLimit || tx.Cost().Cmp(costLimit.ToBig()) > 0
 	})
 
 	if len(removed) == 0 {
@@ -436,8 +400,6 @@ func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[comm
 		}
 		invalids = l.txs.filter(func(tx *types.Transaction) bool { return tx.Nonce() > lowest })
 	}
-	l.removeTxReceivers(removed)
-	l.removeTxReceivers(invalids)
 	// Reset total cost
 	l.subTotalCost(removed)
 	l.subTotalCost(invalids)
@@ -445,51 +407,10 @@ func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[comm
 	return removed, invalids
 }
 
-func (l *list) hasTRC21Receiver(trc21Issuers map[common.Address]*big.Int) bool {
-	if len(trc21Issuers) == 0 || len(l.receivers) == 0 {
-		return false
-	}
-	if len(l.receivers) <= len(trc21Issuers) {
-		for receiver := range l.receivers {
-			if _, ok := trc21Issuers[receiver]; ok {
-				return true
-			}
-		}
-		return false
-	}
-	for issuer := range trc21Issuers {
-		if l.receivers[issuer] > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func (l *list) hasUnaffordableTRC21Tx(costLimit *big.Int, trc21Issuers map[common.Address]*big.Int, number *big.Int, cfg *params.ChainConfig) bool {
-	if !l.hasTRC21Receiver(trc21Issuers) {
-		return false
-	}
-	for _, tx := range l.txs.items {
-		to := tx.To()
-		if to == nil {
-			continue
-		}
-		feeCapacity, ok := trc21Issuers[*to]
-		if !ok {
-			continue
-		}
-		if new(big.Int).Add(costLimit, feeCapacity).Cmp(tx.TxCost(number, cfg)) < 0 {
-			return true
-		}
-	}
-	return false
-}
-
 // Cap places a hard limit on the number of items, returning all transactions
 // exceeding that limit.
 func (l *list) Cap(threshold int) types.Transactions {
 	txs := l.txs.Cap(threshold)
-	l.removeTxReceivers(txs)
 	l.subTotalCost(txs)
 	return txs
 }
@@ -503,12 +424,10 @@ func (l *list) Remove(tx *types.Transaction) (bool, types.Transactions) {
 	if removed := l.txs.Remove(nonce); !removed {
 		return false, nil
 	}
-	l.removeTxReceiver(tx)
 	l.subTotalCost([]*types.Transaction{tx})
 	// In strict mode, filter out non-executable transactions
 	if l.strict {
 		txs := l.txs.Filter(func(tx *types.Transaction) bool { return tx.Nonce() > nonce })
-		l.removeTxReceivers(txs)
 		l.subTotalCost(txs)
 		return true, txs
 	}
@@ -524,7 +443,6 @@ func (l *list) Remove(tx *types.Transaction) (bool, types.Transactions) {
 // happen but better to be self correcting than failing!
 func (l *list) Ready(start uint64) types.Transactions {
 	txs := l.txs.Ready(start)
-	l.removeTxReceivers(txs)
 	l.subTotalCost(txs)
 	return txs
 }
@@ -556,37 +474,10 @@ func (l *list) LastElement() *types.Transaction {
 // total cost of all transactions.
 func (l *list) subTotalCost(txs []*types.Transaction) {
 	for _, tx := range txs {
-		_, underflow := l.totalcost.SubOverflow(l.totalcost, uint256.MustFromBig(tx.Cost()))
+		_, underflow := l.totalcost.SubOverflow(l.totalcost, uint256.MustFromBig(core.FrameTxSenderCost(tx, 0)))
 		if underflow {
 			panic("totalcost underflow")
 		}
-	}
-}
-
-func (l *list) addTxReceiver(tx *types.Transaction) {
-	to := tx.To()
-	if to == nil {
-		return
-	}
-	l.receivers[*to]++
-}
-
-func (l *list) removeTxReceiver(tx *types.Transaction) {
-	to := tx.To()
-	if to == nil {
-		return
-	}
-	count := l.receivers[*to]
-	if count <= 1 {
-		delete(l.receivers, *to)
-		return
-	}
-	l.receivers[*to] = count - 1
-}
-
-func (l *list) removeTxReceivers(txs []*types.Transaction) {
-	for _, tx := range txs {
-		l.removeTxReceiver(tx)
 	}
 }
 
@@ -643,7 +534,7 @@ func (h *priceHeap) Pop() interface{} {
 }
 
 // pricedList is a price-sorted heap to allow operating on transactions pool
-// contents in a price-incrementing way. It's built upon all transactions
+// contents in a price-incrementing way. It's built upon the all transactions
 // in txpool but only interested in the remote part. It means only remote transactions
 // will be considered for tracking, sorting, eviction, etc.
 //
@@ -797,12 +688,9 @@ func (l *pricedList) Reheap() {
 // SetBaseFee updates the base fee and triggers a re-heap. Note that Removed is not
 // necessary to call right before SetBaseFee when processing a new block.
 func (l *pricedList) SetBaseFee(baseFee *big.Int) {
-	var base *uint256.Int
+	base := new(uint256.Int)
 	if baseFee != nil {
-		converted := new(uint256.Int)
-		if !converted.SetFromBig(baseFee) {
-			base = converted
-		}
+		base.SetFromBig(baseFee)
 	}
 	l.urgent.baseFee = base
 	l.Reheap()

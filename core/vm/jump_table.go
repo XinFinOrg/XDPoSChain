@@ -23,10 +23,14 @@ import (
 )
 
 type (
-	executionFunc func(pc *uint64, evm *EVM, callContext *ScopeContext) ([]byte, error)
-	gasFunc       func(*EVM, *Contract, *Stack, *Memory, uint64) (uint64, error) // last parameter is the requested memory size as a uint64
+	executionFunc    func(pc *uint64, evm *EVM, callContext *ScopeContext) ([]byte, error)
+	gasFunc          func(*EVM, *Contract, *Stack, *Memory, uint64) (GasCosts, error) // last parameter is the requested memory size as a uint64
+	intrinsicGasFunc func(*EVM, *Contract, *Stack, *Memory, uint64) (uint64, error)   // last parameter is the requested memory size as a uint64
 	// memorySizeFunc returns the required size, and whether the operation overflowed a uint64
 	memorySizeFunc func(*Stack) (size uint64, overflow bool)
+
+	regularGasFunc func(*EVM, *Contract, *Stack, *Memory, uint64) (uint64, error)
+	stateGasFunc   func(*EVM, *Contract, *Stack) (uint64, error)
 )
 
 type operation struct {
@@ -42,6 +46,9 @@ type operation struct {
 
 	// memorySize returns the memory size required for the operation
 	memorySize memorySizeFunc
+
+	// undefined denotes if the instruction is not officially defined in the jump table
+	undefined bool
 }
 
 var (
@@ -56,12 +63,65 @@ var (
 	londonInstructionSet           = newLondonInstructionSet()
 	mergeInstructionSet            = newMergeInstructionSet()
 	shanghaiInstructionSet         = newShanghaiInstructionSet()
-	eip1559InstructionSet          = newEip1559InstructionSet()
 	cancunInstructionSet           = newCancunInstructionSet()
+	verkleInstructionSet           = newVerkleInstructionSet()
 	pragueInstructionSet           = newPragueInstructionSet()
 	osakaInstructionSet            = newOsakaInstructionSet()
 	amsterdamInstructionSet        = newAmsterdamInstructionSet()
+	bogotaInstructionSet           = newBogotaInstructionSet()
+	frameTxInstructionSet          = newFrameTxInstructionSet()
+
+	// XDC: instruction-set markers for Berlin..Shanghai (refs #740).
+	// Canonical XDPoSChain defers EIP-2929/3529/3860 from Berlin/London/
+	// Shanghai to the EIP-1559 block. So on XDC chains, Berlin..Shanghai
+	// before EIP-1559 use these marker-only tables (no EIP-2929 = no
+	// access lists, no cold/warm gas costs); at IsEIP1559 the upstream
+	// shanghaiInstructionSet takes over. Without this, every post-Berlin
+	// transaction executes with different gas costs vs canonical and
+	// the state root diverges at every block.
+	xdcBerlinInstructionSet   = newXDCBerlinInstructionSet()
+	xdcLondonInstructionSet   = newXDCLondonInstructionSet()
+	xdcMergeInstructionSet    = newXDCMergeInstructionSet()
+	xdcShanghaiInstructionSet = newXDCShanghaiInstructionSet()
 )
+
+// newXDCBerlinInstructionSet returns the XDC Berlin marker — equivalent to
+// Istanbul (no EIP-2929). XDC defers access-list semantics to EIP-1559.
+func newXDCBerlinInstructionSet() JumpTable {
+	return validate(newIstanbulInstructionSet())
+}
+
+// newXDCLondonInstructionSet returns the XDC London marker — Berlin marker
+// + EIP-3198 (BASEFEE opcode). EIP-3529 stays off; it activates at Cancun.
+func newXDCLondonInstructionSet() JumpTable {
+	instructionSet := newXDCBerlinInstructionSet()
+	enable3198(&instructionSet) // EIP-3198 BASEFEE opcode
+	return validate(instructionSet)
+}
+
+// newXDCMergeInstructionSet returns the XDC Merge marker — London marker
+// + PREVRANDAO (replacing DIFFICULTY).
+func newXDCMergeInstructionSet() JumpTable {
+	instructionSet := newXDCLondonInstructionSet()
+	instructionSet[PREVRANDAO] = &operation{
+		execute:     opRandom,
+		constantGas: GasQuickStep,
+		minStack:    minStack(0, 1),
+		maxStack:    maxStack(0, 1),
+	}
+	return validate(instructionSet)
+}
+
+// newXDCShanghaiInstructionSet returns the XDC Shanghai marker — Merge
+// marker + PUSH0 (EIP-3855). EIP-3860 (initcode word cost) is intentionally
+// NOT enabled here; canonical XDPoSChain defers it to Cancun. The matching
+// intrinsic-gas surcharge path in core/state_transition.go is gated on
+// Rules.IsEIP3860 which for XDC chains evaluates to IsCancunBlock.
+func newXDCShanghaiInstructionSet() JumpTable {
+	instructionSet := newXDCMergeInstructionSet()
+	enable3855(&instructionSet) // EIP-3855 PUSH0 instruction
+	return validate(instructionSet)
+}
 
 // JumpTable contains the EVM opcodes supported at a given fork.
 type JumpTable [256]*operation
@@ -84,23 +144,34 @@ func validate(jt JumpTable) JumpTable {
 	return jt
 }
 
-// newAmsterdamInstructionSet builds the Amsterdam instruction set.
-//
-// The table is intentionally incomplete with respect to upstream go-ethereum:
-// upstream's Amsterdam instruction set is Osaka plus EIP-7843 (SLOTNUM),
-// EIP-8024, EIP-8037 (state gas metering) and EIP-8038 (state access repricing),
-// and this table carries EIP-8024 only. EIP-8037 and EIP-8038 reprice state
-// access and replace the single-value gas ledger with a two-dimensional one, so
-// they cannot be enabled without porting that ledger first, and that port stays
-// with #2730. EIP-7843 needs a slot number this chain has no source for, which
-// is tracked in #2760. The rest of upstream Amsterdam sits outside the
-// instruction set: EIP-7954 raises the code and initcode size limits, and moves
-// with the fork separately. No production network schedules Amsterdam, so the
-// fork stays inert there until those pieces land, while the dev and test
-// configs that run every fork from block zero do reach the table.
+func newBogotaInstructionSet() JumpTable {
+	instructionSet := newAmsterdamInstructionSet()
+	enable5920(&instructionSet) // EIP-5920 (PAY opcode)
+	enable7709(&instructionSet) // EIP-7709 (BLOCKHASH served from state)
+	return validate(instructionSet)
+}
+
+// newFrameTxInstructionSet returns the instruction set active once the
+// EIP-8141 frame-transaction fork is scheduled. It extends the Bogota set
+// with the frame instructions (APPROVE and the introspection opcodes), which
+// halt exceptionally outside of frame transactions.
+func newFrameTxInstructionSet() JumpTable {
+	instructionSet := newBogotaInstructionSet()
+	enable8141(&instructionSet)
+	return validate(instructionSet)
+}
+
+func newVerkleInstructionSet() JumpTable {
+	instructionSet := newShanghaiInstructionSet()
+	enable4762(&instructionSet)
+	return validate(instructionSet)
+}
+
 func newAmsterdamInstructionSet() JumpTable {
 	instructionSet := newOsakaInstructionSet()
-	enable8024(&instructionSet) // EIP-8024 (Backward compatible SWAPN, DUPN, EXCHANGE)
+	enable7843(&instructionSet)        // EIP-7843 (SLOTNUM opcode)
+	enable8024(&instructionSet)        // EIP-8024 (Backward compatible SWAPN, DUPN, EXCHANGE)
+	enable8037And8038(&instructionSet) // EIP-8037 (state-gas metering) + EIP-8038 (state-access repricing)
 	return validate(instructionSet)
 }
 
@@ -117,26 +188,20 @@ func newPragueInstructionSet() JumpTable {
 }
 
 func newCancunInstructionSet() JumpTable {
-	instructionSet := newEip1559InstructionSet()
-	enable4844(&instructionSet) // EIP-4844 (BLOBHASH opcode only; no blob transactions)
-	enable7516(&instructionSet) // EIP-7516 (BLOBBASEFEE opcode only; no blob fee market)
+	instructionSet := newShanghaiInstructionSet()
+	enable4844(&instructionSet) // EIP-4844 (BLOBHASH opcode)
+	enable7516(&instructionSet) // EIP-7516 (BLOBBASEFEE opcode)
 	enable1153(&instructionSet) // EIP-1153 "Transient Storage"
 	enable5656(&instructionSet) // EIP-5656 (MCOPY opcode)
 	enable6780(&instructionSet) // EIP-6780 SELFDESTRUCT only in same transaction
 	return validate(instructionSet)
 }
 
-func newEip1559InstructionSet() JumpTable {
-	instructionSet := newShanghaiInstructionSet()
-	enable2929(&instructionSet) // Gas cost increases for state access opcodes https://eips.ethereum.org/EIPS/eip-2929
-	enable3529(&instructionSet) // EIP-3529: Reduction in refunds https://eips.ethereum.org/EIPS/eip-3529
-	enable3860(&instructionSet) // Limit and meter initcode
-	return validate(instructionSet)
-}
-
 func newShanghaiInstructionSet() JumpTable {
 	instructionSet := newMergeInstructionSet()
 	enable3855(&instructionSet) // PUSH0 instruction
+	enable3860(&instructionSet) // Limit and meter initcode
+
 	return validate(instructionSet)
 }
 
@@ -155,6 +220,7 @@ func newMergeInstructionSet() JumpTable {
 // constantinople, istanbul, petersburg, berlin and london instructions.
 func newLondonInstructionSet() JumpTable {
 	instructionSet := newBerlinInstructionSet()
+	enable3529(&instructionSet) // EIP-3529: Reduction in refunds https://eips.ethereum.org/EIPS/eip-3529
 	enable3198(&instructionSet) // Base fee opcode https://eips.ethereum.org/EIPS/eip-3198
 	return validate(instructionSet)
 }
@@ -163,12 +229,12 @@ func newLondonInstructionSet() JumpTable {
 // constantinople, istanbul, petersburg and berlin instructions.
 func newBerlinInstructionSet() JumpTable {
 	instructionSet := newIstanbulInstructionSet()
-	// enable2929(&instructionSet) // Gas cost increases for state access opcodes https://eips.ethereum.org/EIPS/eip-2929
+	enable2929(&instructionSet) // Gas cost increases for state access opcodes https://eips.ethereum.org/EIPS/eip-2929
 	return validate(instructionSet)
 }
 
-// newIstanbulInstructionSet returns the frontier, homestead
-// byzantium, contantinople and petersburg instructions.
+// newIstanbulInstructionSet returns the frontier, homestead, byzantium,
+// constantinople, istanbul and petersburg instructions.
 func newIstanbulInstructionSet() JumpTable {
 	instructionSet := newConstantinopleInstructionSet()
 
@@ -179,8 +245,8 @@ func newIstanbulInstructionSet() JumpTable {
 	return validate(instructionSet)
 }
 
-// newConstantinopleInstructionSet returns the frontier, homestead
-// byzantium and contantinople instructions.
+// newConstantinopleInstructionSet returns the frontier, homestead,
+// byzantium and constantinople instructions.
 func newConstantinopleInstructionSet() JumpTable {
 	instructionSet := newByzantiumInstructionSet()
 	instructionSet[SHL] = &operation{
@@ -1093,12 +1159,17 @@ func newFrontierInstructionSet() JumpTable {
 			minStack:   minStack(1, 0),
 			maxStack:   maxStack(1, 0),
 		},
+		INVALID: {
+			execute:  opUndefined,
+			minStack: minStack(0, 0),
+			maxStack: maxStack(0, 0),
+		},
 	}
 
 	// Fill all unassigned slots with opUndefined.
 	for i, entry := range tbl {
 		if entry == nil {
-			tbl[i] = &operation{execute: opUndefined, maxStack: maxStack(0, 0)}
+			tbl[i] = &operation{execute: opUndefined, maxStack: maxStack(0, 0), undefined: true}
 		}
 	}
 
