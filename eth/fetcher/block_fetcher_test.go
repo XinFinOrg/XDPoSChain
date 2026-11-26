@@ -22,6 +22,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -4471,5 +4473,73 @@ func TestTesterCleanupStopsFetcher(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the fetcher loop did not return after its test ended")
+	}
+}
+
+// countFetcherGoroutines reports how many live goroutines carry frame in their
+// stack, so a test can assert a goroutine is gone without a leak checker.
+func countFetcherGoroutines(frame string) int {
+	buf := make([]byte, 1<<20)
+	for {
+		n := runtime.Stack(buf, true)
+		if n < len(buf) {
+			buf = buf[:n]
+			break
+		}
+		buf = make([]byte, 2*len(buf))
+	}
+	count := 0
+	for _, g := range strings.Split(string(buf), "\n\n") {
+		if strings.Contains(g, frame) {
+			count++
+		}
+	}
+	return count
+}
+
+// TestInsertImportReturnsAfterStop drives the call site instead of finishImport:
+// an import that was already running when the fetcher stopped must return, not
+// block on the acknowledge channel.
+func TestInsertImportReturnsAfterStop(t *testing.T) {
+	const frame = "(*BlockFetcher).insert.func1"
+
+	tester := newIdleTester()
+	tester.fetcher.Stop()
+	tester.fetcher.insertBlock = func(*types.Block) error { return errors.New("stopped") }
+
+	// Sample the baseline first: a rerun must not count its own leftovers.
+	base := countFetcherGoroutines(frame)
+	tester.fetcher.insert("test", newParkedTestBlock(0x52))
+
+	// Let the import reach the deferred acknowledgment before sampling.
+	time.Sleep(20 * time.Millisecond)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		n := countFetcherGoroutines(frame)
+		if n <= base {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the import goroutine did not return after the fetcher stopped (insert goroutines %d, baseline %d)", n, base)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// TestFinishImportDoesNotBlockAfterStop pins the acknowledgment path: an import
+// that finishes after the loop returned must abandon its done send, not block on it.
+func TestFinishImportDoesNotBlockAfterStop(t *testing.T) {
+	tester := newIdleTester()
+	tester.fetcher.Stop()
+
+	returned := make(chan struct{})
+	go func() {
+		tester.fetcher.finishImport(common.BytesToHash([]byte{0x01}))
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("finishImport blocked after the fetcher stopped")
 	}
 }
