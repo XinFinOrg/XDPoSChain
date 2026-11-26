@@ -30,6 +30,7 @@
     "eip1559Block": 25000,
     "cancunBlock": 25000,
     "pragueBlock": 50000,
+    "osakaBlock": 1218600,
     "dynamicGasLimitBlock": 50000,
     "tipProportionalRewardBlock": 50000,
     "tipUpgradePenaltyBlock": 50000,

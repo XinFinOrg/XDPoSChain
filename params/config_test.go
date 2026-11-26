@@ -1418,7 +1418,7 @@ func TestXDCNetworkConfigsGatherForks(t *testing.T) {
 		{
 			name:   "DevnetChainConfig",
 			config: DevnetChainConfig,
-			want:   []uint64{2700, 25000, 50000},
+			want:   []uint64{2700, 25000, 50000, 1218600},
 		},
 	}
 
@@ -1856,10 +1856,11 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 // plus TIP2019 and DAOFork - along with the Constantinople/Petersburg/Istanbul
 // trio that #2777 moved after TIPXDCXCancellationFee, that anchor slot (without
 // which the trio's position relative to it is not pinned), the TIPTRC21Fee slot
-// that follows the trio, TIPEpochHalving, and TIPProportionalReward, the last
-// pinned field in fork order. The expected order is read off
-// chainConfigForkOrderFields, so a later renumbering carries the expectation
-// with it instead of leaving the renderings behind.
+// that follows the trio, and TIPEpochHalving, the last pinned field in fork
+// order. TIPProportionalRewardBlock is not pinned: it sits outside the linear
+// order, so no fork position constrains where it renders. The expected order is
+// read off chainConfigForkOrderFields, so a later renumbering carries the
+// expectation with it instead of leaving the renderings behind.
 func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
 	pinned := map[string]struct{}{
 		"TIP2019Block":                {},
@@ -1876,7 +1877,6 @@ func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
 		"OsakaBlock":                  {},
 		"AmsterdamBlock":              {},
 		"TIPEpochHalvingBlock":        {},
-		"TIPProportionalRewardBlock":  {},
 	}
 	var want []string
 	for _, field := range chainConfigForkOrderFields {

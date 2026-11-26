@@ -313,9 +313,7 @@
     "name": "TIPProportionalRewardBlock",
     "jsonKey": "tipProportionalRewardBlock",
     "backfillSet": "builtin",
-    "xdcSpecific": true,
-    "forkOrder": 35,
-    "forkOrderOptional": true
+    "xdcSpecific": true
   },
   {
     "kind": "address",
