@@ -1,6 +1,8 @@
 package bft
 
 import (
+	"math/big"
+
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
@@ -77,12 +79,50 @@ func (b *Bfter) SetConsensusFuns(engine consensus.Engine) {
 	}
 }
 
+// isNearBlockNumber compares number against head without going through
+// big.Int.Int64, which truncates values above 2^63 and let 2^64+head pass as a
+// block next to the head.
+func isNearBlockNumber(number *big.Int, head, dist uint64) bool {
+	if !number.IsUint64() {
+		return false
+	}
+	n := number.Uint64()
+	if n >= head {
+		return n-head <= dist
+	}
+	return head-n <= dist
+}
+
+// isNearGapNumber bounds gap to the heights that can back a vote for a block
+// within maxBlockDist of head: a switch sits at most an epoch below the voted
+// block and its gap at most Gap+epoch below the switch, so an honest gap is at
+// most 2*Epoch+Gap+maxBlockDist-2 below the head. The epoch*3 window covers it
+// for Gap <= Epoch-5 (every built-in network is 900/450); a larger Gap only
+// drops votes the round check already discards.
+func (b *Bfter) isNearGapNumber(gap, head uint64) bool {
+	if b.epoch == 0 {
+		return true
+	}
+	window := b.epoch * 3
+	if gap >= head {
+		return gap-head <= window
+	}
+	return head-gap <= window
+}
+
 func (b *Bfter) Vote(peer string, vote *types.Vote) error {
+	if vote == nil || vote.ProposedBlockInfo == nil || vote.ProposedBlockInfo.Number == nil {
+		return nil
+	}
 	log.Trace("[Vote] Received Vote", "hash", vote.Hash().Hex(), "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round)
 
-	voteBlockNum := vote.ProposedBlockInfo.Number.Int64()
-	if dist := voteBlockNum - int64(b.chainHeight()); dist < -maxBlockDist || dist > maxBlockDist {
-		log.Debug("[Vote] Discarded propagated vote, too far away", "peer", peer, "number", voteBlockNum, "hash", vote.ProposedBlockInfo.Hash, "distance", dist)
+	head := b.chainHeight()
+	if !isNearBlockNumber(vote.ProposedBlockInfo.Number, head, maxBlockDist) {
+		log.Debug("[Vote] Discarded propagated vote, too far away", "peer", peer, "number", vote.ProposedBlockInfo.Number, "hash", vote.ProposedBlockInfo.Hash)
+		return nil
+	}
+	if !b.isNearGapNumber(vote.GapNumber, head) {
+		log.Debug("[Vote] Discarded propagated vote, gap number out of range", "peer", peer, "gapNumber", vote.GapNumber, "head", head)
 		return nil
 	}
 
@@ -160,9 +200,9 @@ func (b *Bfter) SyncInfo(peer string, syncInfo *types.SyncInfo) error {
 		log.Debug("[SyncInfo] Received SyncInfo", "tcRound", syncInfo.HighestTimeoutCert.Round)
 	}
 
-	qcBlockNum := syncInfo.HighestQuorumCert.ProposedBlockInfo.Number.Int64()
-	if dist := qcBlockNum - int64(b.chainHeight()); dist < -maxBlockDist || dist > maxBlockDist {
-		log.Debug("[SyncInfo] Discarded propagated syncInfo, too far away", "peer", peer, "blockNum", qcBlockNum, "hash", syncInfo.Hash().Hex(), "distance", dist)
+	qcBlockNum := syncInfo.HighestQuorumCert.ProposedBlockInfo.Number
+	if qcBlockNum == nil || !isNearBlockNumber(qcBlockNum, b.chainHeight(), maxBlockDist) {
+		log.Debug("[SyncInfo] Discarded propagated syncInfo, too far away", "peer", peer, "blockNum", qcBlockNum, "hash", syncInfo.Hash().Hex())
 		return nil
 	}
 

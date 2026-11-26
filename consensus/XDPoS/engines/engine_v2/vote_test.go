@@ -142,3 +142,28 @@ func TestIsExtendingFromAncestor(t *testing.T) {
 	assert.Error(t, err)
 	assert.False(t, extended)
 }
+
+// TestVerifyVoteMessage_RejectsNonGapNumber covers the second gate: a gap
+// number inside the Bfter window but not a gap block must not reach
+// getSnapshot, which would read a canonical header and possibly load a snapshot
+// for that height.
+func TestVerifyVoteMessage_RejectsNonGapNumber(t *testing.T) {
+	engine := &XDPoS_v2{
+		config:       &params.XDPoSConfig{Epoch: 900, Gap: 450},
+		currentRound: 1,
+	}
+	vote := &types.Vote{
+		ProposedBlockInfo: &types.BlockInfo{
+			Hash:   common.StringToHash("some-block"),
+			Round:  1,
+			Number: big.NewInt(1350),
+		},
+		Signature: make([]byte, 65),
+		GapNumber: 451, // 451 % 900 = 451; the configured trigger is 450
+	}
+
+	verified, err := engine.VerifyVoteMessage(NewMockChainReader(), vote)
+
+	assert.False(t, verified)
+	assert.NoError(t, err, "a non-gap number is a drop, not a local failure")
+}

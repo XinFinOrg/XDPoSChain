@@ -230,14 +230,15 @@ func (pm *handler) Handle(p *ethproto.Peer, packet ethproto.Packet, size uint32)
 
 	case *ethproto.VotePacket:
 		vote := (*types.Vote)(packet)
-		p.MarkVote(vote.Hash())
+		hash := vote.Hash()
+		p.MarkVote(hash)
 
 		// The sender never resends a message it marked as known to us, so queue
 		// it while synchronising instead of dropping it.
-		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.ID(), vote.Hash(), size, vote) {
+		if pm.bftQueue.enqueueIf(pm.downloader.Synchronising, p.ID(), hash, size, vote) {
 			break
 		}
-		pm.handleVote(p.ID(), vote)
+		pm.handleVote(p.ID(), vote, hash)
 
 	case *ethproto.TimeoutPacket:
 		timeout := (*types.Timeout)(packet)
@@ -276,12 +277,12 @@ func (pm *handler) handleTransactions(peer *ethproto.Peer, txs []*types.Transact
 }
 
 // handleVote passes a vote to the BFT handler unless it is already known.
-func (pm *handler) handleVote(peer string, vote *types.Vote) {
-	if pm.knownVotes.Contains(vote.Hash()) {
-		log.Trace("Discarded vote, known vote", "vote hash", vote.Hash(), "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round)
+func (pm *handler) handleVote(peer string, vote *types.Vote, hash common.Hash) {
+	if pm.knownVotes.Contains(hash) {
+		log.Trace("Discarded vote, known vote", "vote hash", hash, "voted block hash", vote.ProposedBlockInfo.Hash.Hex(), "number", vote.ProposedBlockInfo.Number, "round", vote.ProposedBlockInfo.Round)
 		return
 	}
-	pm.knownVotes.Add(vote.Hash(), struct{}{})
+	pm.knownVotes.Add(hash, struct{}{})
 	go pm.bft.Vote(peer, vote)
 }
 
@@ -317,7 +318,7 @@ func (pm *handler) drainBFTQueue() {
 	for _, m := range msgs {
 		switch v := m.msg.(type) {
 		case *types.Vote:
-			pm.handleVote(m.peer, v)
+			pm.handleVote(m.peer, v, v.Hash())
 		case *types.Timeout:
 			pm.handleTimeout(m.peer, v)
 		case *types.SyncInfo:
