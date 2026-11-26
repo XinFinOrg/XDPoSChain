@@ -16,115 +16,76 @@
 
 package forks
 
-import "fmt"
-
 // Fork is a numerical identifier of specific network upgrades (forks).
 type Fork int
 
-// The order below is a naming registry for the fork labels returned by String:
-// it carries no consensus meaning. The order CheckConfigForkOrder enforces is
-// chainConfigForkOrderFields in params/config_backfill.go, plus the extra
-// pairings in chainConfigForkOrderSpecialCaseRules: the Gas50x and Gas2500x
-// placements, which have no linear slot there. The standard fork sequence scan
-// keeps Amsterdam off a schedule that never switches Osaka on. Both chain config
-// renderings follow that order.
 const (
 	Frontier Fork = iota
 	FrontierThawing
 	Homestead
 	DAO
-	TIP2019
 	TangerineWhistle // a.k.a. the EIP150 fork
 	SpuriousDragon   // a.k.a. the EIP155 fork
-	EIP158
 	Byzantium
-	TIPSigning
-	TIPRandomize
-	TIPIncreaseMasternodes
-	Denylist
-	TIPNoHalvingMNReward
-	TIPXDCX
-	TIPXDCXLending
-	TIPXDCXCancellationFee
 	Constantinople
 	Petersburg
 	Istanbul
-	TIPTRC21Fee
+	MuirGlacier
 	Berlin
 	London
-	Merge
+	ArrowGlacier
+	GrayGlacier
+	Paris
 	Shanghai
-	Gas50x
-	XDPoSV2
-	TIPXDCXMiner
-	TIPXDCXReceiver
-	XDCxDisable
-	EIP1559
 	Cancun
-	DynamicGasLimit
-	TIPFixedReward
-	TIPUpgradePenalty
-	TIPEpochHalving
-	TIPProportionalReward
 	Prague
 	Osaka
+	BPO1
+	BPO2
+	BPO3
+	BPO4
+	BPO5
 	Amsterdam
-	Gas2500x
-
-	// lastFork is a sentinel marking the end of the enum, not a real fork.
-	// It is only used by test cases, not referenced by the production code.
-	lastFork
+	Bogota
+	FrameTx
 )
 
 // String implements fmt.Stringer.
 func (f Fork) String() string {
 	s, ok := forkToString[f]
 	if !ok {
-		return fmt.Sprintf("Unknown fork (%d)", f)
+		return "Unknown fork"
 	}
 	return s
 }
 
 var forkToString = map[Fork]string{
-	Frontier:               "Frontier",
-	FrontierThawing:        "FrontierThawing",
-	Homestead:              "Homestead",
-	DAO:                    "DAO",
-	TIP2019:                "TIP2019",
-	TangerineWhistle:       "TangerineWhistle",
-	SpuriousDragon:         "SpuriousDragon",
-	EIP158:                 "EIP158",
-	Byzantium:              "Byzantium",
-	TIPSigning:             "TIPSigning",
-	TIPRandomize:           "TIPRandomize",
-	TIPIncreaseMasternodes: "TIPIncreaseMasternodes",
-	Denylist:               "Denylist",
-	TIPNoHalvingMNReward:   "TIPNoHalvingMNReward",
-	TIPXDCX:                "TIPXDCX",
-	TIPXDCXLending:         "TIPXDCXLending",
-	TIPXDCXCancellationFee: "TIPXDCXCancellationFee",
-	Constantinople:         "Constantinople",
-	Petersburg:             "Petersburg",
-	Istanbul:               "Istanbul",
-	TIPTRC21Fee:            "TIPTRC21Fee",
-	Berlin:                 "Berlin",
-	London:                 "London",
-	Merge:                  "Merge",
-	Shanghai:               "Shanghai",
-	Gas50x:                 "Gas50x",
-	XDPoSV2:                "XDPoSV2",
-	TIPXDCXMiner:           "TIPXDCXMiner",
-	TIPXDCXReceiver:        "TIPXDCXReceiver",
-	XDCxDisable:            "XDCxDisable",
-	EIP1559:                "EIP1559",
-	Cancun:                 "Cancun",
-	DynamicGasLimit:        "DynamicGasLimit",
-	TIPFixedReward:         "TIPFixedReward",
-	TIPUpgradePenalty:      "TIPUpgradePenalty",
-	TIPEpochHalving:        "TIPEpochHalving",
-	TIPProportionalReward:  "TIPProportionalReward",
-	Prague:                 "Prague",
-	Osaka:                  "Osaka",
-	Amsterdam:              "Amsterdam",
-	Gas2500x:               "Gas2500x",
+	Frontier:         "Frontier",
+	FrontierThawing:  "Frontier Thawing",
+	Homestead:        "Homestead",
+	DAO:              "DAO",
+	TangerineWhistle: "Tangerine Whistle",
+	SpuriousDragon:   "Spurious Dragon",
+	Byzantium:        "Byzantium",
+	Constantinople:   "Constantinople",
+	Petersburg:       "Petersburg",
+	Istanbul:         "Istanbul",
+	MuirGlacier:      "Muir Glacier",
+	Berlin:           "Berlin",
+	London:           "London",
+	ArrowGlacier:     "Arrow Glacier",
+	GrayGlacier:      "Gray Glacier",
+	Paris:            "Paris",
+	Shanghai:         "Shanghai",
+	Cancun:           "Cancun",
+	Prague:           "Prague",
+	Osaka:            "Osaka",
+	BPO1:             "BPO1",
+	BPO2:             "BPO2",
+	BPO3:             "BPO3",
+	BPO4:             "BPO4",
+	BPO5:             "BPO5",
+	Amsterdam:        "Amsterdam",
+	Bogota:           "Bogota",
+	FrameTx:          "FrameTx",
 }

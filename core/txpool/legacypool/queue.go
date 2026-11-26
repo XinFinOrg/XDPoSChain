@@ -17,7 +17,6 @@
 package legacypool
 
 import (
-	"math/big"
 	"sort"
 	"time"
 
@@ -26,7 +25,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
-	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 // queue manages nonce-gapped transactions that have been validated but are
@@ -157,11 +155,19 @@ func (q *queue) add(tx *types.Transaction) (*common.Hash, error) {
 // for promotion any that are now executable. It also drops any transactions that are
 // deemed too old (nonce too low) or too costly (insufficient funds or over gas limit).
 //
+// framePending, when non-nil, reports whether the account already has a frame
+// transaction in the pending pool (EIP-8141: at most one PENDING frame
+// transaction per sender). A queued frame tx is held back while the account
+// has one pending — including a frame tx promoted earlier in this same batch
+// — and nonce-ordered promotion naturally holds back the account's later
+// nonces. Held-back transactions stay in the queue (and keep their payer
+// reservations); they are re-evaluated on every promote cycle.
+//
 // Returns three lists:
 // - all transactions that were removed from the queue and selected for promotion;
 // - all other transactions that were removed from the queue and dropped;
 // - the list of addresses removed.
-func (q *queue) promoteExecutables(accounts []common.Address, gasLimit uint64, currentState *state.StateDB, nonces *noncer, trc21FeeCapacity map[common.Address]*big.Int, number *big.Int, cfg *params.ChainConfig) ([]*types.Transaction, []common.Hash, []common.Address) {
+func (q *queue) promoteExecutables(accounts []common.Address, gasLimit uint64, currentState *state.StateDB, nonces *noncer, framePending func(common.Address) bool) ([]*types.Transaction, []common.Hash, []common.Address) {
 	// Track the promotable transactions to broadcast them at once
 	var (
 		promotable       []*types.Transaction
@@ -182,7 +188,7 @@ func (q *queue) promoteExecutables(accounts []common.Address, gasLimit uint64, c
 		log.Trace("Removing old queued transactions", "count", len(forwards))
 
 		// Drop all transactions that are too costly (low balance or out of gas)
-		drops, _ := list.Filter(currentState.GetBalance(addr), gasLimit, trc21FeeCapacity, number, cfg)
+		drops, _ := list.Filter(currentState.GetBalance(addr), gasLimit)
 		for _, tx := range drops {
 			dropped = append(dropped, tx.Hash())
 		}
@@ -191,8 +197,33 @@ func (q *queue) promoteExecutables(accounts []common.Address, gasLimit uint64, c
 
 		// Gather all executable transactions and promote them
 		readies := list.Ready(nonces.get(addr))
+		if len(readies) > 0 && framePending != nil {
+			// Enforce the EIP-8141 one-pending-frame-per-sender invariant at
+			// promotion time. blocked starts as the account's current pending
+			// frame state and latches once a frame tx is selected for
+			// promotion in this batch; the first blocked frame tx and every
+			// later nonce (they would gap behind it) stay queued.
+			blocked := framePending(addr)
+			cutoff := len(readies)
+			for i, tx := range readies {
+				if tx.Type() != types.FrameTxType {
+					continue
+				}
+				if blocked {
+					cutoff = i
+					break
+				}
+				blocked = true
+			}
+			if cutoff < len(readies) {
+				for _, tx := range readies[cutoff:] {
+					list.Add(tx, 0)
+				}
+				readies = readies[:cutoff]
+			}
+		}
 		promotable = append(promotable, readies...)
-		log.Trace("Promoting queued transactions", "count", len(readies))
+		log.Trace("Promoting queued transactions", "count", len(promotable))
 		queuedGauge.Dec(int64(len(readies)))
 
 		// Drop all transactions over the allowed limit
@@ -267,8 +298,7 @@ func (q *queue) truncate() ([]common.Hash, []common.Address) {
 			queuedRateLimitMeter.Mark(1)
 		}
 	}
-
-	// no need to clear empty accounts, remove already does that
+	// No need to clear empty accounts, remove already does that
 	return removed, removedAddresses
 }
 

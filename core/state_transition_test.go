@@ -17,185 +17,346 @@
 package core
 
 import (
-	"errors"
-	"math/big"
-	"strings"
+	"bytes"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
-	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
-	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
-	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/holiman/uint256"
 )
 
-var (
-	testSender   = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
-	testReceiver = common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-)
+func TestFloorDataGas(t *testing.T) {
+	addr1 := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	addr2 := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	key1 := common.HexToHash("0xaa")
+	key2 := common.HexToHash("0xbb")
 
-// newTestMessage returns a message without access or authorization lists. The
-// fee fields are zero but not nil: the && chain only short-circuits when
-// NoBaseFee is false, so the bit lengths are still evaluated when it is set.
-func newTestMessage() *Message {
-	return &Message{
-		From:                  testSender,
-		To:                    &testReceiver,
-		GasLimit:              100000,
-		GasPrice:              new(big.Int),
-		GasFeeCap:             new(big.Int),
-		GasTipCap:             new(big.Int),
-		Value:                 new(big.Int),
-		SkipNonceChecks:       true,
-		SkipTransactionChecks: true,
-	}
-}
-
-// TestPreCheckRejectsTransactionTypesBeforeTheirFork checks both sides of each
-// fork. The pool already rejects those types; this covers the entry points that
-// build messages without a signer.
-func TestPreCheckRejectsTransactionTypesBeforeTheirFork(t *testing.T) {
-	t.Parallel()
-
-	var (
-		// Mainnet leaves Prague unscheduled, so schedule it to test the accepted case.
-		pragueBlock = big.NewInt(100000000)
-		accessList  = types.AccessList{{Address: testReceiver}}
-		authList    = []types.SetCodeAuthorization{{Address: testReceiver}}
-	)
 	tests := []struct {
-		name        string
-		blockNumber *big.Int
-		pragueBlock *big.Int
-		msg         *Message
-		want        string // empty if the message must be accepted
+		name       string
+		amsterdam  bool
+		data       []byte
+		accessList types.AccessList
+		want       uint64
 	}{
 		{
-			// The block just below EIP-1559 already has Berlin, yet type-1 is
-			// still rejected there because that is where the pool gates it.
-			name:        "access list before EIP-1559",
-			blockNumber: new(big.Int).Sub(params.XDCMainnetChainConfig.EIP1559Block, common.Big1),
-			msg: func() *Message {
-				msg := newTestMessage()
-				msg.AccessList = accessList
-				return msg
-			}(),
-			want: "access list tx",
+			name: "pre-amsterdam/empty",
+			want: params.TxGas,
 		},
 		{
-			name:        "access list at EIP-1559",
-			blockNumber: params.XDCMainnetChainConfig.EIP1559Block,
-			msg: func() *Message {
-				msg := newTestMessage()
-				msg.AccessList = accessList
-				return msg
-			}(),
+			name: "pre-amsterdam/zero-bytes-only",
+			data: bytes.Repeat([]byte{0x00}, 100),
+			// 100 zero tokens * 10 cost = 1000
+			want: params.TxGas + 100*params.TxCostFloorPerToken,
 		},
 		{
-			// The block just below Prague: the shape eth_simulateV1 used to hand
-			// back a set-code transaction that cannot be replayed.
-			name:        "set code authorization list before Prague",
-			blockNumber: new(big.Int).Sub(pragueBlock, common.Big1),
-			pragueBlock: pragueBlock,
-			msg: func() *Message {
-				msg := newTestMessage()
-				msg.SetCodeAuthorizations = authList
-				return msg
-			}(),
-			want: "setcode tx",
+			name: "pre-amsterdam/non-zero-bytes-only",
+			data: bytes.Repeat([]byte{0xff}, 100),
+			// 100 nz * 4 tokens * 10 cost = 4000
+			want: params.TxGas + 100*params.TxTokenPerNonZeroByte*params.TxCostFloorPerToken,
 		},
 		{
-			name:        "set code authorization list at Prague",
-			blockNumber: pragueBlock,
-			pragueBlock: pragueBlock,
-			msg: func() *Message {
-				msg := newTestMessage()
-				msg.SetCodeAuthorizations = authList
-				return msg
-			}(),
+			name: "pre-amsterdam/mixed",
+			data: append(bytes.Repeat([]byte{0x00}, 50), bytes.Repeat([]byte{0xff}, 50)...),
+			// 50 zero + 50*4 nz = 250 tokens * 10 = 2500
+			want: params.TxGas + (50+50*params.TxTokenPerNonZeroByte)*params.TxCostFloorPerToken,
+		},
+		{
+			name: "pre-amsterdam/access-list-ignored",
+			data: bytes.Repeat([]byte{0xff}, 10),
+			accessList: types.AccessList{
+				{Address: addr1, StorageKeys: []common.Hash{key1, key2}},
+			},
+			// pre-amsterdam: floor calculation does not include access list
+			want: params.TxGas + 10*params.TxTokenPerNonZeroByte*params.TxCostFloorPerToken,
+		},
+		{
+			name:      "amsterdam/empty",
+			amsterdam: true,
+			// EIP-2780 anchors the floor to the reduced base cost.
+			want: params.TxBaseCost2780,
+		},
+		{
+			name:      "amsterdam/data-only",
+			amsterdam: true,
+			data:      bytes.Repeat([]byte{0x00}, 1024),
+			// post-amsterdam: every byte = 4 tokens regardless of value
+			want: params.TxBaseCost2780 + 1024*params.TxTokenPerNonZeroByte*params.TxCostFloorPerToken7976,
+		},
+		{
+			name:      "amsterdam/data-non-zero",
+			amsterdam: true,
+			data:      bytes.Repeat([]byte{0xff}, 1024),
+			// same as zero data post-amsterdam
+			want: params.TxBaseCost2780 + 1024*params.TxTokenPerNonZeroByte*params.TxCostFloorPerToken7976,
+		},
+		{
+			name:      "amsterdam/access-list-addresses-only",
+			amsterdam: true,
+			accessList: types.AccessList{
+				{Address: addr1},
+				{Address: addr2},
+			},
+			// 2 * 20 bytes * 4 tokens/byte * 16 cost/token
+			want: params.TxBaseCost2780 + 2*common.AddressLength*params.TxTokenPerNonZeroByte*params.TxCostFloorPerToken7976,
+		},
+		{
+			name:      "amsterdam/access-list-with-storage-keys",
+			amsterdam: true,
+			accessList: types.AccessList{
+				{Address: addr1, StorageKeys: []common.Hash{key1, key2}},
+			},
+			// 1 addr * 20 * 4 + 2 keys * 32 * 4 = 80 + 256 = 336 tokens * 16
+			want: params.TxBaseCost2780 + (1*common.AddressLength+2*common.HashLength)*params.TxTokenPerNonZeroByte*params.TxCostFloorPerToken7976,
+		},
+		{
+			name:      "amsterdam/mixed",
+			amsterdam: true,
+			data:      bytes.Repeat([]byte{0xff}, 100),
+			accessList: types.AccessList{
+				{Address: addr1, StorageKeys: []common.Hash{key1}},
+				{Address: addr2, StorageKeys: []common.Hash{key1, key2}},
+			},
+			// data: 100*4 = 400; addrs: 2*20*4 = 160; keys: 3*32*4 = 384; total = 944 * 16
+			want: params.TxBaseCost2780 + (100*params.TxTokenPerNonZeroByte+2*common.AddressLength*params.TxTokenPerNonZeroByte+3*common.HashLength*params.TxTokenPerNonZeroByte)*params.TxCostFloorPerToken7976,
 		},
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			var (
-				config = params.XDCMainnetChainConfig.Clone()
-				db     = rawdb.NewMemoryDatabase()
-			)
-			if test.pragueBlock != nil {
-				config.PragueBlock = test.pragueBlock
-			}
-			statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(db))
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rules := params.Rules{IsAmsterdam: tt.amsterdam}
+			got, err := FloorDataGas(rules, addr1, &addr1, new(uint256.Int), tt.data, tt.accessList, 0, 0)
 			if err != nil {
-				t.Fatalf("failed to open state: %v", err)
+				t.Fatalf("unexpected error: %v", err)
 			}
-			blockContext := vm.BlockContext{BlockNumber: test.blockNumber}
-			evm := vm.NewEVM(blockContext, statedb, nil, config, vm.Config{NoBaseFee: true})
-			st := newStateTransition(evm, test.msg, new(GasPool).AddGas(test.msg.GasLimit))
-
-			err = st.preCheck(config.Rules(test.blockNumber))
-			if test.want == "" {
-				if err != nil {
-					t.Fatalf("preCheck rejected the %q case: %v", test.name, err)
-				}
-				return
-			}
-			if err == nil {
-				t.Fatalf("preCheck accepted the %q case, want an error mentioning %q", test.name, test.want)
-			}
-			if !errors.Is(err, ErrTxTypeNotSupported) {
-				t.Fatalf("preCheck error: %v, want %v", err, ErrTxTypeNotSupported)
-			}
-			if !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("preCheck error: %v, want it to mention %q", err, test.want)
+			if got != tt.want {
+				t.Fatalf("gas mismatch: got %d, want %d", got, tt.want)
 			}
 		})
 	}
 }
 
-// TestApplyMessageRejectsAccessListBeforeEIP1559 checks the guard through the
-// production path, where execute resolves the fork rules.
-func TestApplyMessageRejectsAccessListBeforeEIP1559(t *testing.T) {
-	t.Parallel()
+func TestIntrinsicGas(t *testing.T) {
+	addr1 := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	addr2 := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	key1 := common.HexToHash("0xaa")
+	key2 := common.HexToHash("0xbb")
 
-	config := params.XDCMainnetChainConfig.Clone()
-	statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
-	if err != nil {
-		t.Fatalf("failed to open state: %v", err)
+	const (
+		amsterdamAddressCost    = uint64(common.AddressLength) * params.TxCostFloorPerToken7976 * params.TxTokenPerNonZeroByte // 1280
+		amsterdamStorageKeyCost = uint64(common.HashLength) * params.TxCostFloorPerToken7976 * params.TxTokenPerNonZeroByte    // 2048
+	)
+
+	tests := []struct {
+		name        string
+		data        []byte
+		accessList  types.AccessList
+		authList    []types.SetCodeAuthorization
+		creation    bool
+		isHomestead bool
+		isEIP2028   bool
+		isEIP3860   bool
+		isAmsterdam bool
+		value       *uint256.Int
+		want        uint64
+	}{
+		{
+			name: "frontier/empty-call",
+			want: params.TxGas,
+		},
+		{
+			name:        "frontier/contract-creation-pre-homestead",
+			creation:    true,
+			isHomestead: false,
+			// pre-homestead, contract creation still uses TxGas
+			want: params.TxGas,
+		},
+		{
+			name:        "homestead/contract-creation",
+			creation:    true,
+			isHomestead: true,
+			want:        params.TxGasContractCreation,
+		},
+		{
+			name: "frontier/non-zero-data",
+			data: bytes.Repeat([]byte{0xff}, 100),
+			// 100 nz bytes * 68 (frontier)
+			want: params.TxGas + 100*params.TxDataNonZeroGasFrontier,
+		},
+		{
+			name:      "istanbul/non-zero-data",
+			data:      bytes.Repeat([]byte{0xff}, 100),
+			isEIP2028: true,
+			// 100 nz bytes * 16 (post-EIP2028)
+			want: params.TxGas + 100*params.TxDataNonZeroGasEIP2028,
+		},
+		{
+			name:      "istanbul/zero-data",
+			data:      bytes.Repeat([]byte{0x00}, 100),
+			isEIP2028: true,
+			// 100 zero bytes * 4
+			want: params.TxGas + 100*params.TxDataZeroGas,
+		},
+		{
+			name:      "istanbul/mixed-data",
+			data:      append(bytes.Repeat([]byte{0x00}, 50), bytes.Repeat([]byte{0xff}, 50)...),
+			isEIP2028: true,
+			want:      params.TxGas + 50*params.TxDataZeroGas + 50*params.TxDataNonZeroGasEIP2028,
+		},
+		{
+			name:        "shanghai/init-code-word-gas",
+			data:        bytes.Repeat([]byte{0x00}, 64), // 2 words
+			creation:    true,
+			isHomestead: true,
+			isEIP2028:   true,
+			isEIP3860:   true,
+			// TxGasContractCreation + 64 zero bytes * 4 + 2 words * 2
+			want: params.TxGasContractCreation + 64*params.TxDataZeroGas + 2*params.InitCodeWordGas,
+		},
+		{
+			name:        "shanghai/init-code-non-multiple-of-32",
+			data:        bytes.Repeat([]byte{0x00}, 33), // 2 words (rounded up)
+			creation:    true,
+			isHomestead: true,
+			isEIP2028:   true,
+			isEIP3860:   true,
+			want:        params.TxGasContractCreation + 33*params.TxDataZeroGas + 2*params.InitCodeWordGas,
+		},
+		{
+			name: "berlin/access-list",
+			accessList: types.AccessList{
+				{Address: addr1, StorageKeys: []common.Hash{key1, key2}},
+				{Address: addr2, StorageKeys: []common.Hash{key1}},
+			},
+			isEIP2028: true,
+			// 2 addrs * 2400 + 3 keys * 1900
+			want: params.TxGas + 2*params.TxAccessListAddressGas + 3*params.TxAccessListStorageKeyGas,
+		},
+		{
+			name: "amsterdam/access-list-extra-cost",
+			accessList: types.AccessList{
+				{Address: addr1, StorageKeys: []common.Hash{key1, key2}},
+				{Address: addr2, StorageKeys: []common.Hash{key1}},
+			},
+			isEIP2028:   true,
+			isAmsterdam: true,
+			// EIP-2780: zero-value call base is TxBaseCost + ColdAccountAccess
+			// (15,000); the recipient touch is charged at the cold rate
+			// unconditionally at the intrinsic phase. Plus base access-list
+			// charge + EIP-7981 extra.
+			want: params.TxBaseCost2780 + params.ColdAccountAccessAmsterdam +
+				2*params.TxAccessListAddressGasAmsterdam + 3*params.TxAccessListStorageKeyGasAmsterdam +
+				2*amsterdamAddressCost + 3*amsterdamStorageKeyCost,
+		},
+		{
+			name: "prague/auth-list",
+			authList: []types.SetCodeAuthorization{
+				{Address: addr1},
+				{Address: addr2},
+				{Address: addr1},
+			},
+			isEIP2028: true,
+			// 3 auths * 25000 (pre-Amsterdam: CallNewAccountGas per auth tuple)
+			want: params.TxGas + 3*params.CallNewAccountGas,
+		},
+		{
+			name:        "amsterdam/contract-creation-empty",
+			creation:    true,
+			isHomestead: true,
+			isEIP2028:   true,
+			isAmsterdam: true,
+			// EIP-2780: creation regular gas is TxBaseCost + CreateAccess (23,000);
+			// the new-account state charge is applied at runtime.
+			want: params.TxBaseCost2780 + params.CreateAccessAmsterdam,
+		},
+		{
+			name:        "amsterdam/contract-creation-init-code",
+			data:        bytes.Repeat([]byte{0x00}, 64), // 2 words of init code
+			creation:    true,
+			isHomestead: true,
+			isEIP2028:   true,
+			isEIP3860:   true, // Shanghai gates init-code word gas
+			isAmsterdam: true,
+			want: params.TxBaseCost2780 + params.CreateAccessAmsterdam +
+				64*params.TxDataZeroGas + 2*params.InitCodeWordGas,
+		},
+		{
+			name: "amsterdam/contract-creation-with-access-list",
+			data: bytes.Repeat([]byte{0xff}, 32), // 1 word of non-zero init code
+			accessList: types.AccessList{
+				{Address: addr1, StorageKeys: []common.Hash{key1}},
+			},
+			creation:    true,
+			isHomestead: true,
+			isEIP2028:   true,
+			isEIP3860:   true,
+			isAmsterdam: true,
+			want: params.TxBaseCost2780 + params.CreateAccessAmsterdam +
+				32*params.TxDataNonZeroGasEIP2028 + 1*params.InitCodeWordGas +
+				1*params.TxAccessListAddressGasAmsterdam + 1*params.TxAccessListStorageKeyGasAmsterdam +
+				1*amsterdamAddressCost + 1*amsterdamStorageKeyCost,
+		},
+		{
+			name: "amsterdam/combined",
+			data: bytes.Repeat([]byte{0xff}, 100),
+			accessList: types.AccessList{
+				{Address: addr1, StorageKeys: []common.Hash{key1}},
+			},
+			authList: []types.SetCodeAuthorization{
+				{Address: addr2},
+			},
+			isEIP2028:   true,
+			isAmsterdam: true,
+			// EIP-2780: the recipient touch and the per-authorization authority
+			// access (priced into RegularPerAuthBaseCost) are both charged at the
+			// cold rate unconditionally at the intrinsic phase; the account leaf
+			// and indicator bytes are charged at runtime.
+			want: params.TxBaseCost2780 + params.ColdAccountAccessAmsterdam +
+				100*params.TxDataNonZeroGasEIP2028 +
+				1*params.TxAccessListAddressGasAmsterdam + 1*params.TxAccessListStorageKeyGasAmsterdam +
+				1*amsterdamAddressCost + 1*amsterdamStorageKeyCost +
+				1*params.RegularPerAuthBaseCost,
+		},
+		{
+			name:        "amsterdam/value-transfer-call",
+			isEIP2028:   true,
+			isAmsterdam: true,
+			value:       uint256.NewInt(1),
+			// EIP-2780: TxBaseCost + ColdAccountAccess + TransferLogCost + TxValueCost = 21,000.
+			want: params.TxBaseCost2780 + params.ColdAccountAccessAmsterdam +
+				params.TransferLogCost2780 + params.TxValueCost2780,
+		},
+		{
+			name:        "amsterdam/value-bearing-contract-creation",
+			creation:    true,
+			isHomestead: true,
+			isEIP2028:   true,
+			isAmsterdam: true,
+			value:       uint256.NewInt(1),
+			// EIP-2780: TxBaseCost + CreateAccess + TransferLogCost = 24,756;
+			// the new-account state charge is applied at runtime.
+			want: params.TxBaseCost2780 + params.CreateAccessAmsterdam + params.TransferLogCost2780,
+		},
 	}
-	blockNumber := new(big.Int).Sub(config.EIP1559Block, common.Big1)
-	evm := vm.NewEVM(vm.BlockContext{BlockNumber: blockNumber}, statedb, nil, config, vm.Config{NoBaseFee: true})
-
-	msg := newTestMessage()
-	msg.AccessList = types.AccessList{{Address: testReceiver}}
-	if _, err := ApplyMessage(evm, msg, new(GasPool).AddGas(msg.GasLimit), common.Address{}); !errors.Is(err, ErrTxTypeNotSupported) {
-		t.Fatalf("ApplyMessage error: %v, want %v", err, ErrTxTypeNotSupported)
-	}
-}
-
-// TestApplyMessageAcceptsAccessListAtEIP1559 checks the accepting side through
-// the production path, where execute resolves the fork rules.
-func TestApplyMessageAcceptsAccessListAtEIP1559(t *testing.T) {
-	t.Parallel()
-
-	config := params.XDCMainnetChainConfig.Clone()
-	statedb, err := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
-	if err != nil {
-		t.Fatalf("failed to open state: %v", err)
-	}
-	header := &types.Header{
-		Number:     config.EIP1559Block,
-		Difficulty: new(big.Int),
-		GasLimit:   8_000_000,
-		BaseFee:    new(big.Int),
-	}
-	author := common.Address{}
-	blockContext := NewEVMBlockContext(header, nil, &author)
-	evm := vm.NewEVM(blockContext, statedb, nil, config, vm.Config{NoBaseFee: true})
-
-	msg := newTestMessage()
-	msg.AccessList = types.AccessList{{Address: testReceiver}}
-	if _, err := ApplyMessage(evm, msg, new(GasPool).AddGas(msg.GasLimit), common.Address{}); err != nil {
-		t.Fatalf("ApplyMessage rejected the access list at EIP-1559: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rules := params.Rules{
+				IsHomestead: tt.isHomestead,
+				IsIstanbul:  tt.isEIP2028,
+				IsShanghai:  tt.isEIP3860,
+				IsAmsterdam: tt.isAmsterdam,
+			}
+			var to *common.Address
+			if !tt.creation {
+				to = &addr1
+			}
+			got, err := IntrinsicGas(tt.data, tt.accessList, tt.authList,
+				common.Address{}, to, tt.value, rules)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("gas mismatch: got %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }

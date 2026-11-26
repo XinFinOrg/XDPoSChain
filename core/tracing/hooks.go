@@ -19,10 +19,9 @@
 // invoked by the go-ethereum core at various points in the state transition.
 //
 // To create a tracer that can be invoked with Geth, you need to register it using
-// [github.com/ethereum/go-ethereum/eth/tracers.LiveDirectory.Register].
+// [github.com/XinFinOrg/XDPoSChain/eth/tracers.LiveDirectory.Register].
 //
 // See https://geth.ethereum.org/docs/developers/evm-tracing/live-tracing for a tutorial.
-
 package tracing
 
 import (
@@ -31,6 +30,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/XinFinOrg/XDPoSChain/trie/trienode"
 	"github.com/holiman/uint256"
 )
 
@@ -48,11 +48,12 @@ type OpContext interface {
 
 // StateDB gives tracers access to the whole state.
 type StateDB interface {
-	GetBalance(common.Address) *big.Int
+	GetBalance(common.Address) *uint256.Int
 	GetNonce(common.Address) uint64
-	GetCodeHash(common.Address) common.Hash
 	GetCode(common.Address) []byte
+	GetCodeHash(common.Address) common.Hash
 	GetState(common.Address, common.Hash) common.Hash
+	GetTransientState(common.Address, common.Hash) common.Hash
 	Exist(common.Address) bool
 	GetRefund() uint64
 }
@@ -65,19 +66,64 @@ type VMContext struct {
 	Random      *common.Hash
 	BaseFee     *big.Int
 	StateDB     StateDB
-
-	// XDPoS tracers need the execution-time gas price because TransactionToMessage
-	// may rewrite it for TRC21 and fixed-price fee paths.
-	GasPrice *big.Int
 }
 
 // BlockEvent is emitted upon tracing an incoming block.
 // It contains the block as well as consensus related information.
 type BlockEvent struct {
 	Block     *types.Block
-	TD        *big.Int
 	Finalized *types.Header
 	Safe      *types.Header
+}
+
+// StateUpdate represents the state mutations resulting from block execution.
+// It provides access to account changes, storage changes, and contract code
+// deployments with both previous and new values.
+type StateUpdate struct {
+	OriginRoot  common.Hash // State root before the update
+	Root        common.Hash // State root after the update
+	BlockNumber uint64
+
+	// AccountChanges contains all account state changes keyed by address.
+	AccountChanges map[common.Address]*AccountChange
+
+	// StorageChanges contains all storage slot changes keyed by address and storage slot key.
+	StorageChanges map[common.Address]map[common.Hash]*StorageChange
+
+	// CodeChanges contains all contract code changes keyed by address.
+	CodeChanges map[common.Address]*CodeChange
+
+	// TrieChanges contains trie node mutations keyed by address hash and trie node path.
+	TrieChanges map[common.Hash]map[string]*TrieNodeChange
+}
+
+// AccountChange represents a change to an account's state.
+type AccountChange struct {
+	Prev *types.StateAccount // nil if account was created
+	New  *types.StateAccount // nil if account was deleted
+}
+
+// StorageChange represents a change to a storage slot.
+type StorageChange struct {
+	Prev common.Hash // previous value (zero if slot was created)
+	New  common.Hash // new value (zero if slot was deleted)
+}
+
+type ContractCode struct {
+	Hash   common.Hash
+	Code   []byte
+	Exists bool // true if the code was existent
+}
+
+// CodeChange represents a change in contract code of an account.
+type CodeChange struct {
+	Prev *ContractCode // nil if no code existed before
+	New  *ContractCode
+}
+
+type TrieNodeChange struct {
+	Prev *trienode.Node
+	New  *trienode.Node
 }
 
 type (
@@ -118,8 +164,22 @@ type (
 	// FaultHook is invoked when an error occurs during the execution of an opcode.
 	FaultHook = func(pc uint64, op byte, gas, cost uint64, scope OpContext, depth int, err error)
 
-	// GasChangeHook is invoked when the gas changes.
+	// GasChangeHook reports changes to the regular execution gas. Tracers
+	// that don't need the EIP-8037 (Amsterdam) state-access dimension can
+	// implement only this hook; it fires unchanged across the fork. If both
+	// this and GasChangeHookV2 are set, only V2 is invoked; implement exactly
+	// one to avoid double-counting.
 	GasChangeHook = func(old, new uint64, reason GasChangeReason)
+
+	// GasChangeHookV2 is the multi-dimensional successor to GasChangeHook,
+	// invoked when any gas dimension changes and exposing the EIP-8037
+	// (Amsterdam) state-access dimension alongside the regular one. The
+	// non-changing dimension is passed through unchanged in both `old` and
+	// `new`, so consumers always see the complete gas vector. Pre-Amsterdam
+	// the State field is always zero, making a V2-only tracer behave exactly
+	// like a V1 one. If both hooks are set, only V2 is invoked; register at
+	// most one to avoid double-counting.
+	GasChangeHookV2 = func(old, new Gas, reason GasChangeReason)
 
 	/*
 		- Chain events -
@@ -146,15 +206,14 @@ type (
 	// GenesisBlockHook is called when the genesis block is being processed.
 	GenesisBlockHook = func(genesis *types.Block, alloc types.GenesisAlloc)
 
-	// OnSystemCallStartHook is called when a system call is about to be executed. Today,
-	// this hook is invoked when the EIP-4788 system call is about to be executed to set the
-	// beacon block root.
+	// OnSystemCallStartHook is called when a system call is about to be executed.
 	//
-	// After this hook, the EVM call tracing will happened as usual so you will receive a `OnEnter/OnExit`
-	// as well as state hooks between this hook and the `OnSystemCallEndHook`.
+	// After this hook, the EVM call tracing will happened as usual so you will
+	// receive a `OnEnter/OnExit` as well as state hooks between this hook and the
+	// `OnSystemCallEndHook`.
 	//
-	// Note that system call happens outside normal transaction execution, so the `OnTxStart/OnTxEnd` hooks
-	// will not be invoked.
+	// Note that system call happens outside normal transaction execution, so the
+	// `OnTxStart/OnTxEnd` hooks will not be invoked.
 	OnSystemCallStartHook = func()
 
 	// OnSystemCallStartHookV2 is called when a system call is about to be executed. Refer
@@ -165,6 +224,11 @@ type (
 	// this hook is invoked when the EIP-4788 system call is about to be executed to set the
 	// beacon block root.
 	OnSystemCallEndHook = func()
+
+	// StateUpdateHook is called after state is committed for a block.
+	// It provides access to the complete state mutations including account changes,
+	// storage changes, trie node mutations, and contract code deployments.
+	StateUpdateHook = func(update *StateUpdate)
 
 	/*
 		- State events -
@@ -182,6 +246,9 @@ type (
 	// CodeChangeHook is called when the code of an account changes.
 	CodeChangeHook = func(addr common.Address, prevCodeHash common.Hash, prevCode []byte, codeHash common.Hash, code []byte)
 
+	// CodeChangeHookV2 is called when the code of an account changes.
+	CodeChangeHookV2 = func(addr common.Address, prevCodeHash common.Hash, prevCode []byte, codeHash common.Hash, code []byte, reason CodeChangeReason)
+
 	// StorageChangeHook is called when the storage of an account changes.
 	StorageChangeHook = func(addr common.Address, slot common.Hash, prev, new common.Hash)
 
@@ -194,13 +261,14 @@ type (
 
 type Hooks struct {
 	// VM events
-	OnTxStart   TxStartHook
-	OnTxEnd     TxEndHook
-	OnEnter     EnterHook
-	OnExit      ExitHook
-	OnOpcode    OpcodeHook
-	OnFault     FaultHook
-	OnGasChange GasChangeHook
+	OnTxStart     TxStartHook
+	OnTxEnd       TxEndHook
+	OnEnter       EnterHook
+	OnExit        ExitHook
+	OnOpcode      OpcodeHook
+	OnFault       FaultHook
+	OnGasChange   GasChangeHook
+	OnGasChangeV2 GasChangeHookV2
 	// Chain events
 	OnBlockchainInit    BlockchainInitHook
 	OnClose             CloseHook
@@ -211,22 +279,53 @@ type Hooks struct {
 	OnSystemCallStart   OnSystemCallStartHook
 	OnSystemCallStartV2 OnSystemCallStartHookV2
 	OnSystemCallEnd     OnSystemCallEndHook
+	OnStateUpdate       StateUpdateHook
 	// State events
 	OnBalanceChange BalanceChangeHook
 	OnNonceChange   NonceChangeHook
 	OnNonceChangeV2 NonceChangeHookV2
 	OnCodeChange    CodeChangeHook
+	OnCodeChangeV2  CodeChangeHookV2
 	OnStorageChange StorageChangeHook
 	OnLog           LogHook
 	// Block hash read
 	OnBlockHashRead BlockHashReadHook
 }
 
+// HasGasHook reports whether any gas-change hook is registered. Call sites
+// should use this to short-circuit before constructing the Gas / GasBudget
+// arguments to EmitGasChange when tracing is off — the dispatch is otherwise
+// always paid the cost of evaluating those args.
+func (h *Hooks) HasGasHook() bool {
+	return h != nil && (h.OnGasChangeV2 != nil || h.OnGasChange != nil)
+}
+
+// EmitGasChange dispatches a gas change event to the registered hooks. If the
+// multi-dimensional OnGasChangeV2 hook is set it is invoked with the full Gas
+// vectors; otherwise the single-dimensional OnGasChange hook is invoked with
+// the regular-gas dimension only. The call is a no-op when the receiver is
+// nil, when neither hook is registered, or when the reason is GasChangeIgnored.
+//
+// Call sites SHOULD use this helper instead of invoking the hooks directly so
+// that both variants stay consistent across the Amsterdam fork boundary.
+func (h *Hooks) EmitGasChange(old, new Gas, reason GasChangeReason) {
+	if h == nil || reason == GasChangeIgnored {
+		return
+	}
+	if h.OnGasChangeV2 != nil {
+		h.OnGasChangeV2(old, new, reason)
+		return
+	}
+	if h.OnGasChange != nil {
+		h.OnGasChange(old.Regular, new.Regular, reason)
+	}
+}
+
 // BalanceChangeReason is used to indicate the reason for a balance change, useful
 // for tracing and reporting.
 type BalanceChangeReason byte
 
-//go:generate go run golang.org/x/tools/cmd/stringer -type=BalanceChangeReason -output gen_balance_change_reason_stringer.go
+//go:generate go run golang.org/x/tools/cmd/stringer -type=BalanceChangeReason -trimprefix=BalanceChange -output gen_balance_change_reason_stringer.go
 
 const (
 	BalanceChangeUnspecified BalanceChangeReason = 0
@@ -234,114 +333,187 @@ const (
 	// Issuance
 	// BalanceIncreaseRewardMineUncle is a reward for mining an uncle block.
 	BalanceIncreaseRewardMineUncle BalanceChangeReason = 1
+
 	// BalanceIncreaseRewardMineBlock is a reward for mining a block.
 	BalanceIncreaseRewardMineBlock BalanceChangeReason = 2
+
 	// BalanceIncreaseWithdrawal is ether withdrawn from the beacon chain.
 	BalanceIncreaseWithdrawal BalanceChangeReason = 3
+
 	// BalanceIncreaseGenesisBalance is ether allocated at the genesis block.
 	BalanceIncreaseGenesisBalance BalanceChangeReason = 4
 
 	// Transaction fees
-	// BalanceIncreaseRewardTransactionFee is the transaction tip increasing block builder's balance.
+	// BalanceIncreaseRewardTransactionFee is the transaction tip increasing
+	// block builder's balance.
 	BalanceIncreaseRewardTransactionFee BalanceChangeReason = 5
-	// BalanceDecreaseGasBuy is spent to purchase gas for execution a transaction.
-	// Part of this gas will be burnt as per EIP-1559 rules.
+
+	// BalanceDecreaseGasBuy is ether spent to purchase gas for a transaction,
+	// part of which is burnt under EIP-1559.
 	BalanceDecreaseGasBuy BalanceChangeReason = 6
-	// BalanceIncreaseGasReturn is ether returned for unused gas at the end of execution.
+
+	// BalanceIncreaseGasReturn is ether returned for unused gas at the end
+	// of execution.
 	BalanceIncreaseGasReturn BalanceChangeReason = 7
 
 	// DAO fork
 	// BalanceIncreaseDaoContract is ether sent to the DAO refund contract.
 	BalanceIncreaseDaoContract BalanceChangeReason = 8
-	// BalanceDecreaseDaoAccount is ether taken from a DAO account to be moved to the refund contract.
+
+	// BalanceDecreaseDaoAccount is ether taken from a DAO account to be moved
+	// to the refund contract.
 	BalanceDecreaseDaoAccount BalanceChangeReason = 9
 
-	// BalanceChangeTransfer is ether transferred via a call.
-	// it is a decrease for the sender and an increase for the recipient.
+	// BalanceChangeTransfer is ether transferred via a call: a decrease for the
+	// sender and an increase for the recipient.
 	BalanceChangeTransfer BalanceChangeReason = 10
-	// BalanceChangeTouchAccount is a transfer of zero value. It is only there to
-	// touch-create an account.
+
+	// BalanceChangeTouchAccount is a zero-value transfer that only touch-creates
+	// an account.
 	BalanceChangeTouchAccount BalanceChangeReason = 11
 
-	// BalanceIncreaseSelfdestruct is added to the recipient as indicated by a selfdestructing account.
+	// BalanceIncreaseSelfdestruct is added to the recipient as indicated by a
+	// selfdestructing account.
 	BalanceIncreaseSelfdestruct BalanceChangeReason = 12
+
 	// BalanceDecreaseSelfdestruct is deducted from a contract due to self-destruct.
 	BalanceDecreaseSelfdestruct BalanceChangeReason = 13
-	// BalanceDecreaseSelfdestructBurn is ether that is sent to an already self-destructed
-	// account within the same tx (captured at end of tx).
-	// Note it doesn't account for a self-destruct which appoints itself as recipient.
+
+	// BalanceDecreaseSelfdestructBurn is ether sent to an account already
+	// self-destructed within the same tx (captured at end of tx). It excludes a
+	// self-destruct that appoints itself as recipient.
 	BalanceDecreaseSelfdestructBurn BalanceChangeReason = 14
 
-	// BalanceChangeRevert is emitted when the balance is reverted back to a previous value due to call failure.
-	// It is only emitted when the tracer has opted in to use the journaling wrapper (WrapWithJournal).
+	// BalanceChangeRevert reverts the balance to a previous value on call
+	// failure. Emitted only when the tracer opts into WrapWithJournal.
 	BalanceChangeRevert BalanceChangeReason = 15
 )
+
+// Gas represents a multi-dimensional gas budget introduced by EIP-8037.
+// It carries the regular execution gas and the state-access gas, which are
+// metered independently from the Amsterdam fork onwards.
+//
+// Before Amsterdam, gas metering is single-dimensional and only the Regular
+// field is meaningful; State is always zero. The struct is shaped so that
+// pre-Amsterdam call sites can populate it as Gas{Regular: g} without loss
+// of fidelity relative to the legacy single-uint64 hook.
+type Gas struct {
+	Regular uint64 // Regular is the budget for ordinary execution gas.
+	State   uint64 // State is the budget dedicated to state-access gas (zero pre-Amsterdam).
+}
 
 // GasChangeReason is used to indicate the reason for a gas change, useful
 // for tracing and reporting.
 //
-// There is essentially two types of gas changes, those that can be emitted once per transaction
-// and those that can be emitted on a call basis, so possibly multiple times per transaction.
+// There is essentially two types of gas changes, those that can be emitted once
+// per transaction and those that can be emitted on a call basis, so possibly
+// multiple times per transaction.
 //
-// They can be recognized easily by their name, those that start with `GasChangeTx` are emitted
-// once per transaction, while those that start with `GasChangeCall` are emitted on a call basis.
+// They can be recognized easily by their name, those that start with `GasChangeTx`
+// are emitted once per transaction, while those that start with `GasChangeCall`
+// are emitted on a call basis.
 type GasChangeReason byte
+
+//go:generate go run golang.org/x/tools/cmd/stringer -type=GasChangeReason -trimprefix=GasChange -output gen_gas_change_reason_stringer.go
 
 const (
 	GasChangeUnspecified GasChangeReason = 0
 
-	// GasChangeTxInitialBalance is the initial balance for the call which will be equal to the gasLimit of the call. There is only
-	// one such gas change per transaction.
+	// GasChangeTxInitialBalance is the tx's initial balance, equal to its gas
+	// limit. At most one per transaction.
 	GasChangeTxInitialBalance GasChangeReason = 1
-	// GasChangeTxIntrinsicGas is the amount of gas that will be charged for the intrinsic cost of the transaction, there is
-	// always exactly one of those per transaction.
+
+	// GasChangeTxIntrinsicGas is the intrinsic cost of the transaction. Exactly
+	// one per transaction.
 	GasChangeTxIntrinsicGas GasChangeReason = 2
-	// GasChangeTxRefunds is the sum of all refunds which happened during the tx execution (e.g. storage slot being cleared)
-	// this generates an increase in gas. There is at most one of such gas change per transaction.
+
+	// GasChangeTxRefunds is the sum of all refunds accrued during execution
+	// (e.g. a storage slot being cleared), an increase. At most one per tx.
 	GasChangeTxRefunds GasChangeReason = 3
-	// GasChangeTxLeftOverReturned is the amount of gas left over at the end of transaction's execution that will be returned
-	// to the chain. This change will always be a negative change as we "drain" left over gas towards 0. If there was no gas
-	// left at the end of execution, no such even will be emitted. The returned gas's value in Wei is returned to caller.
-	// There is at most one of such gas change per transaction.
+
+	// GasChangeTxLeftOverReturned is the gas left at the end of the transaction,
+	// returned to the account (its Wei value refunded to the caller). Always a
+	// decrease towards 0; not emitted when no gas is left. At most one per tx.
 	GasChangeTxLeftOverReturned GasChangeReason = 4
 
-	// GasChangeCallInitialBalance is the initial balance for the call which will be equal to the gasLimit of the call. There is only
-	// one such gas change per call.
+	// GasChangeCallInitialBalance is the initial balance of a call, equal to its
+	// gas limit. At most one per call.
 	GasChangeCallInitialBalance GasChangeReason = 5
-	// GasChangeCallLeftOverReturned is the amount of gas left over that will be returned to the caller, this change will always
-	// be a negative change as we "drain" left over gas towards 0. If there was no gas left at the end of execution, no such even
-	// will be emitted.
+
+	// GasChangeCallLeftOverReturned is the gas left over that is returned to the
+	// caller. Always a decrease towards 0; not emitted when no gas is left.
 	GasChangeCallLeftOverReturned GasChangeReason = 6
-	// GasChangeCallLeftOverRefunded is the amount of gas that will be refunded to the call after the child call execution it
-	// executed completed. This value is always positive as we are giving gas back to the you, the left over gas of the child.
-	// If there was no gas left to be refunded, no such even will be emitted.
+
+	// GasChangeCallLeftOverRefunded is the child call's left-over gas given back
+	// to the caller. Always an increase; not emitted when nothing is refunded.
 	GasChangeCallLeftOverRefunded GasChangeReason = 7
-	// GasChangeCallContractCreation is the amount of gas that will be burned for a CREATE.
+
+	// GasChangeCallContractCreation is the gas burned for a CREATE.
 	GasChangeCallContractCreation GasChangeReason = 8
-	// GasChangeCallContractCreation2 is the amount of gas that will be burned for a CREATE2.
+
+	// GasChangeCallContractCreation2 is the gas burned for a CREATE2.
 	GasChangeCallContractCreation2 GasChangeReason = 9
-	// GasChangeCallCodeStorage is the amount of gas that will be charged for code storage.
+
+	// GasChangeCallCodeStorage is the gas charged for code storage.
 	GasChangeCallCodeStorage GasChangeReason = 10
-	// GasChangeCallOpCode is the amount of gas that will be charged for an opcode executed by the EVM, exact opcode that was
-	// performed can be check by `OnOpcode` handling.
+
+	// GasChangeCallOpCode is the gas charged for an executed opcode; the exact
+	// opcode is available via OnOpcode.
 	GasChangeCallOpCode GasChangeReason = 11
-	// GasChangeCallPrecompiledContract is the amount of gas that will be charged for a precompiled contract execution.
+
+	// GasChangeCallPrecompiledContract is the gas charged for a precompile.
 	GasChangeCallPrecompiledContract GasChangeReason = 12
-	// GasChangeCallStorageColdAccess is the amount of gas that will be charged for a cold storage access as controlled by EIP2929 rules.
+
+	// GasChangeCallStorageColdAccess is the gas charged for a cold storage
+	// access under EIP-2929.
 	GasChangeCallStorageColdAccess GasChangeReason = 13
-	// GasChangeCallFailedExecution is the burning of the remaining gas when the execution failed without a revert.
+
+	// GasChangeCallFailedExecution is the remaining gas burned when execution
+	// fails without a revert.
 	GasChangeCallFailedExecution GasChangeReason = 14
-	// GasChangeTxDataFloor is the amount of extra gas the transaction has to pay to reach the minimum gas requirement for the
-	// transaction data. This change will always be a negative change.
+
+	// GasChangeWitnessContractInit flags a witness addition during the contract
+	// creation initialization step.
+	GasChangeWitnessContractInit GasChangeReason = 15
+
+	// GasChangeWitnessContractCreation flags a witness addition during the
+	// contract creation finalization step.
+	GasChangeWitnessContractCreation GasChangeReason = 16
+
+	// GasChangeWitnessCodeChunk flags adding one or more code chunks to the
+	// witness.
+	GasChangeWitnessCodeChunk GasChangeReason = 17
+
+	// GasChangeWitnessContractCollisionCheck flags a witness addition during the
+	// contract address collision check.
+	GasChangeWitnessContractCollisionCheck GasChangeReason = 18
+
+	// GasChangeTxDataFloor is the extra gas charged to meet the EIP-7623
+	// calldata floor. Always a decrease.
 	GasChangeTxDataFloor GasChangeReason = 19
 
-	// GasChangeIgnored is a special value that can be used to indicate that the gas change should be ignored as
-	// it will be "manually" tracked by a direct emit of the gas change event.
+	// GasChangeRefundAccountCreation cancels a pre-charged account-creation cost
+	// when no account is created.
+	GasChangeRefundAccountCreation GasChangeReason = 20
+
+	// GasChangeTxRuntimeGas is the gas charged for the state-dependent costs of
+	// the transaction per EIP-2780.
+	GasChangeTxRuntimeGas GasChangeReason = 21
+
+	// GasChangeAccountCreation is the conditional account-creation state cost
+	// charged in the creating frame when a CREATE/CREATE2 is about to create a
+	// new account (EIP-8037).
+	GasChangeAccountCreation GasChangeReason = 22
+
+	// GasChangeIgnored indicates the gas change should be ignored, as it is
+	// tracked manually by a direct emit of the gas change event.
 	GasChangeIgnored GasChangeReason = 0xFF
 )
 
 // NonceChangeReason is used to indicate the reason for a nonce change.
 type NonceChangeReason byte
+
+//go:generate go run golang.org/x/tools/cmd/stringer -type=NonceChangeReason -trimprefix NonceChange -output gen_nonce_change_reason_stringer.go
 
 const (
 	NonceChangeUnspecified NonceChangeReason = 0
@@ -361,7 +533,45 @@ const (
 	// NonceChangeAuthorization is the nonce change due to a EIP-7702 authorization.
 	NonceChangeAuthorization NonceChangeReason = 5
 
-	// NonceChangeRevert is emitted when the nonce is reverted back to a previous value due to call failure.
-	// It is only emitted when the tracer has opted in to use the journaling wrapper (WrapWithJournal).
+	// NonceChangeRevert reverts the nonce to a previous value on call failure.
+	// Emitted only when the tracer opts into WrapWithJournal.
 	NonceChangeRevert NonceChangeReason = 6
+
+	// NonceChangeSelfdestruct resets the nonce to zero on a self-destruct.
+	NonceChangeSelfdestruct NonceChangeReason = 7
+
+	// NonceChangeApproval is the nonce change due to an EIP-8141 frame
+	// transaction APPROVE.
+	NonceChangeApproval NonceChangeReason = 8
+)
+
+// CodeChangeReason is used to indicate the reason for a code change.
+type CodeChangeReason byte
+
+//go:generate go run golang.org/x/tools/cmd/stringer -type=CodeChangeReason -trimprefix=CodeChange -output gen_code_change_reason_stringer.go
+
+const (
+	CodeChangeUnspecified CodeChangeReason = 0
+
+	// CodeChangeContractCreation is when a new contract is deployed via
+	// CREATE/CREATE2 operations.
+	CodeChangeContractCreation CodeChangeReason = 1
+
+	// CodeChangeGenesis is when contract code is set during blockchain genesis
+	// or initial setup.
+	CodeChangeGenesis CodeChangeReason = 2
+
+	// CodeChangeAuthorization is when code is set via EIP-7702 Set Code Authorization.
+	CodeChangeAuthorization CodeChangeReason = 3
+
+	// CodeChangeAuthorizationClear is when EIP-7702 delegation is cleared by
+	// setting to zero address.
+	CodeChangeAuthorizationClear CodeChangeReason = 4
+
+	// CodeChangeSelfDestruct is when contract code is cleared due to self-destruct.
+	CodeChangeSelfDestruct CodeChangeReason = 5
+
+	// CodeChangeRevert reverts the code to a previous value on call failure.
+	// Emitted only when the tracer opts into WrapWithJournal.
+	CodeChangeRevert CodeChangeReason = 6
 )

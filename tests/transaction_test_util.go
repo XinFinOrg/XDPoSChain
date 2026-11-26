@@ -17,7 +17,6 @@
 package tests
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"math/big"
@@ -25,109 +24,141 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/common/math"
+	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/params"
-	"github.com/XinFinOrg/XDPoSChain/rlp"
+	"github.com/holiman/uint256"
 )
 
 // TransactionTest checks RLP decoding and sender derivation of transactions.
 type TransactionTest struct {
-	json ttJSON
+	Txbytes hexutil.Bytes `json:"txbytes"`
+	Result  map[string]*ttFork
 }
 
-type ttJSON struct {
-	BlockNumber math.HexOrDecimal64 `json:"blockNumber"`
-	RLP         hexutil.Bytes       `json:"rlp"`
-	Sender      hexutil.Bytes       `json:"sender"`
-	Transaction *ttTransaction      `json:"transaction"`
+type ttFork struct {
+	Sender       *common.UnprefixedAddress `json:"sender"`
+	Hash         *common.UnprefixedHash    `json:"hash"`
+	Exception    *string                   `json:"exception"`
+	IntrinsicGas math.HexOrDecimal64       `json:"intrinsicGas"`
 }
 
-//go:generate go run github.com/fjl/gencodec -type ttTransaction -field-override ttTransactionMarshaling -out gen_tttransaction.go
-
-type ttTransaction struct {
-	Data     []byte         `gencodec:"required"`
-	GasLimit uint64         `gencodec:"required"`
-	GasPrice *big.Int       `gencodec:"required"`
-	Nonce    uint64         `gencodec:"required"`
-	Value    *big.Int       `gencodec:"required"`
-	R        *big.Int       `gencodec:"required"`
-	S        *big.Int       `gencodec:"required"`
-	V        *big.Int       `gencodec:"required"`
-	To       common.Address `gencodec:"required"`
-}
-
-type ttTransactionMarshaling struct {
-	Data     hexutil.Bytes
-	GasLimit math.HexOrDecimal64
-	GasPrice *math.HexOrDecimal256
-	Nonce    math.HexOrDecimal64
-	Value    *math.HexOrDecimal256
-	R        *math.HexOrDecimal256
-	S        *math.HexOrDecimal256
-	V        *math.HexOrDecimal256
-}
-
-func (tt *TransactionTest) Run(config *params.ChainConfig) error {
-	tx := new(types.Transaction)
-	if err := rlp.DecodeBytes(tt.json.RLP, tx); err != nil {
-		if tt.json.Transaction == nil {
-			return nil
-		} else {
-			return fmt.Errorf("RLP decoding failed: %v", err)
+func (tt *TransactionTest) validate() error {
+	if tt.Txbytes == nil {
+		return errors.New("missing txbytes")
+	}
+	for name, fork := range tt.Result {
+		if err := tt.validateFork(fork); err != nil {
+			return fmt.Errorf("invalid %s: %v", name, err)
 		}
-	}
-	// Check sender derivation.
-	signer := types.MakeSigner(config, new(big.Int).SetUint64(uint64(tt.json.BlockNumber)))
-	sender, err := types.Sender(signer, tx)
-	if err != nil {
-		return err
-	}
-	if sender != common.BytesToAddress(tt.json.Sender) {
-		return fmt.Errorf("mismatch Sender: got %x, want %x", sender, tt.json.Sender)
-	}
-	// Check decoded fields.
-	err = tt.json.Transaction.verify(signer, tx)
-	if tt.json.Sender == nil && err == nil {
-		return errors.New("field validations succeeded but should fail")
-	}
-	if tt.json.Sender != nil && err != nil {
-		return fmt.Errorf("field validations failed after RLP decoding: %s", err)
 	}
 	return nil
 }
 
-func (tt *ttTransaction) verify(signer types.Signer, tx *types.Transaction) error {
-	if !bytes.Equal(tx.Data(), tt.Data) {
-		return fmt.Errorf("mismatch tx input data: got %x want %x", tx.Data(), tt.Data)
+func (tt *TransactionTest) validateFork(fork *ttFork) error {
+	if fork == nil {
+		return nil
 	}
-	if tx.Gas() != tt.GasLimit {
-		return fmt.Errorf("mismatch GasLimit: got %d, want %d", tx.Gas(), tt.GasLimit)
+	if fork.Hash == nil && fork.Exception == nil {
+		return errors.New("missing hash and exception")
 	}
-	if tx.GasPrice().Cmp(tt.GasPrice) != 0 {
-		return fmt.Errorf("mismatch GasPrice: got %v, want %v", tx.GasPrice(), tt.GasPrice)
+	if fork.Hash != nil && fork.Sender == nil {
+		return errors.New("missing sender")
 	}
-	if tx.Nonce() != tt.Nonce {
-		return fmt.Errorf("mismatch Nonce: got %v, want %v", tx.Nonce(), tt.Nonce)
+	return nil
+}
+
+func (tt *TransactionTest) Run() error {
+	if err := tt.validate(); err != nil {
+		return err
 	}
-	v, r, s := tx.RawSignatureValues()
-	if r.Cmp(tt.R) != 0 {
-		return fmt.Errorf("mismatch R: got %v, want %v", r, tt.R)
-	}
-	if s.Cmp(tt.S) != 0 {
-		return fmt.Errorf("mismatch S: got %v, want %v", s, tt.S)
-	}
-	if v.Cmp(tt.V) != 0 {
-		return fmt.Errorf("mismatch V: got %v, want %v", v, tt.V)
-	}
-	if tx.To() == nil {
-		if tt.To != (common.Address{}) {
-			return fmt.Errorf("mismatch To when recipient is nil (contract creation): %x", tt.To)
+	validateTx := func(rlpData hexutil.Bytes, signer types.Signer, rules params.Rules) (sender common.Address, hash common.Hash, requiredGas uint64, err error) {
+		tx := new(types.Transaction)
+		if err = tx.UnmarshalBinary(rlpData); err != nil {
+			return
 		}
-	} else if *tx.To() != tt.To {
-		return fmt.Errorf("mismatch To: got %x, want %x", *tx.To(), tt.To)
+		sender, err = types.Sender(signer, tx)
+		if err != nil {
+			return
+		}
+		// Intrinsic cost
+		value, overflow := uint256.FromBig(tx.Value())
+		if overflow {
+			return sender, hash, 0, errors.New("value exceeds 256 bits")
+		}
+		cost, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), sender, tx.To(), value, rules)
+		if err != nil {
+			return
+		}
+		requiredGas = cost
+		if requiredGas > tx.Gas() {
+			return sender, hash, 0, fmt.Errorf("insufficient gas ( %d < %d )", tx.Gas(), requiredGas)
+		}
+
+		if rules.IsPrague || rules.IsBogota {
+			var floorDataGas uint64
+			floorDataGas, err = core.FloorDataGas(rules, sender, tx.To(), value, tx.Data(), tx.AccessList(), len(tx.SetCodeAuthorizations()), len(tx.BlobHashes()))
+			if err != nil {
+				return
+			}
+			if tx.Gas() < floorDataGas {
+				return sender, hash, 0, fmt.Errorf("%w: have %d, want %d", core.ErrFloorDataGas, tx.Gas(), floorDataGas)
+			}
+		}
+		hash = tx.Hash()
+		return sender, hash, requiredGas, nil
 	}
-	if tx.Value().Cmp(tt.Value) != 0 {
-		return fmt.Errorf("mismatch Value: got %x, want %x", tx.Value(), tt.Value)
+	for _, testcase := range []struct {
+		name    string
+		isMerge bool
+	}{
+		{"Frontier", false},
+		{"Homestead", false},
+		{"EIP150", false},
+		{"EIP158", false},
+		{"Byzantium", false},
+		{"Constantinople", false},
+		{"Istanbul", false},
+		{"Berlin", false},
+		{"London", false},
+		{"Paris", true},
+		{"Shanghai", true},
+		{"Cancun", true},
+		{"Prague", true},
+		{"Osaka", true},
+		{"Amsterdam", true},
+	} {
+		expected := tt.Result[testcase.name]
+		if expected == nil {
+			continue
+		}
+		config, ok := Forks[testcase.name]
+		if !ok || config == nil {
+			return UnsupportedForkError{Name: testcase.name}
+		}
+		var (
+			rules  = config.Rules(new(big.Int), testcase.isMerge, 0)
+			signer = types.MakeSigner(config, new(big.Int), 0)
+		)
+		sender, hash, gas, err := validateTx(tt.Txbytes, signer, rules)
+		if err != nil {
+			if expected.Hash != nil {
+				return fmt.Errorf("unexpected error fork %s: %v", testcase.name, err)
+			}
+			continue
+		}
+		if expected.Exception != nil {
+			return fmt.Errorf("expected error %v, got none (%v), fork %s", *expected.Exception, err, testcase.name)
+		}
+		if common.Hash(*expected.Hash) != hash {
+			return fmt.Errorf("hash mismatch: got %x, want %x", hash, common.Hash(*expected.Hash))
+		}
+		if common.Address(*expected.Sender) != sender {
+			return fmt.Errorf("sender mismatch: got %x, want %x", sender, expected.Sender)
+		}
+		if uint64(expected.IntrinsicGas) != gas {
+			return fmt.Errorf("intrinsic gas mismatch: got %d, want %d", gas, uint64(expected.IntrinsicGas))
+		}
 	}
 	return nil
 }
