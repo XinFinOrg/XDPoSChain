@@ -105,9 +105,10 @@ type fetcherTester struct {
 	lock sync.RWMutex
 }
 
-// newTester creates a new fetcher test mocker.
-func newTester() *fetcherTester {
-	return newTesterWithGate(nil)
+// newTester creates a new fetcher test mocker and registers its shutdown with
+// the test, so a test that never stops the fetcher cannot leak its loop.
+func newTester(t *testing.T) *fetcherTester {
+	return newTesterWithGate(t, nil)
 }
 
 // newIdleTester builds a tester whose loop never starts. Tests that drive the
@@ -124,11 +125,13 @@ func newIdleTester() *fetcherTester {
 }
 
 // newTesterWithGate builds a started tester whose signer gate is installed before
-// Start, the way the backend wires it. A nil gate means always ready.
-func newTesterWithGate(gate func() bool) *fetcherTester {
+// Start, the way the backend wires it. A nil gate means always ready. The fetcher
+// is stopped by the test cleanup; Stop is idempotent, so explicit stops also work.
+func newTesterWithGate(t *testing.T, gate func() bool) *fetcherTester {
 	tester := newIdleTester()
 	tester.fetcher.SetSignerGate(gate)
 	tester.fetcher.Start()
+	t.Cleanup(tester.fetcher.Stop)
 
 	return tester
 }
@@ -578,7 +581,7 @@ func testSequentialAnnouncements(t *testing.T, protocol int) {
 	targetBlocks := 4 * hashLimit
 	hashes, blocks := makeChain(targetBlocks, 0, genesis)
 
-	tester := newTester()
+	tester := newTester(t)
 	headerFetcher := tester.makeHeaderFetcher("valid", blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher("valid", blocks, 0)
 
@@ -611,7 +614,7 @@ func testConcurrentAnnouncements(t *testing.T, protocol int) {
 	hashes, blocks := makeChain(targetBlocks, 0, genesis)
 
 	// Assemble a tester with a built in counter for the requests
-	tester := newTester()
+	tester := newTester(t)
 	firstHeaderFetcher := tester.makeHeaderFetcher("first", blocks, -gatherSlack)
 	firstBodyFetcher := tester.makeBodyFetcher("first", blocks, 0)
 	secondHeaderFetcher := tester.makeHeaderFetcher("second", blocks, -gatherSlack)
@@ -655,7 +658,7 @@ func testOverlappingAnnouncements(t *testing.T, protocol int) {
 	targetBlocks := 4 * hashLimit
 	hashes, blocks := makeChain(targetBlocks, 0, genesis)
 
-	tester := newTester()
+	tester := newTester(t)
 	headerFetcher := tester.makeHeaderFetcher("valid", blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher("valid", blocks, 0)
 
@@ -685,7 +688,7 @@ func testPendingDeduplication(t *testing.T, protocol int) {
 	hashes, blocks := makeChain(1, 0, genesis)
 
 	// Assemble a tester with a built in counter and delayed fetcher
-	tester := newTester()
+	tester := newTester(t)
 	headerFetcher := tester.makeHeaderFetcher("repeater", blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher("repeater", blocks, 0)
 
@@ -729,7 +732,7 @@ func testRandomArrivalImport(t *testing.T, protocol int) {
 	hashes, blocks := makeChain(targetBlocks, 0, genesis)
 	skip := targetBlocks / 2
 
-	tester := newTester()
+	tester := newTester(t)
 	headerFetcher := tester.makeHeaderFetcher("valid", blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher("valid", blocks, 0)
 
@@ -760,7 +763,7 @@ func testQueueGapFill(t *testing.T, protocol int) {
 	hashes, blocks := makeChain(targetBlocks, 0, genesis)
 	skip := targetBlocks / 2
 
-	tester := newTester()
+	tester := newTester(t)
 	headerFetcher := tester.makeHeaderFetcher("valid", blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher("valid", blocks, 0)
 
@@ -790,7 +793,7 @@ func testImportDeduplication(t *testing.T, protocol int) {
 	hashes, blocks := makeChain(2, 0, genesis)
 
 	// Create the tester and wrap the importer with a counter
-	tester := newTester()
+	tester := newTester(t)
 	headerFetcher := tester.makeHeaderFetcher("valid", blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher("valid", blocks, 0)
 
@@ -832,7 +835,7 @@ func TestDistantPropagationDiscarding(t *testing.T) {
 	low, high := len(hashes)/2+maxUncleDist+1, len(hashes)/2-maxQueueDist-1
 
 	// Create a tester and simulate a head block being the middle of the above chain
-	tester := newTester()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.hashes = []common.Hash{head}
@@ -863,7 +866,7 @@ func TestMaxUint64PropagationDiscarding(t *testing.T) {
 	hashes, blocks := makeChain(6, 0, genesis)
 	head := hashes[2] // block #4
 
-	tester := newTester()
+	tester := newTester(t)
 	tester.lock.Lock()
 	tester.hashes = []common.Hash{head}
 	tester.blocks = map[common.Hash]*types.Block{head: blocks[head]}
@@ -918,7 +921,7 @@ func testDistantAnnouncementDiscarding(t *testing.T, protocol int) {
 	low, high := len(hashes)/2+maxUncleDist+1, len(hashes)/2-maxQueueDist-1
 
 	// Create a tester and simulate a head block being the middle of the above chain
-	tester := newTester()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.hashes = []common.Hash{head}
@@ -957,7 +960,7 @@ func testInvalidNumberAnnouncement(t *testing.T, protocol int) {
 	// Create a single block to import and check numbers against
 	hashes, blocks := makeChain(1, 0, genesis)
 
-	tester := newTester()
+	tester := newTester(t)
 	badHeaderFetcher := tester.makeHeaderFetcher("bad", blocks, -gatherSlack)
 	badBodyFetcher := tester.makeBodyFetcher("bad", blocks, 0)
 
@@ -1017,7 +1020,7 @@ func testEmptyBlockShortCircuit(t *testing.T, protocol int) {
 	// Create a chain of blocks to import
 	hashes, blocks := makeChain(32, 0, genesis)
 
-	tester := newTester()
+	tester := newTester(t)
 	headerFetcher := tester.makeHeaderFetcher("valid", blocks, -gatherSlack)
 	bodyFetcher := tester.makeBodyFetcher("valid", blocks, 0)
 
@@ -1061,7 +1064,7 @@ func TestHashMemoryExhaustionAttack64(t *testing.T) { testHashMemoryExhaustionAt
 
 func testHashMemoryExhaustionAttack(t *testing.T, protocol int) {
 	// Create a tester with instrumented import hooks
-	tester := newTester()
+	tester := newTester(t)
 
 	imported, announces := make(chan *types.Block), int32(0)
 	budget := tester.watchImports(imported)
@@ -1108,7 +1111,7 @@ func testHashMemoryExhaustionAttack(t *testing.T, protocol int) {
 // system memory.
 func TestBlockMemoryExhaustionAttack(t *testing.T) {
 	// Create a tester with instrumented import hooks
-	tester := newTester()
+	tester := newTester(t)
 
 	imported := make(chan *types.Block)
 	budget := tester.watchImports(imported)
@@ -1147,17 +1150,16 @@ func TestBlockMemoryExhaustionAttack(t *testing.T) {
 func TestUnimportedBlockSkipsConsensusHandling(t *testing.T) {
 	block := newParkedTestBlock(0x01)
 
-	tester := newTester()
+	tester := newTester(t)
 	testSkipConsensusHandlingForUnimportedBlock(t, tester, block)
 
-	tester = newTester()
-	defer tester.fetcher.Stop() // the second tester is stopped nowhere else
+	tester = newTester(t)
 	testConsensusHandlingForImportedBlock(t, tester, block)
 }
 
 // testSkipConsensusHandlingForUnimportedBlock asserts that neither hook runs for an unimported block.
 func testSkipConsensusHandlingForUnimportedBlock(t *testing.T, tester *fetcherTester, block *types.Block) {
-	stop := sync.OnceFunc(tester.fetcher.Stop)
+	stop := tester.fetcher.Stop
 	defer stop()
 
 	imported := make(chan *types.Block, 1)
@@ -1263,8 +1265,7 @@ func TestM2BlockSignatureUsesOnchainHash(t *testing.T) {
 	}
 
 	t.Run("not stored", func(t *testing.T) {
-		tester := newTester()
-		defer tester.fetcher.Stop()
+		tester := newTester(t)
 		wireM2(tester)
 
 		imported := make(chan *types.Block, 1)
@@ -1334,8 +1335,7 @@ func TestM2BlockSignatureUsesOnchainHash(t *testing.T) {
 	})
 
 	t.Run("stored", func(t *testing.T) {
-		tester := newTester()
-		defer tester.fetcher.Stop()
+		tester := newTester(t)
 		wireM2(tester)
 
 		tester.fetcher.insertBlock = func(block *types.Block) error {
@@ -1386,8 +1386,7 @@ func TestM2BlockSignatureUsesOnchainHash(t *testing.T) {
 func TestParkedBlockSignsAfterFutureImport(t *testing.T) {
 	block := newParkedTestBlock(0x01)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	imported := make(chan *types.Block, 1)
 	tester.fetcher.insertBlock = func(block *types.Block) error {
@@ -1645,8 +1644,7 @@ func (c *logCapture) snapshot() []slog.Record {
 func TestParkedSignatureSkippedWhileSyncing(t *testing.T) {
 	block := newParkedTestBlock(0x01)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.syncing.Store(true)
 
 	tester.fetcher.insertBlock = func(*types.Block) error {
@@ -1688,8 +1686,7 @@ func TestStoredBlockSignatureRespectsSnapSync(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			block := newParkedTestBlock(0x19)
 
-			tester := newTester()
-			defer tester.fetcher.Stop()
+			tester := newTester(t)
 			tester.syncing.Store(tt.syncing)
 
 			tester.fetcher.insertBlock = func(b *types.Block) error {
@@ -1744,8 +1741,7 @@ func TestStoredBlockSignatureRespectsSnapSync(t *testing.T) {
 func TestParkedSignatureWithoutSignHook(t *testing.T) {
 	block := newParkedTestBlock(0x01)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.fetcher.insertBlock = func(*types.Block) error {
 		return nil // never stored
@@ -1773,8 +1769,7 @@ func TestParkedSignatureSkippedWhenNotASigner(t *testing.T) {
 
 	// A live gate: parking reads it per call instead of caching the first answer.
 	var allow atomic.Bool
-	tester := newTesterWithGate(func() bool { return allow.Load() })
-	defer tester.fetcher.Stop()
+	tester := newTesterWithGate(t, func() bool { return allow.Load() })
 
 	signed := hookSigning(tester.fetcher)
 
@@ -1804,8 +1799,7 @@ func TestParkedSignatureSkippedWhenNotASigner(t *testing.T) {
 func TestParkedSignatureRelayDoesNotWaitForParking(t *testing.T) {
 	block := newParkedTestBlock(0x2d)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.fetcher.insertBlock = func(*types.Block) error {
 		return nil // never stored: the delivery path takes the park branch
@@ -1840,8 +1834,7 @@ func TestParkedSignatureRelayDoesNotWaitForParking(t *testing.T) {
 func TestParkedSignatureTimeoutDropsBlock(t *testing.T) {
 	block := newParkedTestBlock(0x01)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.parkedTimeout = 200 * time.Millisecond
 
 	tester.fetcher.insertBlock = func(*types.Block) error {
@@ -1884,8 +1877,7 @@ func TestParkedSignatureTimeoutDropsBlock(t *testing.T) {
 func TestParkedSignatureTimeoutDropsStoredButNeverSignable(t *testing.T) {
 	block := newParkedTestBlock(0x03)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.parkedTimeout = 200 * time.Millisecond
 
 	tester.lock.Lock()
@@ -1938,8 +1930,7 @@ func TestParkedSignatureDeadlineDropIsLogged(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			block := newParkedTestBlock(0x2c)
 
-			tester := newTester()
-			defer tester.fetcher.Stop()
+			tester := newTester(t)
 			tester.fetcher.signHook = func(*types.Block) error { return nil }
 			if tt.onDisk {
 				tester.lock.Lock()
@@ -1990,8 +1981,7 @@ func TestParkedSignatureExpiredBeforeReadyIsDropped(t *testing.T) {
 		Extra:      []byte{0x16},
 	}).WithBody(types.Body{})
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	if _, err := tester.insertChain(types.Blocks{block}); err != nil {
 		t.Fatalf("failed to store the parked block: %v", err)
@@ -2018,8 +2008,7 @@ func TestParkedSignatureExpiredBeforeReadyIsDropped(t *testing.T) {
 func TestParkedSignatureDroppedWhenStale(t *testing.T) {
 	hashes, blocks := makeChain(maxUncleDist+5, 0, genesis)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	signed := hookSigning(tester.fetcher)
 	for i := len(hashes) - 2; i >= 0; i-- {
@@ -2048,8 +2037,7 @@ func TestParkedSignatureStaleBoundary(t *testing.T) {
 	const headNumber = maxUncleDist + 4
 	hashes, blocks := makeChain(headNumber, 0, genesis)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	for i := len(hashes) - 2; i >= 0; i-- {
 		if _, err := tester.insertChain(types.Blocks{blocks[hashes[i]]}); err != nil {
 			t.Fatalf("failed to advance the chain: %v", err)
@@ -2088,8 +2076,7 @@ func TestParkedSignatureStaleBoundary(t *testing.T) {
 func TestParkedSignatureWaitsForCanonical(t *testing.T) {
 	block := newParkedTestBlock(0x03)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	signed := hookSigning(tester.fetcher)
 	tester.fetcher.parkForSignature(block)
@@ -2127,8 +2114,7 @@ func TestParkedSignatureWaitsForCanonical(t *testing.T) {
 func TestParkedSignatureWaiterStopsWhenEmpty(t *testing.T) {
 	block := newParkedTestBlock(0x01)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.parkedTimeout = 50 * time.Millisecond
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
@@ -2156,8 +2142,7 @@ func TestParkedSignatureWaiterStopsWhenEmpty(t *testing.T) {
 }
 
 func TestParkedSignatureLimit(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	full := blockParkedFullMeter.Snapshot().Count()
@@ -2173,8 +2158,7 @@ func TestParkedSignatureLimit(t *testing.T) {
 }
 
 func TestParkedSignatureStoredBudgetReservesSlots(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	full := blockParkedFullMeter.Snapshot().Count()
@@ -2212,8 +2196,7 @@ func TestParkedSignatureStoredBudgetReservesSlots(t *testing.T) {
 }
 
 func TestParkedSignatureStoredBudgetRefreshedByScan(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	block := newParkedTestBlock(0x2b)
@@ -2235,8 +2218,7 @@ func TestParkedSignatureStoredBudgetRefreshedByScan(t *testing.T) {
 // batch that lands in one tick flips the whole reserve to stored and takes the
 // stored subset past maxParkedStored, up to the total set.
 func TestParkedSignatureStoredBudgetIsAdmissionOnly(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	for i := 0; i < maxParkedStored; i++ {
@@ -2273,8 +2255,7 @@ func TestParkedSignatureStoredBudgetIsAdmissionOnly(t *testing.T) {
 // runtime bound: with the stored subset already past its cap, the next admission
 // is refused by the total gate, not the stored one.
 func TestParkedSignatureTotalBudgetRefusesAfterStoredFlip(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	for i := 0; i < maxParkedSignatures; i++ {
@@ -2312,8 +2293,7 @@ func TestParkedSignatureTotalBudgetRefusesAfterStoredFlip(t *testing.T) {
 func TestImportedNonCanonicalBlockIsNotSigned(t *testing.T) {
 	block := newParkedTestBlock(0x02)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.fetcher.insertBlock = func(b *types.Block) error {
 		tester.lock.Lock()
@@ -2370,7 +2350,7 @@ func TestImportedNonCanonicalBlockIsNotSigned(t *testing.T) {
 func TestParkedSignaturePutsBackWhenNoLongerSignable(t *testing.T) {
 	block := newParkedTestBlock(0x06)
 
-	tester := newTester()
+	tester := newTester(t)
 	signed := hookSigning(tester.fetcher)
 	tester.fetcher.parkForSignature(block)
 	// Stop the waiter so the test drives the scan and owns the single canSign call.
@@ -2410,8 +2390,7 @@ func TestParkedSignaturePutsBackWhenNoLongerSignable(t *testing.T) {
 func TestRedeliveredParkedBlockIsSignedOnce(t *testing.T) {
 	block := newParkedTestBlock(0x08)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[block.Hash()] = block
@@ -2450,8 +2429,7 @@ func TestRedeliveredParkedBlockIsSignedOnce(t *testing.T) {
 func TestClaimedParkedSignatureRechecksCanonicality(t *testing.T) {
 	block := newParkedTestBlock(0x0a)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[block.Hash()] = block
@@ -2512,8 +2490,7 @@ func TestClaimedParkedSignatureRechecksCanonicality(t *testing.T) {
 func TestClaimedParkedSignatureStartsParkWhenRefused(t *testing.T) {
 	block := newParkedTestBlock(0x15)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[block.Hash()] = block
@@ -2576,8 +2553,7 @@ func TestClaimedParkedSignatureStartsParkWhenRefused(t *testing.T) {
 func TestParkedSignatureNotSignedTwiceByInsert(t *testing.T) {
 	block := newParkedTestBlock(0x09)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[block.Hash()] = block
@@ -2639,8 +2615,7 @@ func TestImportedBlockRefusalReasons(t *testing.T) {
 	t.Run("not canonical", func(t *testing.T) {
 		block := newParkedTestBlock(0x0a)
 
-		tester := newTester()
-		defer tester.fetcher.Stop()
+		tester := newTester(t)
 
 		tester.fetcher.insertBlock = func(b *types.Block) error {
 			tester.lock.Lock()
@@ -2680,8 +2655,7 @@ func TestImportedBlockRefusalReasons(t *testing.T) {
 	t.Run("below the uncle distance", func(t *testing.T) {
 		hashes, blocks := makeChain(maxUncleDist+5, 0, genesis)
 
-		tester := newTester()
-		defer tester.fetcher.Stop()
+		tester := newTester(t)
 
 		for i := len(hashes) - 2; i >= 0; i-- {
 			if _, err := tester.insertChain(types.Blocks{blocks[hashes[i]]}); err != nil {
@@ -2721,8 +2695,7 @@ func TestImportedBlockRefusalReasons(t *testing.T) {
 	t.Run("not canonical and below the uncle distance", func(t *testing.T) {
 		hashes, blocks := makeChain(maxUncleDist+5, 0, genesis)
 
-		tester := newTester()
-		defer tester.fetcher.Stop()
+		tester := newTester(t)
 
 		for i := len(hashes) - 2; i >= 0; i-- {
 			if _, err := tester.insertChain(types.Blocks{blocks[hashes[i]]}); err != nil {
@@ -2770,8 +2743,7 @@ func TestImportedBlockRefusalReasons(t *testing.T) {
 func TestParkedSignatureRedeliveryKeepsDeadline(t *testing.T) {
 	block := newParkedTestBlock(0x0b)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	tester.fetcher.parkForSignature(block)
@@ -2790,7 +2762,7 @@ func TestParkedSignatureRedeliveryKeepsDeadline(t *testing.T) {
 }
 
 func TestParkedSignatureIgnoredAfterStop(t *testing.T) {
-	tester := newTester()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 	tester.fetcher.Stop()
 
@@ -2807,7 +2779,7 @@ func TestParkedSignatureIgnoredAfterStop(t *testing.T) {
 func TestParkedSignatureFailureIsNotRetried(t *testing.T) {
 	block := newParkedTestBlock(0x0d)
 
-	tester := newTester()
+	tester := newTester(t)
 	var signs int32
 	tester.fetcher.signHook = func(*types.Block) error {
 		atomic.AddInt32(&signs, 1)
@@ -2835,8 +2807,7 @@ func TestParkedSignatureFailureIsNotRetried(t *testing.T) {
 func TestDeliverySignatureFailureIsNotRetried(t *testing.T) {
 	block := newParkedTestBlock(0x0e)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[block.Hash()] = block
@@ -2886,8 +2857,7 @@ func TestDeliverySignatureFailureIsNotRetried(t *testing.T) {
 func TestClaimedParkedSignatureFallsBelowUncleDist(t *testing.T) {
 	block := newParkedTestBlock(0x10)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[block.Hash()] = block
@@ -2974,8 +2944,7 @@ func TestClaimedParkedSignatureFallsBelowUncleDist(t *testing.T) {
 func TestClaimedParkedSignatureEvictedAtDeadline(t *testing.T) {
 	block := newParkedTestBlock(0x12)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	// A claimed entry past its deadline, installed directly; the marker models the hook.
 	parkTestEntry(t, tester.fetcher, block, time.Now().Add(-time.Second), true)
@@ -3005,8 +2974,7 @@ func TestClaimedParkedSignatureEvictedAtDeadline(t *testing.T) {
 func TestRedeliveryDuringPendingClaimedSignatureIsNotSigned(t *testing.T) {
 	block := newParkedTestBlock(0x16)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[block.Hash()] = block
@@ -3082,8 +3050,7 @@ func TestRedeliveryDuringPendingClaimedSignatureIsNotSigned(t *testing.T) {
 func TestRedeliveryOfExpiredParkedEntryIsNotSigned(t *testing.T) {
 	block := newParkedTestBlock(0x18)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[block.Hash()] = block
@@ -3127,8 +3094,7 @@ func TestRedeliveryOfExpiredParkedEntryIsNotSigned(t *testing.T) {
 func TestParkedSignatureInFlightBlocksRestore(t *testing.T) {
 	block := newParkedTestBlock(0x17)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	if ok, _ := tester.fetcher.claimParkedSignature(block.Hash()); !ok {
@@ -3155,8 +3121,7 @@ func TestParkedSignatureInFlightBlocksRestore(t *testing.T) {
 func TestParkedSignatureScanSkippedWhileSyncing(t *testing.T) {
 	block := newParkedTestBlock(0x13)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[block.Hash()] = block
@@ -3191,8 +3156,7 @@ func TestParkedSignatureScanSkippedWhileSyncing(t *testing.T) {
 func TestParkedSignatureScanBoundsFrozenWhileSyncing(t *testing.T) {
 	block := newParkedTestBlock(0x27)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	parkTestEntry(t, tester.fetcher, block, time.Now().Add(-time.Second), false)
 	tester.syncing.Store(true)
@@ -3211,7 +3175,7 @@ func TestParkedSignatureScanBoundsFrozenWhileSyncing(t *testing.T) {
 func TestParkedSignatureWaiterDoesNotSignAfterStop(t *testing.T) {
 	block := newParkedTestBlock(0x14)
 
-	tester := newTester()
+	tester := newTester(t)
 	tester.fetcher.parkedTimeout = time.Minute
 
 	tester.lock.Lock()
@@ -3250,8 +3214,8 @@ func TestParkedSignatureStopsBetweenReadyBlocks(t *testing.T) {
 		Extra:      []byte{0x1b},
 	}).WithBody(types.Body{})
 
-	tester := newTester()
-	stop := sync.OnceFunc(func() { tester.fetcher.Stop() })
+	tester := newTester(t)
+	stop := tester.fetcher.Stop
 	defer stop()
 
 	tester.lock.Lock()
@@ -3323,8 +3287,7 @@ func TestParkedSignatureStopsBetweenReadyBlocks(t *testing.T) {
 func TestParkedSignatureRecheckRespectsSnapSync(t *testing.T) {
 	block := newParkedTestBlock(0x1d)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[block.Hash()] = block
@@ -3378,8 +3341,8 @@ func TestParkedSignatureWaiterStopsMidBatch(t *testing.T) {
 		Extra:      []byte{0x1f},
 	}).WithBody(types.Body{})
 
-	tester := newTester()
-	stop := sync.OnceFunc(func() { tester.fetcher.Stop() })
+	tester := newTester(t)
+	stop := tester.fetcher.Stop
 	defer stop()
 
 	tester.lock.Lock()
@@ -3444,8 +3407,7 @@ func TestParkedSignatureEvictionContinuesWhileHookBlocked(t *testing.T) {
 	blockA := newParkedTestBlock(0x1c)
 	blockB := newParkedTestBlock(0x1d)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[blockA.Hash()] = blockA
@@ -3487,8 +3449,7 @@ func TestParkedSignatureBatchBoundWhileHookBlocked(t *testing.T) {
 		Extra:      []byte{0x22},
 	}).WithBody(types.Body{})
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[blockA.Hash()] = blockA
@@ -3546,8 +3507,7 @@ func TestParkedSignatureBatchBoundWhileHookBlocked(t *testing.T) {
 func TestRefusedClaimKeepsParkedDeadline(t *testing.T) {
 	block := newParkedTestBlock(0x23)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	parkTestEntry(t, tester.fetcher, block, time.Now().Add(20*time.Millisecond), false)
 	ok, tookEntry := tester.fetcher.claimParkedSignature(block.Hash())
@@ -3573,8 +3533,7 @@ func TestRefusedClaimKeepsParkedDeadline(t *testing.T) {
 func TestRefusedClaimParksEntrylessClaim(t *testing.T) {
 	block := newParkedTestBlock(0x24)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	ok, tookEntry := tester.fetcher.claimParkedSignature(block.Hash())
@@ -3602,8 +3561,7 @@ func TestRefusedClaimParksEntrylessClaim(t *testing.T) {
 func TestStoredBlockSignatureRespectsSnapSyncAfterClaim(t *testing.T) {
 	block := newParkedTestBlock(0x25)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[block.Hash()] = block
@@ -3651,8 +3609,7 @@ func TestParkedSignatureDroppedWhenDeadlinePassesDuringBlockedHook(t *testing.T)
 		Extra:      []byte{0x27},
 	}).WithBody(types.Body{})
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	tester.lock.Lock()
 	tester.blocks[blockA.Hash()] = blockA
@@ -3726,8 +3683,7 @@ func TestParkedSignatureDroppedWhenDeadlinePassesDuringBlockedHook(t *testing.T)
 func TestParkedSignatureRefusedClaimDroppedWithoutSigner(t *testing.T) {
 	block := newParkedTestBlock(0x2e)
 
-	tester := newTesterWithGate(func() bool { return false })
-	defer tester.fetcher.Stop()
+	tester := newTesterWithGate(t, func() bool { return false })
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	// The claim left its in-flight marker behind; settling must clear it either way.
@@ -3750,8 +3706,7 @@ func TestParkedSignatureRefusedClaimDroppedWithoutSigner(t *testing.T) {
 func TestParkedSignatureRefusedClaimParksOnSigner(t *testing.T) {
 	block := newParkedTestBlock(0x2f)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	tester.fetcher.settleRefusedClaim(block, false)
@@ -3769,11 +3724,10 @@ func TestParkedSignatureRefusedClaimParksOnSigner(t *testing.T) {
 // the gate's backend lock and chain read per refused claim.
 func TestParkedSignatureRefusedClaimSkipsSignerGateWhenFull(t *testing.T) {
 	var gateCalls atomic.Int32
-	tester := newTesterWithGate(func() bool {
+	tester := newTesterWithGate(t, func() bool {
 		gateCalls.Add(1)
 		return true
 	})
-	defer tester.fetcher.Stop()
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	for i := 0; i < maxParkedSignatures; i++ {
@@ -3804,8 +3758,7 @@ func TestParkedSignatureRefusedClaimSkipsSignerGateWhenFull(t *testing.T) {
 // block already on disk must count against the stored budget when it is parked
 // through parkForSignature.
 func TestParkedSignatureStoredDerivedByWrapper(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	block := newParkedTestBlock(0x30)
@@ -3825,8 +3778,7 @@ func TestParkedSignatureStoredDerivedByWrapper(t *testing.T) {
 func TestParkedSignatureDeliveryUnimportedIsNotStored(t *testing.T) {
 	block := newParkedTestBlock(0x33)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.insertBlock = func(*types.Block) error {
 		return nil // never stored: the delivery path takes the park branch
 	}
@@ -3845,8 +3797,7 @@ func TestParkedSignatureDeliveryUnimportedIsNotStored(t *testing.T) {
 // the argument observable, because the scan flips the flag once the block is on
 // disk and would hide the admission value.
 func TestParkedSignatureDeliveryStoredRespectsStoredBudget(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	for i := 0; i < maxParkedStored; i++ {
@@ -3884,11 +3835,10 @@ func TestParkedSignatureDeliveryStoredRespectsStoredBudget(t *testing.T) {
 
 func TestParkedSignatureParkSkipsSignerGateWhenFull(t *testing.T) {
 	var gateCalls atomic.Int32
-	tester := newTesterWithGate(func() bool {
+	tester := newTesterWithGate(t, func() bool {
 		gateCalls.Add(1)
 		return true
 	})
-	defer tester.fetcher.Stop()
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	for i := 0; i < maxParkedSignatures; i++ {
@@ -3915,8 +3865,7 @@ func TestParkedSignatureParkSkipsSignerGateWhenFull(t *testing.T) {
 func TestParkedSignatureRefusedClaimKeepsMarkerAcrossSignerGate(t *testing.T) {
 	block := newParkedTestBlock(0x3a)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	var markerHeld, concurrentClaim atomic.Bool
@@ -3952,8 +3901,7 @@ func TestParkedSignatureRefusedClaimKeepsMarkerAcrossSignerGate(t *testing.T) {
 func TestParkedSignatureParkKeepsMarkerAcrossSignerGate(t *testing.T) {
 	block := newParkedTestBlock(0x3b)
 
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	var markerHeld, concurrentClaim atomic.Bool
@@ -3987,8 +3935,7 @@ func TestParkedSignatureParkKeepsMarkerAcrossSignerGate(t *testing.T) {
 // slot left, an admission waiting on the signer gate keeps it, so an admission
 // that runs inside the gate is refused instead of taking the slot.
 func TestParkedSignatureReservesSlotAcrossSignerGate(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	for i := 0; i < maxParkedSignatures-1; i++ {
@@ -4039,8 +3986,7 @@ func TestParkedSignatureReservesSlotAcrossSignerGate(t *testing.T) {
 // TestParkedSignatureReservesStoredSlotAcrossSignerGate covers the stored budget:
 // its last slot is reserved the same way and the admission is booked.
 func TestParkedSignatureReservesStoredSlotAcrossSignerGate(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	for i := 0; i < maxParkedStored-1; i++ {
@@ -4084,8 +4030,7 @@ func TestParkedSignatureReservesStoredSlotAcrossSignerGate(t *testing.T) {
 // TestParkedSignatureReleasesReservationWhenGateRefuses pins the release: a
 // refused gate leaves neither an entry, nor a marker, nor a reservation.
 func TestParkedSignatureReleasesReservationWhenGateRefuses(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 	tester.fetcher.SetSignerGate(func() bool { return false })
 
@@ -4105,8 +4050,7 @@ func TestParkedSignatureReleasesReservationWhenGateRefuses(t *testing.T) {
 // TestParkedSignatureReleasesReservationWhenGatePanics pins the release on a
 // panicking gate: neither the marker nor the slot may outlive the admission.
 func TestParkedSignatureReleasesReservationWhenGatePanics(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 	tester.fetcher.SetSignerGate(func() bool { panic("gate boom") })
 
@@ -4135,8 +4079,7 @@ func TestParkedSignatureReleasesReservationWhenGatePanics(t *testing.T) {
 // TestParkedSignatureKeptWhenSignHookSkips pins the hook contract: a skipped
 // signature releases the claim and keeps the entry for a later attempt.
 func TestParkedSignatureKeptWhenSignHookSkips(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	var skip atomic.Bool
 	skip.Store(true)
@@ -4187,8 +4130,7 @@ func TestParkedSignatureKeptWhenSignHookSkips(t *testing.T) {
 // TestImportedBlockSignatureSkippedKeepsEntry pins the delivery path: a skipped
 // signature releases the claim and keeps the parked entry.
 func TestImportedBlockSignatureSkippedKeepsEntry(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	block := newParkedTestBlock(0x3f)
 	tester.lock.Lock()
@@ -4224,8 +4166,9 @@ func TestImportedBlockSignatureSkippedKeepsEntry(t *testing.T) {
 // a later scan retries, and the signer gate must still refuse to park on a node
 // that cannot sign.
 func TestImportedBlockSignatureSkippedParksWithoutEntry(t *testing.T) {
-	deliver := func(gate func() bool, extra byte) *fetcherTester {
-		tester := newTesterWithGate(gate)
+	// deliver takes the subtest's t, so the tester is stopped when that subtest ends.
+	deliver := func(t *testing.T, gate func() bool, extra byte) *fetcherTester {
+		tester := newTesterWithGate(t, gate)
 		block := newParkedTestBlock(extra)
 		tester.lock.Lock()
 		tester.blocks[block.Hash()] = block
@@ -4250,9 +4193,10 @@ func TestImportedBlockSignatureSkippedParksWithoutEntry(t *testing.T) {
 		return tester
 	}
 
+	var signer *fetcherTester
 	t.Run("signer", func(t *testing.T) {
-		tester := deliver(func() bool { return true }, 0x45)
-		defer tester.fetcher.Stop()
+		tester := deliver(t, func() bool { return true }, 0x45)
+		signer = tester
 
 		if n := parkedCount(tester.fetcher); n != 1 {
 			t.Fatalf("parked count = %d after an entry-less skipped delivery, want 1", n)
@@ -4268,8 +4212,16 @@ func TestImportedBlockSignatureSkippedParksWithoutEntry(t *testing.T) {
 		}
 	})
 	t.Run("not a signer", func(t *testing.T) {
-		tester := deliver(func() bool { return false }, 0x46)
-		defer tester.fetcher.Stop()
+		// A -run pattern can select this subtest alone, leaving no sibling to check
+		if signer != nil {
+			// The signer subtest's cleanup has run; its loop must be gone before this one starts.
+			select {
+			case <-signer.fetcher.loopDone:
+			case <-time.After(2 * time.Second):
+				t.Fatal("the signer subtest's fetcher outlived its subtest")
+			}
+		}
+		tester := deliver(t, func() bool { return false }, 0x46)
 
 		if n := parkedCount(tester.fetcher); n != 0 {
 			t.Fatalf("parked %d entries on a node that cannot sign, want 0", n)
@@ -4286,8 +4238,7 @@ func TestImportedBlockSignatureSkippedParksWithoutEntry(t *testing.T) {
 // TestParkedSignatureSkipBackoff pins the retry cadence: a skipped signature is
 // retried once per parkedSkipBackoff, not once per scan tick.
 func TestParkedSignatureSkipBackoff(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 
 	var calls atomic.Int32
 	tester.fetcher.signHook = func(*types.Block) error {
@@ -4317,8 +4268,7 @@ func TestParkedSignatureSkipBackoff(t *testing.T) {
 // TestParkedSignatureReclaimsSkippedEntryWhenFull pins that a full set frees a
 // skipped entry instead of refusing the fresh block.
 func TestParkedSignatureReclaimsSkippedEntryWhenFull(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return ErrSignatureSkipped }
 
 	block := newParkedTestBlock(0x41)
@@ -4355,8 +4305,7 @@ func TestParkedSignatureReclaimsSkippedEntryWhenFull(t *testing.T) {
 // the gate that actually closed: with the stored subset full, only a stored entry
 // may be reclaimed, so a non-stored one keeps its slot.
 func TestParkedSignatureReclaimTargetsClosedGate(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	var (
@@ -4399,8 +4348,7 @@ func TestParkedSignatureReclaimTargetsClosedGate(t *testing.T) {
 // stored subset is full and no stored entry was skipped: a non-stored skipped entry
 // must not be evicted to admit a stored block.
 func TestParkedSignatureReclaimSkipsNonStoredWhenStoredFull(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	notStoredSkipped := common.BytesToHash([]byte{0x02, 0x03})
@@ -4429,8 +4377,7 @@ func TestParkedSignatureReclaimSkipsNonStoredWhenStoredFull(t *testing.T) {
 // parked again. No production path clears it there; the test clears it under
 // parkedMu to exercise the guard.
 func TestParkedSignatureBookingClearedWhileWaitingOnGate(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	block := newParkedTestBlock(0x4e)
@@ -4480,5 +4427,49 @@ func TestParkedSignatureBookingReleasedOnStopDuringGate(t *testing.T) {
 	}
 	if n := signingCount(tester.fetcher); n != 0 {
 		t.Fatalf("in-flight markers left after a stop during the gate = %d, want 0", n)
+	}
+}
+
+// TestBlockFetcherStopIsIdempotent pins the contract that lets a test stop its
+// fetcher explicitly and still rely on the cleanup registered by newTester.
+func TestBlockFetcherStopIsIdempotent(t *testing.T) {
+	tester := newTester(t)
+	tester.fetcher.Stop()
+	tester.fetcher.Stop()
+}
+
+// TestTesterCleanupStopsFetcher pins that the tester constructor registers its
+// stop with the test cleanup: a test that never stops the fetcher must not leak
+// the loop goroutine.
+func TestTesterCleanupStopsFetcher(t *testing.T) {
+	var (
+		quit <-chan struct{}
+		done <-chan struct{}
+	)
+	t.Run("inner", func(t *testing.T) {
+		tester := newTester(t)
+		quit, done = tester.fetcher.quit, tester.fetcher.loopDone
+
+		// The channel must track the loop's return, not just the quit.
+		select {
+		case <-tester.fetcher.loopDone:
+			t.Fatal("loopDone was closed while the loop is still running")
+		default:
+		}
+	})
+	// A -run filter can select this test without its subtest, leaving both
+	// channels nil; no fetcher was started, so there is nothing to assert.
+	if quit == nil {
+		return
+	}
+	select {
+	case <-quit:
+	default:
+		t.Fatal("tester cleanup did not stop the fetcher")
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the fetcher loop did not return after its test ended")
 	}
 }

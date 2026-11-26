@@ -28,8 +28,7 @@ import (
 // the marker of a claimed entry it evicts at the deadline, and the owner settling
 // a skipped signature is what takes it down.
 func TestDeferParkedReleasesMarkerWhenEntryIsGone(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	block := newParkedTestBlock(0x62)

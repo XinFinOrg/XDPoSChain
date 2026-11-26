@@ -32,8 +32,7 @@ func TestParkedSignaturePendingStoredFlag(t *testing.T) {
 		{"stored admission", true, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			tester := newTester()
-			defer tester.fetcher.Stop()
+			tester := newTester(t)
 			tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 			block := newParkedTestBlock(0xc1)
@@ -69,8 +68,7 @@ func TestParkedSignaturePendingStoredFlag(t *testing.T) {
 }
 
 func TestParkedSignatureRefusedClaimBooksStoredPending(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	block := newParkedTestBlock(0xc2)

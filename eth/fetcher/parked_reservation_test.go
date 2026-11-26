@@ -29,8 +29,7 @@ import (
 // entry to stored while the gate ran: the stored cap is an admission gate, not a
 // post-gate one.
 func TestParkedSignatureReservedAdmissionSurvivesStoredFlip(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	flip := common.BytesToHash([]byte{0x20, 0x01})
@@ -96,8 +95,7 @@ func TestParkedSignatureReclaimRefusesWhenOneRemovalCannotReopen(t *testing.T) {
 		{"two skipped retries", maxParkedStored + 2, 2},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			tester := newTester()
-			defer tester.fetcher.Stop()
+			tester := newTester(t)
 			tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 			skipped := make([]common.Hash, 0, tt.skipped)
