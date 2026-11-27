@@ -80,10 +80,10 @@ func TestFoundationWalletForkValidation(t *testing.T) {
 	assert.Contains(t, err.Error(), "equals XDPoS.FoundationWalletAddr")
 }
 
-// TestFoundationWalletForkFollowsProportionalReward keeps the rotation out of
-// the linear fork order, so it may activate before a later fork such as
-// TIPEpochHalving. When TIPProportionalRewardBlock is set, the rotation must
-// follow that block.
+// TestFoundationWalletForkFollowsProportionalReward checks where the rotation
+// sits in the fork order. It is not part of the linear order, so a later fork
+// such as TIPEpochHalving does not hold it back. When TIPProportionalRewardBlock
+// is set, the rotation must be scheduled at or after it.
 func TestFoundationWalletForkFollowsProportionalReward(t *testing.T) {
 	cfg := foundationRotationConfig(120_000_000)
 	cfg.TIPEpochHalvingBlock = big.NewInt(1_000_000_000)
