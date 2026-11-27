@@ -599,6 +599,15 @@ func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
+	// ValidateTxBasics ran without the pool lock, so the head may have crossed
+	// a fork boundary since. Re-check the cap of the head the transaction
+	// actually lands under: the reset sweep cannot catch a transaction that was
+	// not pooled yet.
+	if head := pool.currentHead.Load(); head != nil {
+		if err := core.CheckGasLimitCap(tx.Gas(), pool.chainconfig.Rules(head.Number)); err != nil {
+			return err
+		}
+	}
 	opts := &txpool.ValidationOptionsWithState{
 		Config: pool.chainconfig,
 

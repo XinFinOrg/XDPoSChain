@@ -1275,6 +1275,108 @@ func TestOsakaGasCapDropsOnOsakaOnlyResetAfterAmsterdam(t *testing.T) {
 	env.validateInternals(t)
 }
 
+// TestOsakaGasCapRejectsAdmissionAfterForkReset verifies that a transaction
+// whose basic check ran under the pre-fork head cannot enter the pool through
+// the locked admission path once a reset has crossed the Osaka fork: the sweep
+// cannot discard a transaction that is not pooled yet.
+func TestOsakaGasCapRejectsAdmissionAfterForkReset(t *testing.T) {
+	t.Parallel()
+
+	env := newStartedEnv(t)
+
+	atCapKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate at-cap sender key: %v", err)
+	}
+	testAddBalance(env.pool, crypto.PubkeyToAddress(atCapKey.PublicKey), big.NewInt(1000000000000000000))
+
+	oversized := env.oversizedTx()
+	atCap := pricedTransaction(0, params.MaxTxGas, big.NewInt(300000000), atCapKey)
+
+	// Add's first phase runs the basic checks without the pool lock, under the
+	// pre-fork head where the cap is not active yet.
+	for i, tx := range []*types.Transaction{oversized, atCap} {
+		if err := env.pool.ValidateTxBasics(tx); err != nil {
+			t.Fatalf("basic check of transaction %d under the pre-fork head: %v", i, err)
+		}
+	}
+	// The reset onto the fork runs before Add takes the pool lock, so its sweep
+	// finds an empty pool.
+	env.resetHead(nil, env.forkBlock())
+
+	// Add's second phase admits under the pool lock.
+	env.pool.mu.Lock()
+	_, err = env.pool.add(oversized)
+	env.pool.mu.Unlock()
+	if !errors.Is(err, core.ErrGasLimitTooHigh) {
+		t.Fatalf("over-cap admission after the fork reset: have %v, want %v", err, core.ErrGasLimitTooHigh)
+	}
+	if env.pool.Has(oversized.Hash()) {
+		t.Fatal("over-cap transaction entered the pool after the fork reset")
+	}
+
+	env.pool.mu.Lock()
+	_, err = env.pool.add(atCap)
+	env.pool.mu.Unlock()
+	if err != nil {
+		t.Fatalf("at-cap admission after the fork reset: %v", err)
+	}
+	env.assertPresent(t, atCap, "transaction at the gas cap was rejected by the admission re-check")
+	env.validateInternals(t)
+}
+
+// TestOsakaGasCapRejectsAdmissionAfterAmsterdamFallback verifies the same for a
+// reset that falls back from an Amsterdam head to an Osaka-only one, where the
+// basic check ran under the wider Amsterdam total cap.
+func TestOsakaGasCapRejectsAdmissionAfterAmsterdamFallback(t *testing.T) {
+	t.Parallel()
+
+	env := newOsakaTestEnv(big.NewInt(340))
+	env.setupPool(t)
+
+	amsterdamHead := forkHeight(350)
+	env.resetHead(nil, amsterdamHead)
+
+	atCapKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate at-cap sender key: %v", err)
+	}
+	testAddBalance(env.pool, crypto.PubkeyToAddress(atCapKey.PublicKey), big.NewInt(1000000000000000000))
+
+	oversized := env.oversizedTx()
+	atCap := pricedTransaction(0, params.MaxTxGas, big.NewInt(300000000), atCapKey)
+
+	// Both pass the basic checks under Amsterdam, whose total cap admits the
+	// oversized one.
+	for i, tx := range []*types.Transaction{oversized, atCap} {
+		if err := env.pool.ValidateTxBasics(tx); err != nil {
+			t.Fatalf("basic check of transaction %d under the Amsterdam head: %v", i, err)
+		}
+	}
+	// Falling back to an Osaka-only head restores the EIP-7825 cap before the
+	// admission lock is taken.
+	env.resetHead(env.header(amsterdamHead), forkHeight(310))
+
+	env.pool.mu.Lock()
+	_, err = env.pool.add(oversized)
+	env.pool.mu.Unlock()
+	if !errors.Is(err, core.ErrGasLimitTooHigh) {
+		t.Fatalf("over-cap admission after the Amsterdam fallback: have %v, want %v", err, core.ErrGasLimitTooHigh)
+	}
+	if env.pool.Has(oversized.Hash()) {
+		t.Fatal("over-cap transaction entered the pool after the Amsterdam fallback")
+	}
+
+	env.pool.mu.Lock()
+	_, err = env.pool.add(atCap)
+	env.pool.mu.Unlock()
+	if err != nil {
+		t.Fatalf("at-cap admission after the Amsterdam fallback: %v", err)
+	}
+	env.assertPresent(t, atCap, "transaction at the gas cap was rejected by the admission re-check")
+	env.validateInternals(t)
+}
+
 // TestOsakaGasCapAbortedResetDoesNotDrop verifies that a reset which is asked
 // to cross the Osaka fork but never reaches it does not discard over-cap
 // transactions, since the pool remains on a head where they are still valid.
