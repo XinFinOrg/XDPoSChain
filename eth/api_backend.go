@@ -531,7 +531,6 @@ func (b *EthAPIBackend) GetVotersRewards(masternodeAddr common.Address) map[comm
 	chain := b.eth.blockchain
 	header := chain.CurrentBlock()
 	number := header.Number.Uint64()
-	foundationWalletAddr := chain.Config().XDPoS.FoundationWalletAddr
 
 	// calculate for 2 epochs ago
 	currentCheckpointNumber, _, err := engine.GetCurrentEpochSwitchBlock(chain, header.Number)
@@ -556,6 +555,8 @@ func (b *EthAPIBackend) GetVotersRewards(masternodeAddr common.Address) map[comm
 		return nil
 	}
 
+	// The hook paid this checkpoint, so the wallet is the one active at that block.
+	foundationWalletAddr := chain.Config().FoundationWalletAddrAt(lastCheckpointBlock.Number())
 	if foundationWalletAddr == (common.Address{}) {
 		log.Error("Foundation Wallet Address is empty", "error", foundationWalletAddr)
 		return nil

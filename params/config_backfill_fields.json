@@ -316,6 +316,12 @@
     "xdcSpecific": true
   },
   {
+    "name": "TIPFoundationWalletBlock",
+    "jsonKey": "tipFoundationWalletBlock",
+    "backfillSet": "builtin",
+    "xdcSpecific": true
+  },
+  {
     "kind": "address",
     "name": "TRC21IssuerSMC",
     "jsonKey": "trc21IssuerSMC",

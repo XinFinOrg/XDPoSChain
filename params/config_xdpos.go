@@ -42,15 +42,16 @@ import (
 
 // XDPoSConfig is the consensus engine configs for delegated-proof-of-stake based sealing.
 type XDPoSConfig struct {
-	Period               uint64         `json:"period"`               // Number of seconds between blocks to enforce
-	Epoch                uint64         `json:"epoch"`                // Epoch length to reset votes and checkpoint
-	Reward               uint64         `json:"reward"`               // Block reward - unit Ether
-	RewardCheckpoint     uint64         `json:"rewardCheckpoint"`     // Checkpoint block for calculate rewards.
-	Gap                  uint64         `json:"gap"`                  // Gap time preparing for the next epoch
-	FoundationWalletAddr common.Address `json:"foundationWalletAddr"` // Foundation Address Wallet
-	MaxMasternodesV2     int            `json:"maxMasternodesV2"`     // Last v1 masternodes after TIPIncrease
-	SkipV1Validation     bool           //Skip Block Validation for testing purpose, V1 consensus only
-	V2                   *V2            `json:"v2"`
+	Period                  uint64         `json:"period"`                           // Number of seconds between blocks to enforce
+	Epoch                   uint64         `json:"epoch"`                            // Epoch length to reset votes and checkpoint
+	Reward                  uint64         `json:"reward"`                           // Block reward - unit Ether
+	RewardCheckpoint        uint64         `json:"rewardCheckpoint"`                 // Checkpoint block for calculate rewards.
+	Gap                     uint64         `json:"gap"`                              // Gap time preparing for the next epoch
+	FoundationWalletAddr    common.Address `json:"foundationWalletAddr"`             // Foundation Address Wallet
+	NewFoundationWalletAddr common.Address `json:"newFoundationWalletAddr,omitzero"` // Foundation share from TIPFoundationWalletBlock on
+	MaxMasternodesV2        int            `json:"maxMasternodesV2"`                 // Last v1 masternodes after TIPIncrease
+	SkipV1Validation        bool           //Skip Block Validation for testing purpose, V1 consensus only
+	V2                      *V2            `json:"v2"`
 
 	json jsonFieldPresence `json:"-"`
 }
@@ -71,6 +72,7 @@ func (c *XDPoSConfig) UnmarshalJSON(data []byte) error {
 		MaxMasternodesV2          int            `json:"maxMasternodesV2"`
 		FoundationWalletAddr      common.Address `json:"foundationWalletAddr"`
 		LegacyFoudationWalletAddr common.Address `json:"foudationWalletAddr"`
+		NewFoundationWalletAddr   common.Address `json:"newFoundationWalletAddr"`
 		SkipV1Validation          bool           `json:"SkipV1Validation"`
 		V2                        *V2            `json:"v2"`
 	}
@@ -89,6 +91,7 @@ func (c *XDPoSConfig) UnmarshalJSON(data []byte) error {
 	if c.FoundationWalletAddr.IsZero() && !decoded.LegacyFoudationWalletAddr.IsZero() {
 		c.FoundationWalletAddr = decoded.LegacyFoudationWalletAddr
 	}
+	c.NewFoundationWalletAddr = decoded.NewFoundationWalletAddr
 	c.SkipV1Validation = decoded.SkipV1Validation
 	c.V2 = decoded.V2
 	c.json.capture(raw)
@@ -399,6 +402,10 @@ func XDPoSConfigEqual(a, b *XDPoSConfig) bool {
 		log.Warn("[XDPoSConfigEqual] FoundationWalletAddr mismatch", "a.FoundationWalletAddr", a.FoundationWalletAddr.Hex(), "b.FoundationWalletAddr", b.FoundationWalletAddr.Hex())
 		return false
 	}
+	if a.NewFoundationWalletAddr != b.NewFoundationWalletAddr {
+		log.Warn("[XDPoSConfigEqual] NewFoundationWalletAddr mismatch", "a.NewFoundationWalletAddr", a.NewFoundationWalletAddr.Hex(), "b.NewFoundationWalletAddr", b.NewFoundationWalletAddr.Hex())
+		return false
+	}
 	if a.MaxMasternodesV2 != b.MaxMasternodesV2 {
 		log.Warn("[XDPoSConfigEqual] MaxMasternodesV2 mismatch", "a.MaxMasternodesV2", a.MaxMasternodesV2, "b.MaxMasternodesV2", b.MaxMasternodesV2)
 		return false
@@ -489,7 +496,11 @@ func (c *XDPoSConfig) String() string {
 		return "XDPoSConfig: <nil>"
 	}
 
-	return fmt.Sprintf("XDPoSConfig{Period: %v, Epoch: %v, Reward: %v, RewardCheckpoint: %v, Gap: %v, MaxMasternodesV2: %v, FoundationWalletAddr: %v, SkipV1Validation: %v, V2: %s}", c.Period, c.Epoch, c.Reward, c.RewardCheckpoint, c.Gap, c.MaxMasternodesV2, c.FoundationWalletAddr.String0x(), c.SkipV1Validation, c.V2.String())
+	newFoundation := ""
+	if !c.NewFoundationWalletAddr.IsZero() {
+		newFoundation = fmt.Sprintf(", NewFoundationWalletAddr: %v", c.NewFoundationWalletAddr.String0x())
+	}
+	return fmt.Sprintf("XDPoSConfig{Period: %v, Epoch: %v, Reward: %v, RewardCheckpoint: %v, Gap: %v, MaxMasternodesV2: %v, FoundationWalletAddr: %v%s, SkipV1Validation: %v, V2: %s}", c.Period, c.Epoch, c.Reward, c.RewardCheckpoint, c.Gap, c.MaxMasternodesV2, c.FoundationWalletAddr.String0x(), newFoundation, c.SkipV1Validation, c.V2.String())
 }
 
 // Description returns a human-readable description of XDPoSConfig
@@ -508,6 +519,9 @@ func (c *XDPoSConfig) Description(indent int) string {
 	banner += fmt.Sprintf("%s- Gap: %v\n", prefix, c.Gap)
 	banner += fmt.Sprintf("%s- MaxMasternodesV2: %v\n", prefix, c.MaxMasternodesV2)
 	banner += fmt.Sprintf("%s- FoundationWalletAddr: %v\n", prefix, c.FoundationWalletAddr.Hex())
+	if !c.NewFoundationWalletAddr.IsZero() {
+		banner += fmt.Sprintf("%s- NewFoundationWalletAddr: %v\n", prefix, c.NewFoundationWalletAddr.Hex())
+	}
 	banner += fmt.Sprintf("%s- SkipV1Validation: %v\n", prefix, c.SkipV1Validation)
 	banner += fmt.Sprintf("%s- %s", prefix, c.V2.Description(indent+2))
 	return banner

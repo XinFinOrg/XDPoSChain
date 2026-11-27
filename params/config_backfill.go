@@ -209,6 +209,11 @@ var chainConfigForkOrderSpecialCaseRules = func() []chainConfigForkOrderSpecialC
 			after:          "TIPProportionalRewardBlock",
 			shouldValidate: func(before, after *big.Int) bool { return before != nil && after != nil },
 		},
+		{
+			before:         "TIPProportionalRewardBlock",
+			after:          "TIPFoundationWalletBlock",
+			shouldValidate: func(before, after *big.Int) bool { return before != nil && after != nil },
+		},
 	}
 	rules := make([]chainConfigForkOrderSpecialCaseRule, 0, len(ruleDefs))
 	for _, ruleDef := range ruleDefs {
@@ -326,6 +331,7 @@ var chainConfigCompatibilityInsertionDefs = []struct {
 	{after: "ShanghaiBlock", name: "Gas50xBlock"},
 	{after: "ShanghaiBlock", name: "Gas2500xBlock"},
 	{after: "TIPFixedRewardBlock", name: "TIPProportionalRewardBlock"},
+	{after: "TIPProportionalRewardBlock", name: "TIPFoundationWalletBlock"},
 }
 
 var chainConfigCompatibilityFields = func() []chainConfigBigIntField {
@@ -353,11 +359,15 @@ var chainConfigCompatibilityFields = func() []chainConfigBigIntField {
 		seen[field.name] = struct{}{}
 		resolved = append(resolved, field)
 	}
-	for _, field := range chainConfigForkOrderFields {
-		appendField(field.field)
-		for _, inserted := range insertAfter[field.field.name] {
-			appendField(inserted)
+	var appendWithInsertions func(chainConfigBigIntField)
+	appendWithInsertions = func(field chainConfigBigIntField) {
+		appendField(field)
+		for _, inserted := range insertAfter[field.name] {
+			appendWithInsertions(inserted)
 		}
+	}
+	for _, field := range chainConfigForkOrderFields {
+		appendWithInsertions(field.field)
 	}
 	if len(seen) != len(chainConfigForkBlockFields) {
 		for _, field := range chainConfigForkBlockFields {
@@ -731,6 +741,9 @@ func (c *XDPoSConfig) cloneWithInferredFieldPresence() *XDPoSConfig {
 	}
 	if !clone.FoundationWalletAddr.IsZero() {
 		clone.json.mark("foundationWalletAddr")
+	}
+	if !clone.NewFoundationWalletAddr.IsZero() {
+		clone.json.mark("newFoundationWalletAddr")
 	}
 	if clone.MaxMasternodesV2 != 0 {
 		clone.json.mark("maxMasternodesV2")
@@ -1294,6 +1307,7 @@ func (c *XDPoSConfig) backfillMissingScalarFieldsFrom(src *XDPoSConfig) {
 		src common.Address
 	}{
 		{"foundationWalletAddr", &c.FoundationWalletAddr, src.FoundationWalletAddr},
+		{"newFoundationWalletAddr", &c.NewFoundationWalletAddr, src.NewFoundationWalletAddr},
 	}
 	intFields := []struct {
 		key string
@@ -1317,7 +1331,7 @@ func (c *XDPoSConfig) backfillMissingScalarFieldsFrom(src *XDPoSConfig) {
 		}
 	}
 	for _, field := range addressFields {
-		if c.isJSONFieldMissing(field.key, field.dst.IsZero()) {
+		if *field.dst != field.src && c.isJSONFieldMissing(field.key, field.dst.IsZero()) {
 			log.Info("Backfilled missing field", "field", "XDPoS."+field.key, "old", field.dst.Hex(), "new", field.src.Hex())
 			*field.dst = field.src
 		}

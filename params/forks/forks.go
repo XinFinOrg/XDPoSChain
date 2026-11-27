@@ -72,6 +72,7 @@ const (
 	Osaka
 	Amsterdam
 	Gas2500x
+	TIPFoundationWallet
 
 	// lastFork is a sentinel marking the end of the enum, not a real fork.
 	// It is only used by test cases, not referenced by the production code.
@@ -129,4 +130,5 @@ var forkToString = map[Fork]string{
 	Osaka:                  "Osaka",
 	Amsterdam:              "Amsterdam",
 	Gas2500x:               "Gas2500x",
+	TIPFoundationWallet:    "TIPFoundationWallet",
 }

@@ -270,6 +270,13 @@ var generatedChainConfigBuiltInBackfillForkBlockFields = []chainConfigBigIntFiel
 		get:         func(c *ChainConfig) *big.Int { return c.TIPProportionalRewardBlock },
 		bind:        func(c *ChainConfig) **big.Int { return &c.TIPProportionalRewardBlock },
 	},
+	{
+		name:        "TIPFoundationWalletBlock",
+		jsonKey:     "tipFoundationWalletBlock",
+		xdcSpecific: true,
+		get:         func(c *ChainConfig) *big.Int { return c.TIPFoundationWalletBlock },
+		bind:        func(c *ChainConfig) **big.Int { return &c.TIPFoundationWalletBlock },
+	},
 }
 
 var generatedChainConfigForkOrderFieldDefs = []struct {

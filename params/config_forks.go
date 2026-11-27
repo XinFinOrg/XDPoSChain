@@ -18,6 +18,8 @@ package params
 
 import (
 	"math/big"
+
+	"github.com/XinFinOrg/XDPoSChain/common"
 )
 
 func (c *ChainConfig) IsHomestead(num *big.Int) bool {
@@ -216,6 +218,27 @@ func (c *ChainConfig) IsTIPProportionalReward(num *big.Int) bool {
 // scheduled without the other.
 func (c *ChainConfig) IsTIPTieredReward(num *big.Int) bool {
 	return c.IsTIPFixedReward(num) || c.IsTIPProportionalReward(num)
+}
+
+// IsTIPFoundationWallet returns whether num is either equal to the
+// TIPFoundationWallet fork block or greater.
+func (c *ChainConfig) IsTIPFoundationWallet(num *big.Int) bool {
+	return isForked(c.TIPFoundationWalletBlock, num)
+}
+
+// FoundationWalletAddrAt returns the address that receives the foundation
+// share of the epoch reward paid at block num. Before TIPFoundationWalletBlock
+// it is XDPoS.FoundationWalletAddr; from that block on it is
+// XDPoS.NewFoundationWalletAddr. num is the block whose header carries the
+// reward, the same block number the reward split is computed for.
+func (c *ChainConfig) FoundationWalletAddrAt(num *big.Int) common.Address {
+	if c == nil || c.XDPoS == nil {
+		return common.Address{}
+	}
+	if num != nil && c.IsTIPFoundationWallet(num) {
+		return c.XDPoS.NewFoundationWalletAddr
+	}
+	return c.XDPoS.FoundationWalletAddr
 }
 
 // IsPrague returns whether num is either equal to the Prague fork block or greater.

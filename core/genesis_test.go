@@ -144,6 +144,7 @@ func TestCloneChainConfigDeepCopiesMigratedForkBlocks(t *testing.T) {
 		TIPUpgradePenaltyBlock:      big.NewInt(200),
 		TIPEpochHalvingBlock:        big.NewInt(210),
 		TIPProportionalRewardBlock:  big.NewInt(220),
+		TIPFoundationWalletBlock:    big.NewInt(230),
 	}
 	clone := original.Clone()
 	if clone == nil {
