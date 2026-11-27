@@ -87,7 +87,8 @@ func CreateTransactionSign(chainConfig *params.ChainConfig, pool SignTxPool, man
 		}
 
 		// Sign at the on-chain nonce: a stuck sign tx is then replaced by the fresh
-		// one (see LegacyPool.promoteSpecialTx) instead of queueing behind it.
+		// one, which signs a newer block (see LegacyPool.checkSpecialTx), instead
+		// of queueing behind it.
 		nonce := pool.Nonce(account.Address)
 		tx := CreateTxSign(block.Number(), block.Hash(), nonce, common.BlockSignersBinary)
 		txSigned, err := wallet.SignTx(account, tx, chainConfig.ChainID)

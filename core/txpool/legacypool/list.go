@@ -313,22 +313,29 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 		// one may replace it. Cases by (old, new) kind:
 		//
 		//   new special               -> replace: a special (block-signing/randomize)
-		//                                 tx always claims its nonce, evicting whatever
-		//                                 is there, bypassing the price-bump rules.
-		//                                 These txs are typically generated with a 0
-		//                                 gas price and are consensus-critical, so they
-		//                                 must never be blocked by a same-nonce tx.
-		//   old special, new regular  -> reject: a regular tx must not evict a pending
-		//                                 special tx.
+		//                                 tx claims its nonce, evicting whatever is
+		//                                 there, bypassing the price-bump rules. These
+		//                                 txs are typically generated with a 0 gas
+		//                                 price, so they must not be blocked by a
+		//                                 same-nonce regular tx. The pool admits a
+		//                                 replacement of a sign tx only for a sign tx
+		//                                 signing a newer block (checkSpecialTx).
+		//   old randomize, new regular -> replace: a pooled randomize tx never blocks
+		//                                 its sender's nonce; no price bump applies.
+		//   old sign, new regular     -> reject: a regular tx must not evict a pooled
+		//                                 sign tx.
 		//   old regular, new regular  -> replace only if the new tx beats the old on
 		//                                 both fee cap and tip by at least priceBump%.
 		//
 		// In every accepted case we fall through to the cost accounting below.
 		if tx.IsSpecialTransaction() {
-			// new special: always wins its nonce, no further checks.
+			// new special: wins its nonce; the pool has applied the sign tx rule.
 		} else if old.IsSpecialTransaction() {
-			// old special, new regular: protect the pending special tx.
-			return false, nil
+			if !isRandomizeTx(old) {
+				// old sign, new regular: protect the pooled sign tx.
+				return false, nil
+			}
+			// old randomize, new regular: replaced without a price bump.
 		} else {
 			// regular replacing regular: enforce the price-bump rules.
 			if old.GasFeeCapCmp(tx) >= 0 || old.GasTipCapCmp(tx) >= 0 {
@@ -675,10 +682,35 @@ func newPricedList(all *lookup) *pricedList {
 	}
 }
 
-// Put inserts a new transaction into the heap.
+// Put inserts a new transaction into the heap. Special transactions are never
+// tracked: they carry no price and are bounded per sender instead, so they can
+// never be priced out of the pool.
 func (l *pricedList) Put(tx *types.Transaction) {
+	if tx.IsSpecialTransaction() {
+		return
+	}
 	// Insert every new transaction to the urgent heap first; Discard will balance the heaps
 	heap.Push(&l.urgent, tx)
+}
+
+// isRandomizeTx reports whether tx is a special transaction to the randomize
+// contract.
+func isRandomizeTx(tx *types.Transaction) bool {
+	to := tx.To()
+	return to != nil && *to == common.RandomizeSMCBinary && tx.IsSpecialTransaction()
+}
+
+// countPriced returns how many of txs the heap tracks, so callers report only
+// those to Removed: special transactions are never in the heap and would
+// otherwise inflate the stale counter.
+func countPriced(txs ...*types.Transaction) int {
+	n := 0
+	for _, tx := range txs {
+		if tx != nil && !tx.IsSpecialTransaction() {
+			n++
+		}
+	}
+	return n
 }
 
 // Removed notifies the prices transaction list that an old transaction dropped
@@ -775,7 +807,9 @@ func (l *pricedList) Reheap() {
 	l.stales.Store(0)
 	l.urgent.list = make([]*types.Transaction, 0, l.all.Count())
 	l.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
-		l.urgent.list = append(l.urgent.list, tx)
+		if !tx.IsSpecialTransaction() {
+			l.urgent.list = append(l.urgent.list, tx)
+		}
 		return true
 	})
 	heap.Init(&l.urgent)

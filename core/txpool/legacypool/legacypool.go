@@ -59,6 +59,13 @@ const (
 	// more expensive to propagate; larger transactions also take more resources
 	// to validate whether they fit into the pool or not.
 	txMaxSize = 2 * txSlotSize // 64KB, don't bump without EIP-2464 support
+
+	// maxSpecialTxsPerAccount is the number of special transactions (to the
+	// BlockSigners and Randomize contracts) one account may have in the pool,
+	// pending and queued together. Special transactions take no slots from the
+	// pool capacity, so this bounds their share of it. An honest signer has
+	// about one sign transaction and one or two randomize transactions pooled.
+	maxSpecialTxsPerAccount = 16
 )
 
 var (
@@ -78,6 +85,19 @@ var (
 	// ErrFutureReplacePending is returned if a future transaction replaces a pending
 	// one. Future transactions should only be able to replace other future transactions.
 	ErrFutureReplacePending = errors.New("future transaction tries to replace pending")
+
+	// ErrSpecialTxLimit is returned if a special transaction would take its sender
+	// over maxSpecialTxsPerAccount pooled special transactions.
+	ErrSpecialTxLimit = errors.New("too many special transactions from sender")
+
+	// ErrSignTxNotNewer is returned if a transaction would replace a pooled sign
+	// transaction at the same nonce without being a sign transaction for a newer
+	// block.
+	ErrSignTxNotNewer = errors.New("pooled sign transaction can only be replaced by a sign transaction for a newer block")
+
+	// ErrDuplicateSignTx is returned if the sender already has a sign transaction
+	// for the same block pooled at another nonce.
+	ErrDuplicateSignTx = errors.New("sign transaction for this block already pooled")
 )
 
 var (
@@ -758,19 +778,18 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 		}()
 	}
 
-	// Special transactions must also honor the reservation semantics to keep
-	// the coordinator's ownership accounting balanced. A signer's special tx at
-	// the next pending nonce, or replacing one it already has pending, bypasses
-	// the pool-full check and is kept out of the price heap at admission, so a
-	// sign tx is not refused on price. A replacement takes the old tx's slot and
-	// does not grow the pool. Like any tx, it can be evicted after a reheap.
-	if tx.IsSpecialTransaction() && pool.IsSigner(from) &&
-		(pool.pendingNonces.get(from) == tx.Nonce() || (hasPending && pool.pending[from].Contains(tx.Nonce()))) {
-		return pool.promoteSpecialTx(from, tx)
+	// Special transactions follow their own admission rules, see checkSpecialTx.
+	if tx.IsSpecialTransaction() {
+		if err := pool.checkSpecialTx(from, tx); err != nil {
+			log.Trace("Discarding special transaction", "hash", hash, "err", err)
+			return false, err
+		}
 	}
 
-	// If the transaction pool is full, discard underpriced transactions
-	if uint64(pool.all.Slots()+numSlots(tx)) > pool.config.GlobalSlots+pool.config.GlobalQueue {
+	// If the transaction pool is full, discard underpriced transactions. Special
+	// transactions have their own budget, bounded per sender, and neither need
+	// room from nor take room from regular ones.
+	if !tx.IsSpecialTransaction() && uint64(pool.all.Slots()+numSlots(tx)) > pool.config.GlobalSlots+pool.config.GlobalQueue {
 		// If the new transaction is underpriced, don't accept it
 		if pool.priced.Underpriced(tx) {
 			log.Trace("Discarding underpriced transaction", "hash", hash, "gasTipCap", tx.GasTipCap(), "gasFeeCap", tx.GasFeeCap())
@@ -840,7 +859,7 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 		// New transaction is better, replace old one
 		if old != nil {
 			pool.all.Remove(old.Hash())
-			pool.priced.Removed(1)
+			pool.priced.Removed(countPriced(old))
 			pendingReplaceMeter.Mark(1)
 		}
 		pool.all.Add(tx)
@@ -860,6 +879,155 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 
 	log.Trace("Pooled new future transaction", "hash", hash, "from", from, "to", tx.To())
 	return replaced, nil
+}
+
+// pooledAt returns the sender's pooled transaction at the given nonce, pending
+// or queued, or nil if there is none.
+func (pool *LegacyPool) pooledAt(from common.Address, nonce uint64) *types.Transaction {
+	if list := pool.pending[from]; list != nil {
+		if tx := list.txs.Get(nonce); tx != nil {
+			return tx
+		}
+	}
+	if list, ok := pool.queue.get(from); ok {
+		return list.txs.Get(nonce)
+	}
+	return nil
+}
+
+// pooledSpecials returns the sender's pooled special transactions, pending and
+// queued, in no particular order.
+func (pool *LegacyPool) pooledSpecials(from common.Address) []*types.Transaction {
+	var specials []*types.Transaction
+	collect := func(l *list) {
+		for _, tx := range l.txs.items {
+			if tx.IsSpecialTransaction() {
+				specials = append(specials, tx)
+			}
+		}
+	}
+	if list := pool.pending[from]; list != nil {
+		collect(list)
+	}
+	if list, ok := pool.queue.get(from); ok {
+		collect(list)
+	}
+	return specials
+}
+
+// checkSpecialTx applies the pool rules for a special transaction from sender
+// from. Special transactions take no slots from the pool capacity and no price
+// orders them, so:
+//
+//   - each sender may pool at most maxSpecialTxsPerAccount of them; replacing
+//     one of the sender's special transactions at the same nonce does not grow
+//     that count;
+//   - a pooled sign transaction is replaced only by a sign transaction for a
+//     newer block, which an honest node re-signing a stuck nonce always sends.
+//     A pooled randomize transaction is replaced by any transaction, so it
+//     never blocks its sender's nonce (see list.Add for regular replacements);
+//   - a sender may pool one sign transaction per signed block: one signing a
+//     block the sender already has a sign transaction for at another nonce is
+//     refused, as only one of them could ever count.
+//
+// Note, this method assumes the pool lock is held!
+func (pool *LegacyPool) checkSpecialTx(from common.Address, tx *types.Transaction) error {
+	specials := pool.pooledSpecials(from)
+	if tx.IsSigningTransaction() {
+		signed := core.SignedBlockNumber(tx)
+		for _, pooled := range specials {
+			if pooled.Nonce() != tx.Nonce() && pooled.IsSigningTransaction() && core.SignedBlockNumber(pooled).Cmp(signed) == 0 {
+				return fmt.Errorf("%w: block %v at nonce %d", ErrDuplicateSignTx, signed, pooled.Nonce())
+			}
+		}
+	}
+	if old := pool.pooledAt(from, tx.Nonce()); old != nil && old.IsSpecialTransaction() {
+		return checkSignTxReplacement(old, tx)
+	}
+	if len(specials) >= maxSpecialTxsPerAccount {
+		return fmt.Errorf("%w: limit %d", ErrSpecialTxLimit, maxSpecialTxsPerAccount)
+	}
+	return nil
+}
+
+// checkSignTxReplacement reports whether tx may replace the pooled transaction
+// old at the same nonce, as far as old being a sign transaction is concerned: a
+// pooled sign transaction is replaced only by a sign transaction that signs a
+// strictly newer block. It returns nil when old is not a sign transaction.
+func checkSignTxReplacement(old, tx *types.Transaction) error {
+	if to := old.To(); to == nil || *to != common.BlockSignersBinary || !old.IsSpecialTransaction() {
+		return nil
+	}
+	if !tx.IsSigningTransaction() {
+		return fmt.Errorf("%w: replacement to %v", ErrSignTxNotNewer, tx.To())
+	}
+	if old.IsSigningTransaction() && core.SignedBlockNumber(tx).Cmp(core.SignedBlockNumber(old)) <= 0 {
+		return fmt.Errorf("%w: signs %v, pooled signs %v", ErrSignTxNotNewer, core.SignedBlockNumber(tx), core.SignedBlockNumber(old))
+	}
+	return nil
+}
+
+// dropInvalidSignTxs re-checks the pooled sign transactions, pending and
+// queued, against the block after the pool head, with the rules admission
+// applies: the shared sign transaction field rules and the signer check. A sign
+// transaction admitted earlier fails them once the block it signs leaves the
+// signing window, or once its sender stops being a candidate; it could then
+// never be mined and would block the sender's later nonces. Each one is
+// removed, and the sender's later pending transactions are moved back to the
+// queue as for any removal. A sign transaction below the sender's state nonce
+// is already mined and left to the nonce rules: dropping it here would move the
+// sender's next executable transaction back to the queue. It returns the
+// number of transactions dropped.
+//
+// It walks the pooled transactions without copying the lists, and runs the
+// signer check and reads the state nonce only for an account holding a sign
+// transaction.
+//
+// Note, this method assumes the pool lock is held!
+func (pool *LegacyPool) dropInvalidSignTxs() int {
+	head := pool.currentHead.Load()
+	if head == nil {
+		return 0
+	}
+	next := new(big.Int).Add(head.Number, common.Big1)
+
+	var drop []common.Hash
+	check := func(addr common.Address, l *list) {
+		var (
+			loaded bool
+			signer bool
+			nonce  uint64
+		)
+		for _, tx := range l.txs.items {
+			if !core.IsSignTransactionRoute(pool.chainconfig, next, tx) {
+				continue
+			}
+			if !loaded {
+				signer = pool.isSigner == nil || pool.isSigner(addr)
+				nonce = pool.currentState.GetNonce(addr)
+				loaded = true
+			}
+			if tx.Nonce() < nonce {
+				continue
+			}
+			if !signer || core.CheckSignTxFields(pool.chainconfig, next, tx) != nil {
+				drop = append(drop, tx.Hash())
+			}
+		}
+	}
+	for addr, list := range pool.pending {
+		check(addr, list)
+	}
+	for _, addr := range pool.queue.addresses() {
+		if list, ok := pool.queue.get(addr); ok {
+			check(addr, list)
+		}
+	}
+	for _, hash := range drop {
+		pool.removeTx(hash, true, true)
+		log.Trace("Dropped sign transaction no longer valid", "hash", hash)
+	}
+	return len(drop)
 }
 
 // isGapped reports whether the given transaction is immediately executable.
@@ -925,14 +1093,14 @@ func (pool *LegacyPool) promoteTx(addr common.Address, hash common.Hash, tx *typ
 	if !inserted {
 		// An older transaction was better, discard this
 		pool.all.Remove(hash)
-		pool.priced.Removed(1)
+		pool.priced.Removed(countPriced(tx))
 		pendingDiscardMeter.Mark(1)
 		return false
 	}
 	// Otherwise discard any previous transaction and mark this
 	if old != nil {
 		pool.all.Remove(old.Hash())
-		pool.priced.Removed(1)
+		pool.priced.Removed(countPriced(old))
 		pendingReplaceMeter.Mark(1)
 	} else {
 		// Nothing was replaced, bump the pending counter
@@ -944,73 +1112,6 @@ func (pool *LegacyPool) promoteTx(addr common.Address, hash common.Hash, tx *typ
 	// Successful promotion, bump the heartbeat, giving more time to queued txs.
 	pool.queue.bump(addr)
 	return true
-}
-
-// promoteSpecialTx inserts a special transaction from a signer straight into the
-// pending list at the account's pending nonce. Like add, it reports whether the
-// transaction replaced an existing one, not merely whether it was inserted: on a
-// plain insertion add's caller must mark the account dirty, so that the reorg
-// promotes the transactions queued behind this nonce right away rather than at
-// the next chain head.
-func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transaction) (replaced bool, err error) {
-	list := pool.pending[addr]
-	newPending := list == nil
-	if newPending {
-		list = newList(true)
-	}
-
-	base := new(uint256.Int).Set(list.totalcost)
-	old := list.txs.Get(tx.Nonce())
-	if old != nil {
-		// Old is being replaced, subtract old cost. A special tx replaces any
-		// tx at its nonce, special or not, as list.Add does.
-		if _, underflow := base.SubOverflow(base, uint256.MustFromBig(old.Cost())); underflow {
-			panic("totalcost underflow")
-		}
-	}
-	// Keep overflow behavior aligned with list.Add.
-	cost, overflow := uint256.FromBig(tx.Cost())
-	if overflow {
-		return false, txpool.ErrSpecialTxCostOverflow
-	}
-	total, overflow := new(uint256.Int).AddOverflow(base, cost)
-	if overflow {
-		return false, txpool.ErrSpecialTxCostOverflow
-	}
-	list.totalcost = total
-	if newPending {
-		pool.pending[addr] = list
-		pendingAddrsGauge.Inc(1)
-	}
-
-	// Otherwise discard any previous transaction and mark this
-	if old != nil {
-		pool.all.Remove(old.Hash())
-		pool.priced.Removed(1)
-		pendingReplaceMeter.Mark(1)
-	} else {
-		// Nothing was replaced, bump the pending counter
-		pendingGauge.Inc(1)
-	}
-	list.txs.Put(tx)
-	if cost := tx.Cost(); list.costcap.Cmp(cost) < 0 {
-		list.costcap = cost
-	}
-	if gas := tx.Gas(); list.gascap < gas {
-		list.gascap = gas
-	}
-	// Failsafe to work around direct pending inserts (tests)
-	if pool.all.Get(tx.Hash()) == nil {
-		pool.all.Add(tx)
-	}
-	// Set the potentially new pending nonce and notify any subsystems of the new tx.
-	// A replacement keeps the pending nonce: it may sit below the list's tail.
-	pool.queue.bump(addr)
-	if old == nil {
-		pool.pendingNonces.set(addr, tx.Nonce()+1)
-	}
-	pool.queueTxEvent(tx)
-	return old != nil, nil
 }
 
 // AddRemotes enqueues a batch of transactions into the pool if they are valid.
@@ -1194,7 +1295,7 @@ func (pool *LegacyPool) removeTx(hash common.Hash, outofbound bool, unreserve bo
 	// Remove it from the list of known transactions
 	pool.all.Remove(hash)
 	if outofbound {
-		pool.priced.Removed(1)
+		pool.priced.Removed(countPriced(tx))
 	}
 	// Remove the transaction from the pending lists and reset the account nonce
 	if pending := pool.pending[addr]; pending != nil {
@@ -1352,6 +1453,14 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 		// Reset from the old head to the new, rescheduling any reorged transactions
 		moved = pool.reset(reset.oldHead, reset.newHead)
 		newPoolHead := pool.currentHead.Load()
+
+		// Sign transactions valid when admitted can stop being valid at a new
+		// head: drop them before promotion, so they cannot sit in the pool.
+		if moved {
+			if dropped := pool.dropInvalidSignTxs(); dropped > 0 {
+				log.Debug("Dropped sign transactions no longer valid", "dropped", dropped, "head", newPoolHead.Number)
+			}
+		}
 
 		// Discard transactions whose gas limit exceeds the cap once the reset
 		// actually moved the pool across the Osaka fork boundary.
@@ -1569,10 +1678,12 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 	}
 
 	// remove all removable transactions
+	priced := 0
 	for _, hash := range dropped {
+		priced += countPriced(pool.all.Get(hash))
 		pool.all.Remove(hash)
 	}
-	pool.priced.Removed(len(dropped))
+	pool.priced.Removed(priced)
 
 	// release all accounts that have no more transactions in the pool
 	for _, addr := range removedAddresses {
@@ -1587,14 +1698,37 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 // truncatePending removes transactions from the pending queue if the pool is above the
 // pending limit. The algorithm tries to reduce transaction counts by an approximately
 // equal number for all for accounts with many pending transactions.
+//
+// Only regular transactions count toward the limit and only they are evicted:
+// special transactions have their own budget, bounded per sender at admission.
+// An account is reduced from its highest nonce down, so one whose highest
+// pending transaction is special is not reduced further. Every other account
+// is reduced only down to its own floor, the equalization threshold or
+// AccountSlots, never further to make up for one that cannot be reduced; as
+// AccountSlots is at least one, no pending list is emptied.
 func (pool *LegacyPool) truncatePending() {
 	pending := uint64(0)
 
+	// Count each account's special transactions once: eviction below only ever
+	// removes regular ones, so these counts stay valid throughout.
+	specials := make(map[common.Address]int)
+	regularLen := func(addr common.Address) int {
+		list := pool.pending[addr]
+		if list == nil {
+			return 0
+		}
+		return list.Len() - specials[addr]
+	}
 	// Assemble a spam order to penalize large transactors first
 	spammers := prque.New[uint64, common.Address](nil)
 	for addr, list := range pool.pending {
+		for _, tx := range list.Flatten() {
+			if tx.IsSpecialTransaction() {
+				specials[addr]++
+			}
+		}
 		// Only evict transactions from high rollers
-		length := uint64(list.Len())
+		length := uint64(regularLen(addr))
 		pending += length
 		if length > pool.config.AccountSlots {
 			spammers.Push(addr, length)
@@ -1605,6 +1739,27 @@ func (pool *LegacyPool) truncatePending() {
 	}
 	pendingBeforeCap := pending
 
+	// capTail drops the account's highest-nonce pending transaction if it is a
+	// regular one, and reports whether it dropped one.
+	capTail := func(addr common.Address) bool {
+		list := pool.pending[addr]
+		if list == nil || list.Empty() || list.LastElement().IsSpecialTransaction() {
+			return false
+		}
+		caps := list.Cap(list.Len() - 1)
+		for _, tx := range caps {
+			// Drop the transaction from the global pools too
+			hash := tx.Hash()
+			pool.all.Remove(hash)
+
+			// Update the account nonce to the dropped transaction
+			pool.pendingNonces.setIfLower(addr, tx.Nonce())
+			log.Trace("Removed fairness-exceeding pending transaction", "hash", hash)
+		}
+		pool.priced.Removed(countPriced(caps...))
+		pendingGauge.Dec(int64(len(caps)))
+		return len(caps) > 0
+	}
 	// Gradually drop transactions from offenders
 	offenders := []common.Address{}
 	for pending > pool.config.GlobalSlots && !spammers.Empty() {
@@ -1615,26 +1770,19 @@ func (pool *LegacyPool) truncatePending() {
 		// Equalize balances until all the same or below threshold
 		if len(offenders) > 1 {
 			// Calculate the equalization threshold for all current offenders
-			threshold := pool.pending[offender].Len()
+			threshold := regularLen(offender)
 
 			// Iteratively reduce all offenders until below limit or threshold reached
-			for pending > pool.config.GlobalSlots && pool.pending[offenders[len(offenders)-2]].Len() > threshold {
+			for pending > pool.config.GlobalSlots && regularLen(offenders[len(offenders)-2]) > threshold {
+				progress := false
 				for i := 0; i < len(offenders)-1; i++ {
-					list := pool.pending[offenders[i]]
-
-					caps := list.Cap(list.Len() - 1)
-					for _, tx := range caps {
-						// Drop the transaction from the global pools too
-						hash := tx.Hash()
-						pool.all.Remove(hash)
-
-						// Update the account nonce to the dropped transaction
-						pool.pendingNonces.setIfLower(offenders[i], tx.Nonce())
-						log.Trace("Removed fairness-exceeding pending transaction", "hash", hash)
+					if regularLen(offenders[i]) > threshold && capTail(offenders[i]) {
+						pending--
+						progress = true
 					}
-					pool.priced.Removed(len(caps))
-					pendingGauge.Dec(int64(len(caps)))
-					pending--
+				}
+				if !progress {
+					break
 				}
 			}
 		}
@@ -1642,23 +1790,16 @@ func (pool *LegacyPool) truncatePending() {
 
 	// If still above threshold, reduce to limit or min allowance
 	if pending > pool.config.GlobalSlots && len(offenders) > 0 {
-		for pending > pool.config.GlobalSlots && uint64(pool.pending[offenders[len(offenders)-1]].Len()) > pool.config.AccountSlots {
+		for pending > pool.config.GlobalSlots && uint64(regularLen(offenders[len(offenders)-1])) > pool.config.AccountSlots {
+			progress := false
 			for _, addr := range offenders {
-				list := pool.pending[addr]
-
-				caps := list.Cap(list.Len() - 1)
-				for _, tx := range caps {
-					// Drop the transaction from the global pools too
-					hash := tx.Hash()
-					pool.all.Remove(hash)
-
-					// Update the account nonce to the dropped transaction
-					pool.pendingNonces.setIfLower(addr, tx.Nonce())
-					log.Trace("Removed fairness-exceeding pending transaction", "hash", hash)
+				if uint64(regularLen(addr)) > pool.config.AccountSlots && capTail(addr) {
+					pending--
+					progress = true
 				}
-				pool.priced.Removed(len(caps))
-				pendingGauge.Dec(int64(len(caps)))
-				pending--
+			}
+			if !progress {
+				break
 			}
 		}
 	}
@@ -1670,10 +1811,12 @@ func (pool *LegacyPool) truncateQueue() {
 	removed, removedAddresses := pool.queue.truncate()
 
 	// Remove all removable transactions from the lookup and global price list
+	priced := 0
 	for _, hash := range removed {
+		priced += countPriced(pool.all.Get(hash))
 		pool.all.Remove(hash)
 	}
-	pool.priced.Removed(len(removed))
+	pool.priced.Removed(priced)
 
 	for _, addr := range removedAddresses {
 		_, hasPending := pool.pending[addr]
@@ -1723,7 +1866,7 @@ func (pool *LegacyPool) demoteUnexecutables() {
 			// Internal shuffle shouldn't touch the lookup set.
 			pool.enqueueTx(hash, tx, false)
 		}
-		pool.priced.Removed(len(olds) + len(drops))
+		pool.priced.Removed(countPriced(olds...) + countPriced(drops...))
 		pendingGauge.Dec(int64(len(olds) + len(drops) + len(invalids)))
 
 		// If there's a gap in front, alert (should never happen) and postpone all transactions
@@ -1806,16 +1949,18 @@ func (pool *LegacyPool) dropWhere(keep func(tx *types.Transaction) bool, reason 
 		return true
 	})
 
-	dropped := 0
+	dropped, priced := 0, 0
 	for _, hash := range hashes {
-		if pool.all.Get(hash) == nil {
+		tx := pool.all.Get(hash)
+		if tx == nil {
 			continue
 		}
 		pool.removeTx(hash, false, true)
 		log.Trace("Dropped pooled transaction", "hash", hash, "reason", reason)
 		dropped++
+		priced += countPriced(tx)
 	}
-	pool.priced.Removed(dropped)
+	pool.priced.Removed(priced)
 	return dropped
 }
 
@@ -1934,7 +2079,9 @@ func (t *lookup) Count() int {
 	return len(t.txs)
 }
 
-// Slots returns the current number of slots used in the lookup.
+// Slots returns the current number of slots used in the lookup by regular
+// transactions. Special transactions have their own budget, bounded per
+// sender, and take no slots from the pool capacity.
 func (t *lookup) Slots() int {
 	t.lock.RLock()
 	defer t.lock.RUnlock()
@@ -1947,9 +2094,10 @@ func (t *lookup) Add(tx *types.Transaction) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 
-	t.slots += numSlots(tx)
-	slotsGauge.Update(int64(t.slots))
-
+	if !tx.IsSpecialTransaction() {
+		t.slots += numSlots(tx)
+		slotsGauge.Update(int64(t.slots))
+	}
 	t.txs[tx.Hash()] = tx
 	t.addAuthorities(tx)
 }
@@ -1965,9 +2113,10 @@ func (t *lookup) Remove(hash common.Hash) {
 		log.Error("No transaction found to be deleted", "hash", hash)
 		return
 	}
-	t.slots -= numSlots(tx)
-	slotsGauge.Update(int64(t.slots))
-
+	if !tx.IsSpecialTransaction() {
+		t.slots -= numSlots(tx)
+		slotsGauge.Update(int64(t.slots))
+	}
 	delete(t.txs, hash)
 }
 
@@ -1982,10 +2131,11 @@ func (t *lookup) Clear() {
 }
 
 // TxsBelowTip finds all remote transactions below the given tip threshold.
+// Special transactions carry no price and are never dropped on price.
 func (t *lookup) TxsBelowTip(threshold *big.Int) types.Transactions {
 	found := make(types.Transactions, 0, 128)
 	t.Range(func(hash common.Hash, tx *types.Transaction) bool {
-		if tx.GasTipCapIntCmp(threshold) < 0 {
+		if !tx.IsSpecialTransaction() && tx.GasTipCapIntCmp(threshold) < 0 {
 			found = append(found, tx)
 		}
 		return true

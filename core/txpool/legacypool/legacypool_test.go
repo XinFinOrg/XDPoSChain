@@ -1371,10 +1371,28 @@ func validatePoolInternals(pool *LegacyPool) error {
 	if total := pool.all.Count(); total != pending+queued {
 		return fmt.Errorf("total transaction count %d != %d pending + %d queued", total, pending, queued)
 	}
+	// Special transactions are kept out of the price heap and take no slots
+	// from the pool capacity.
+	remote, slots := 0, 0
+	pool.all.Range(func(hash common.Hash, tx *types.Transaction) bool {
+		if !tx.IsSpecialTransaction() {
+			remote++
+			slots += numSlots(tx)
+		}
+		return true
+	})
+	// Before the heap is rebuilt, every entry beyond the pooled regular
+	// transactions must be counted as stale: a removal reported for a
+	// transaction the heap never held, or one not reported, breaks this.
+	if heaped, stales := pool.priced.urgent.Len()+pool.priced.floating.Len(), int(pool.priced.stales.Load()); heaped != remote+stales {
+		return fmt.Errorf("price heap holds %d entries, want %d regular + %d stale", heaped, remote, stales)
+	}
 	pool.priced.Reheap()
-	priced, remote := pool.priced.urgent.Len()+pool.priced.floating.Len(), pool.all.Count()
-	if priced != remote {
+	if priced := pool.priced.urgent.Len() + pool.priced.floating.Len(); priced != remote {
 		return fmt.Errorf("total priced transaction count %d != %d", priced, remote)
+	}
+	if have := pool.all.Slots(); have != slots {
+		return fmt.Errorf("pool slots %d != %d used by regular transactions", have, slots)
 	}
 	// Ensure the next nonce to assign is the correct one
 	for addr, txs := range pool.pending {
@@ -1427,46 +1445,6 @@ func deriveSender(tx *types.Transaction) (common.Address, error) {
 	return types.Sender(types.HomesteadSigner{}, tx)
 }
 
-// TestPromoteSpecialTxUpdatesTotalCost tests promote special tx updates total cost.
-func TestPromoteSpecialTxUpdatesTotalCost(t *testing.T) {
-	pool, key := setupPool()
-	defer pool.Close()
-
-	normal := transaction(0, 21000, key)
-	addr, err := deriveSender(normal)
-	if err != nil {
-		t.Fatalf("failed to derive sender: %v", err)
-	}
-	special := setCodeTx(0, key, nil)
-
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-
-	pool.pending[addr] = newList(true)
-	list := pool.pending[addr]
-
-	inserted, _ := list.Add(normal, pool.config.PriceBump)
-	if !inserted {
-		t.Fatal("failed to insert baseline transaction")
-	}
-	if _, err := pool.promoteSpecialTx(addr, special); err != nil {
-		t.Fatalf("promoteSpecialTx failed: %v", err)
-	}
-	want, overflow := uint256.FromBig(special.Cost())
-	if overflow {
-		t.Fatal("special tx cost overflowed uint256 in test setup")
-	}
-	if list.totalcost.Cmp(want) != 0 {
-		t.Fatalf("totalcost mismatch after special promotion: have %v want %v", list.totalcost, want)
-	}
-
-	// Removing the pending tx should not underflow totalcost.
-	list.Forward(1)
-	if list.totalcost.Sign() != 0 {
-		t.Fatalf("totalcost should be zero after removal, have %v", list.totalcost)
-	}
-}
-
 // TestListAddReplacementAvoidsIntermediateOverflow tests list add replacement avoids intermediate overflow.
 func TestListAddReplacementAvoidsIntermediateOverflow(t *testing.T) {
 	key, err := crypto.GenerateKey()
@@ -1507,56 +1485,6 @@ func TestListAddReplacementAvoidsIntermediateOverflow(t *testing.T) {
 	}
 	if tx := list.txs.Get(newTx.Nonce()); tx == nil || tx.Hash() != newTx.Hash() {
 		t.Fatal("replacement transaction was not stored in list")
-	}
-	list.Forward(1)
-	if list.totalcost.Sign() != 0 {
-		t.Fatalf("totalcost should be zero after removal, have %v", list.totalcost)
-	}
-}
-
-// TestPromoteSpecialTxReplacementAvoidsIntermediateOverflow tests promote special tx replacement avoids intermediate overflow.
-func TestPromoteSpecialTxReplacementAvoidsIntermediateOverflow(t *testing.T) {
-	pool, key := setupPool()
-	defer pool.Close()
-
-	max := new(big.Int).Sub(new(big.Int).Lsh(common.Big1, 256), common.Big1)
-	oldPrice := new(big.Int).Sub(new(big.Int).Rsh(new(big.Int).Set(max), 1), big.NewInt(100))
-	newPrice := new(big.Int).Add(oldPrice, common.Big1)
-	oldTx, err := types.SignTx(types.NewTransaction(0, common.Address{}, common.Big0, 1, oldPrice, nil), types.HomesteadSigner{}, key)
-	if err != nil {
-		t.Fatalf("failed to sign old tx: %v", err)
-	}
-	addr, err := deriveSender(oldTx)
-	if err != nil {
-		t.Fatalf("failed to derive sender: %v", err)
-	}
-	special := pricedSetCodeTx(0, 1, uint256.MustFromBig(newPrice), uint256.NewInt(1), key, nil)
-
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-
-	pool.pending[addr] = newList(true)
-	list := pool.pending[addr]
-	inserted, _ := list.Add(oldTx, 0)
-	if !inserted {
-		t.Fatal("failed to insert baseline transaction")
-	}
-	replaced, err := pool.promoteSpecialTx(addr, special)
-	if err != nil {
-		t.Fatalf("promoteSpecialTx failed (should not overflow after subtracting old cost): %v", err)
-	}
-	if !replaced {
-		t.Fatal("special tx should be reported as replacing the baseline transaction")
-	}
-	want, overflow := uint256.FromBig(special.Cost())
-	if overflow {
-		t.Fatal("special tx cost overflowed uint256 in test setup")
-	}
-	if list.totalcost.Cmp(want) != 0 {
-		t.Fatalf("totalcost mismatch after special replacement: have %v want %v", list.totalcost, want)
-	}
-	if tx := list.txs.Get(special.Nonce()); tx == nil || tx.Hash() != special.Hash() {
-		t.Fatal("special replacement transaction was not stored in list")
 	}
 	list.Forward(1)
 	if list.totalcost.Sign() != 0 {
@@ -1683,6 +1611,7 @@ func TestSpecialTxReplacementThroughPool(t *testing.T) {
 	})
 
 	// Case 2: a fresh special tx replaces a pending special tx at the same nonce.
+	// A sign tx replacing a sign tx must sign a newer block.
 	t.Run("special replaces special", func(t *testing.T) {
 		pool, _ := setupPool()
 		defer pool.Close()
@@ -1690,8 +1619,8 @@ func TestSpecialTxReplacementThroughPool(t *testing.T) {
 		addr := crypto.PubkeyToAddress(key.PublicKey)
 		testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
 
-		oldSpecial := mkSpecial(key, signTxData(0x01))
-		newSpecial := mkSpecial(key, signTxData(0x02))
+		oldSpecial := mkSpecial(key, signTxDataAt(0, 0x01))
+		newSpecial := mkSpecial(key, signTxDataAt(15, 0x02))
 		if err := pool.addRemoteSync(oldSpecial); err != nil {
 			t.Fatalf("failed to add old special tx: %v", err)
 		}
@@ -1746,9 +1675,13 @@ func TestSpecialTxReplacesHeadOfStuckBacklog(t *testing.T) {
 	addr := crypto.PubkeyToAddress(key.PublicKey)
 	testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
 
-	// Sign txs carry a zero gas price; the payload only makes the hashes differ.
-	mkSpecial := func(nonce uint64, payload byte) *types.Transaction {
-		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxData(payload)), types.HomesteadSigner{}, key)
+	// At head 60 the merge blocks 0 to 75 can be signed. Each backlog tx signs
+	// its own merge block, as an honest signer's stuck sign txs do.
+	<-pool.requestReset(nil, newTestHeader(60))
+
+	// Sign txs carry a zero gas price.
+	mkSpecial := func(nonce, signed uint64, payload byte) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxDataAt(signed, payload)), types.HomesteadSigner{}, key)
 		if err != nil {
 			t.Fatalf("failed to sign special tx: %v", err)
 		}
@@ -1756,7 +1689,7 @@ func TestSpecialTxReplacesHeadOfStuckBacklog(t *testing.T) {
 	}
 	var backlog []*types.Transaction
 	for nonce := uint64(0); nonce < 4; nonce++ {
-		tx := mkSpecial(nonce, 0x01)
+		tx := mkSpecial(nonce, 15*nonce, 0x01)
 		if err := pool.addRemoteSync(tx); err != nil {
 			t.Fatalf("failed to add backlog tx %d: %v", nonce, err)
 		}
@@ -1766,7 +1699,8 @@ func TestSpecialTxReplacesHeadOfStuckBacklog(t *testing.T) {
 		t.Fatalf("pending nonce with the backlog = %d, want 4", got)
 	}
 
-	fresh := mkSpecial(0, 0x02)
+	// The fresh sign tx signs the newest merge block.
+	fresh := mkSpecial(0, 60, 0x02)
 	if err := pool.addRemoteSync(fresh); err != nil {
 		t.Fatalf("fresh sign tx at the on-chain nonce was rejected: %v", err)
 	}
@@ -1805,8 +1739,11 @@ func TestSpecialTxReplacementOnFullPool(t *testing.T) {
 	signerKey, _ := crypto.GenerateKey()
 	signer := crypto.PubkeyToAddress(signerKey.PublicKey)
 	testAddBalance(pool, signer, big.NewInt(1_000_000_000_000_000))
-	mkSpecial := func(nonce uint64, payload byte) *types.Transaction {
-		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxData(payload)), types.HomesteadSigner{}, signerKey)
+	// At head 60 the merge blocks 0 to 75 can be signed; each sign tx signs its
+	// own merge block, as an honest signer's do.
+	<-pool.requestReset(nil, newTestHeader(60))
+	mkSpecial := func(nonce, signed uint64, payload byte) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxDataAt(signed, payload)), types.HomesteadSigner{}, signerKey)
 		if err != nil {
 			t.Fatalf("failed to sign special tx: %v", err)
 		}
@@ -1823,16 +1760,17 @@ func TestSpecialTxReplacementOnFullPool(t *testing.T) {
 		return false
 	}
 
-	// Fill the pool: two stuck sign txs plus two ordinary txs.
-	stuck := mkSpecial(0, 0x01)
-	for _, tx := range []*types.Transaction{stuck, mkSpecial(1, 0x01)} {
+	// Two stuck sign txs, then fill the pool with ordinary txs: special txs
+	// take no slots from the pool capacity.
+	stuck := mkSpecial(0, 0, 0x01)
+	for _, tx := range []*types.Transaction{stuck, mkSpecial(1, 15, 0x01)} {
 		if err := pool.addRemoteSync(tx); err != nil {
 			t.Fatalf("failed to add stuck sign tx %d: %v", tx.Nonce(), err)
 		}
 	}
 	userKey, _ := crypto.GenerateKey()
 	testAddBalance(pool, crypto.PubkeyToAddress(userKey.PublicKey), big.NewInt(1_000_000_000_000_000))
-	for nonce := uint64(0); nonce < 2; nonce++ {
+	for nonce := uint64(0); nonce < 4; nonce++ {
 		if err := pool.addRemoteSync(pricedTransaction(nonce, 100000, big.NewInt(common.DefaultMinGasPrice), userKey)); err != nil {
 			t.Fatalf("failed to add ordinary tx %d: %v", nonce, err)
 		}
@@ -1842,7 +1780,7 @@ func TestSpecialTxReplacementOnFullPool(t *testing.T) {
 	}
 
 	// A fresh sign tx at the on-chain nonce replaces the stuck one.
-	fresh := mkSpecial(0, 0x02)
+	fresh := mkSpecial(0, 30, 0x02)
 	if err := pool.addRemoteSync(fresh); err != nil {
 		t.Fatalf("sign tx replacing a stuck one on a full pool was rejected: %v", err)
 	}
@@ -1853,7 +1791,7 @@ func TestSpecialTxReplacementOnFullPool(t *testing.T) {
 		t.Fatalf("pending nonce after the replacement = %d, want 2", got)
 	}
 	// A sign tx at the next pending nonce is admitted too.
-	next := mkSpecial(2, 0x01)
+	next := mkSpecial(2, 45, 0x01)
 	if err := pool.addRemoteSync(next); err != nil {
 		t.Fatalf("sign tx at the pending nonce on a full pool was rejected: %v", err)
 	}
@@ -1912,40 +1850,6 @@ func TestSignerSpecialTxEvictsPendingRegular(t *testing.T) {
 	}
 	if got := pool.Nonce(addr); got != 1 {
 		t.Fatalf("pending nonce = %d, want 1", got)
-	}
-}
-
-// TestPromoteSpecialTxOverflowReturnsErrorWithoutMutation tests promote special tx overflow returns error without mutation.
-func TestPromoteSpecialTxOverflowReturnsErrorWithoutMutation(t *testing.T) {
-	pool, key := setupPool()
-	defer pool.Close()
-
-	normal := transaction(0, 21000, key)
-	addr, err := deriveSender(normal)
-	if err != nil {
-		t.Fatalf("failed to derive sender: %v", err)
-	}
-	max := new(big.Int).Sub(new(big.Int).Lsh(common.Big1, 256), common.Big1)
-	special := pricedSetCodeTx(0, 2, uint256.MustFromBig(max), uint256.NewInt(1), key, nil)
-
-	pool.mu.Lock()
-	defer pool.mu.Unlock()
-
-	replaced, err := pool.promoteSpecialTx(addr, special)
-	if replaced {
-		t.Fatal("overflowing special tx must not replace anything")
-	}
-	if !errors.Is(err, txpool.ErrSpecialTxCostOverflow) {
-		t.Fatalf("wrong error: have %v, want %v", err, txpool.ErrSpecialTxCostOverflow)
-	}
-	if _, ok := pool.pending[addr]; ok {
-		t.Fatal("pending list created for rejected special tx")
-	}
-	if pool.all.Get(special.Hash()) != nil {
-		t.Fatal("rejected special tx should not be tracked in lookup")
-	}
-	if pool.pendingNonces.get(addr) != 0 {
-		t.Fatalf("pending nonce changed for rejected special tx: have %d want 0", pool.pendingNonces.get(addr))
 	}
 }
 
@@ -2811,18 +2715,16 @@ func TestOutOfOrderDeliveryPromotesAll(t *testing.T) {
 		pool.SetSigner(func(common.Address) bool { return true })
 		testAddBalance(pool, crypto.PubkeyToAddress(key.PublicKey), big.NewInt(1_000_000_000_000_000))
 
-		// Sign txs from a candidate: zero gas price, to the BlockSigners contract.
-		for nonce := count - 1; nonce >= 0; nonce-- {
-			tx, err := types.SignTx(types.NewTransaction(uint64(nonce), common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), signTxData(0)), types.HomesteadSigner{}, key)
-			if err != nil {
-				t.Fatalf("failed to sign special tx %d: %v", nonce, err)
-			}
-			if err := pool.addRemoteSync(tx); err != nil {
+		// Special txs from a candidate: zero gas price, to the Randomize
+		// contract, as many as one sender may pool.
+		const specials = maxSpecialTxsPerAccount
+		for nonce := specials - 1; nonce >= 0; nonce-- {
+			if err := pool.addRemoteSync(laneRandomizeTx(t, key, uint64(nonce), byte(nonce))); err != nil {
 				t.Fatalf("special tx %d rejected: %v", nonce, err)
 			}
 		}
-		if pending, queued := pool.Stats(); pending != count || queued != 0 {
-			t.Fatalf("pool stats = (%d pending, %d queued), want (%d, 0)", pending, queued, count)
+		if pending, queued := pool.Stats(); pending != specials || queued != 0 {
+			t.Fatalf("pool stats = (%d pending, %d queued), want (%d, 0)", pending, queued, specials)
 		}
 	})
 }
