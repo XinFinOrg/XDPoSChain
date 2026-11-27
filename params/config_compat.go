@@ -102,6 +102,13 @@ compatLoop:
 	if err := checkXDCSystemContractCompatible(c, newcfg, head); err != nil {
 		return err
 	}
+	if c.XDPoS != nil && newcfg.XDPoS != nil {
+		// The fork block itself is covered by the fork scan above. Once it is
+		// active, the address it pays to is history too.
+		if err := checkAddressCompatible("XDPoS.NewFoundationWalletAddr", c.XDPoS.NewFoundationWalletAddr, newcfg.XDPoS.NewFoundationWalletAddr, c.TIPFoundationWalletBlock, head); err != nil {
+			return err
+		}
+	}
 	if err := checkXDPoSCompatible(c.XDPoS, newcfg.XDPoS, head, xdposRound); err != nil {
 		return err
 	}

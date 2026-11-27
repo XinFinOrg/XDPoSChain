@@ -47,6 +47,7 @@ var chainConfigDigestCoveredFields = []string{
 	"TIPIncreaseMasternodesBlock",
 	"TIPNoHalvingMNRewardBlock",
 	"TIPProportionalRewardBlock",
+	"TIPFoundationWalletBlock",
 	"TIPRandomizeBlock",
 	"TIPSigningBlock",
 	"TIPTRC21FeeBlock",
@@ -479,10 +480,10 @@ func TestHashChainConfigSemanticGoldenVectors(t *testing.T) {
 		cfg  *params.ChainConfig
 		want string
 	}{
-		{name: "nil", cfg: nil, want: "c0ba8a33ac67f44abff5984dfbb6f56c46b880ac2b86e1f23e7fa9c402c53ae7"},
-		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "124c2cd03ffab90e8e706ada58da4c45245102427e24b6cf1bce90c83d520066"},
-		{name: "mainnet", cfg: params.XDCMainnetChainConfig.Clone(), want: "1d8599bc0f149980f9829f36aa0cf20cc36f9ea0ba31685e0526e0faaf57b254"},
-		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "95c857b3e59c909602120cba49efe3eec4adfb04e6b3a9d5b4af54af0aecd4f4"},
+		{name: "nil", cfg: nil, want: "2921a11f25dadaa24aa79a548e4e81508c2e5e56af2d833d65e2bcce448ce2f5"},
+		{name: "testnet", cfg: params.TestnetChainConfig.Clone(), want: "b256815ba57c2c85646daf31710847a12a895cfab49eac9badb34e2368e92194"},
+		{name: "mainnet", cfg: params.XDCMainnetChainConfig.Clone(), want: "b6d1cf0ee173c5d7f4b5fe51e074022f5a0d3ff72060243c4f0bc98466a18b64"},
+		{name: "testnet-berlin-drift", cfg: testnetBerlinDrift, want: "c63b5e99d077fe48119899c4584f08c27f4f45d520dfd4c2105f4c54a6f20aec"},
 	}
 
 	for _, test := range tests {

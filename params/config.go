@@ -109,6 +109,11 @@ type ChainConfig struct {
 	TIPUpgradePenaltyBlock     *big.Int `json:"tipUpgradePenaltyBlock,omitempty"`
 	TIPEpochHalvingBlock       *big.Int `json:"tipEpochHalvingBlock,omitempty"`
 	TIPProportionalRewardBlock *big.Int `json:"tipProportionalRewardBlock,omitempty"`
+	// TIPFoundationWalletBlock moves the foundation share of the epoch reward
+	// from XDPoS.FoundationWalletAddr to XDPoS.NewFoundationWalletAddr. Rewards
+	// paid at checkpoints before this block keep going to the old address, so
+	// the chain history replays unchanged.
+	TIPFoundationWalletBlock *big.Int `json:"tipFoundationWalletBlock,omitempty"`
 
 	TRC21IssuerSMC         common.Address `json:"trc21IssuerSMC,omitempty"`
 	XDCXListingSMC         common.Address `json:"xdcxListingSMC,omitempty"`
@@ -432,6 +437,7 @@ func chainConfigSemanticXDPoSEqual(a, b *XDPoSConfig) bool {
 		a.RewardCheckpoint == b.RewardCheckpoint &&
 		a.Gap == b.Gap &&
 		a.FoundationWalletAddr == b.FoundationWalletAddr &&
+		a.NewFoundationWalletAddr == b.NewFoundationWalletAddr &&
 		a.MaxMasternodesV2 == b.MaxMasternodesV2 &&
 		a.SkipV1Validation == b.SkipV1Validation &&
 		chainConfigSemanticV2Equal(a.V2, b.V2)
@@ -742,6 +748,14 @@ func (c *ChainConfig) checkConfigForkOrder(withHints, skipXDPoSSchedule bool) er
 		if c.XDPoS.FoundationWalletAddr.IsZero() {
 			return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS.FoundationWalletAddr")
 		}
+		if c.TIPFoundationWalletBlock != nil {
+			if c.XDPoS.NewFoundationWalletAddr.IsZero() {
+				return fmt.Errorf("invalid chain config: %w: %s is required when TIPFoundationWalletBlock %v is scheduled", ErrMissingForkSwitch, "XDPoS.NewFoundationWalletAddr", c.TIPFoundationWalletBlock)
+			}
+			if c.XDPoS.NewFoundationWalletAddr == c.XDPoS.FoundationWalletAddr {
+				return fmt.Errorf("invalid chain config: XDPoS.NewFoundationWalletAddr %s equals XDPoS.FoundationWalletAddr", c.XDPoS.NewFoundationWalletAddr.Hex())
+			}
+		}
 		if c.XDPoS.MaxMasternodesV2 == 0 {
 			return fmt.Errorf("invalid chain config: %w: %s", ErrMissingForkSwitch, "XDPoS.MaxMasternodesV2")
 		}
@@ -918,6 +932,9 @@ func (c *ChainConfig) String() string {
 	if c.TIPEpochHalvingBlock != nil {
 		result += fmt.Sprintf(", TIPEpochHalving: %v", c.TIPEpochHalvingBlock)
 	}
+	if c.TIPFoundationWalletBlock != nil {
+		result += fmt.Sprintf(", TIPFoundationWallet: %v", c.TIPFoundationWalletBlock)
+	}
 	if !c.TRC21IssuerSMC.IsZero() {
 		result += fmt.Sprintf(", TRC21IssuerSMC: %s", c.TRC21IssuerSMC.Hex())
 	}
@@ -994,6 +1011,7 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - TIPFixedReward:              %-8v\n", c.TIPFixedRewardBlock)
 	banner += fmt.Sprintf("  - TIPUpgradePenalty:           %-8v\n", c.TIPUpgradePenaltyBlock)
 	banner += fmt.Sprintf("  - TIPProportionalReward:       %-8v\n", c.TIPProportionalRewardBlock)
+	banner += fmt.Sprintf("  - TIPFoundationWallet:         %-8v\n", c.TIPFoundationWalletBlock)
 	banner += fmt.Sprintf("  - Prague:                      %-8v\n", c.PragueBlock)
 	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", c.OsakaBlock)
 	banner += fmt.Sprintf("  - Amsterdam:                   %-8v\n", c.AmsterdamBlock)
@@ -1106,6 +1124,9 @@ func (c *ChainConfig) ActiveForks(block *big.Int) []string {
 	}
 	if c.IsTIPFixedReward(block) {
 		activeForks = append(activeForks, "TIPFixedReward")
+	}
+	if c.IsTIPFoundationWallet(block) {
+		activeForks = append(activeForks, "TIPFoundationWallet")
 	}
 	if c.IsTIPIncreaseMasternodes(block) {
 		activeForks = append(activeForks, "TIPIncreaseMasternodes")

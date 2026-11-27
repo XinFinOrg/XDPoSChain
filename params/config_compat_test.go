@@ -476,6 +476,7 @@ func TestForEachChainConfigCompatibleForkBlockPairUsesForkValidationOrder(t *tes
 		if name == "TIPFixedRewardBlock" {
 			want = append(want, name)
 			want = append(want, "TIPProportionalRewardBlock")
+			want = append(want, "TIPFoundationWalletBlock")
 			return
 		}
 		if _, specialCase := chainConfigCompatibilitySpecialCaseFieldNames[name]; specialCase {
