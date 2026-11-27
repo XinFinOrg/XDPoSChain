@@ -1173,8 +1173,19 @@ func TestOsakaGasCapDropsOversizedTransactions(t *testing.T) {
 
 	oversized, normal := env.addTransactions(t)
 	oversizedAddr := env.oversizedAddr()
-	if pending, _ := env.pool.Stats(); pending != 2 {
-		t.Fatalf("pool status before the fork: have %d pending, want 2", pending)
+
+	// A transaction exactly at the cap is the keep boundary of the sweep.
+	atCapKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate at-cap sender key: %v", err)
+	}
+	testAddBalance(env.pool, crypto.PubkeyToAddress(atCapKey.PublicKey), big.NewInt(1000000000000000000))
+	atCap := pricedTransaction(0, params.MaxTxGas, big.NewInt(300000000), atCapKey)
+	if err := env.pool.addRemotesSync([]*types.Transaction{atCap})[0]; err != nil {
+		t.Fatalf("failed to add at-cap transaction: %v", err)
+	}
+	if pending, _ := env.pool.Stats(); pending != 3 {
+		t.Fatalf("pool status before the fork: have %d pending, want 3", pending)
 	}
 
 	// Moving to the last pre-fork head makes the fork block pending, the first
@@ -1187,8 +1198,9 @@ func TestOsakaGasCapDropsOversizedTransactions(t *testing.T) {
 	// Crossing the fork must discard the transaction the cap excludes.
 	env.crossForkExpectDrop(t, oversized, env.lastPreForkHead(), "the Osaka fork")
 	env.assertPresent(t, normal, "transaction within the gas cap was dropped by the Osaka fork crossing")
-	if pending, _ := env.pool.Stats(); pending != 1 {
-		t.Fatalf("pool status after the fork: have %d pending, want 1", pending)
+	env.assertPresent(t, atCap, "transaction at the gas cap was dropped by the Osaka fork crossing")
+	if pending, _ := env.pool.Stats(); pending != 2 {
+		t.Fatalf("pool status after the fork: have %d pending, want 2", pending)
 	}
 	if nonce := env.pool.Nonce(oversizedAddr); nonce != 0 {
 		t.Fatalf("pending nonce after the fork: have %d, want 0", nonce)
