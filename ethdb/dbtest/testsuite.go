@@ -18,8 +18,10 @@ package dbtest
 
 import (
 	"bytes"
+	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
@@ -310,6 +312,306 @@ func TestDatabaseSuite(t *testing.T, New func() ethdb.KeyValueStore) {
 		it := db.NewIterator(nil, nil)
 		if got := iterateKeys(it); !reflect.DeepEqual(got, want) {
 			t.Errorf("got: %s; want: %s", got, want)
+		}
+	})
+
+	t.Run("DeleteRange", func(t *testing.T) {
+		db := New()
+		defer db.Close()
+
+		for i := 0; i < 20; i++ {
+			if err := db.Put([]byte(fmt.Sprintf("key-%02d", i)), []byte("value")); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Delete the range [key-05, key-15).
+		if err := db.DeleteRange([]byte("key-05"), []byte("key-15")); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 20; i++ {
+			key := []byte(fmt.Sprintf("key-%02d", i))
+			has, err := db.Has(key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := i < 5 || i >= 15; has != want {
+				t.Fatalf("key %s: has %v, want %v", key, has, want)
+			}
+		}
+		// Batch based range deletion.
+		batch := db.NewBatch()
+		if err := batch.DeleteRange([]byte("key-00"), []byte("key-03")); err != nil {
+			t.Fatal(err)
+		}
+		if err := batch.Write(); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 5; i++ {
+			has, err := db.Has([]byte(fmt.Sprintf("key-%02d", i)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if want := i >= 3; has != want {
+				t.Fatalf("key %d: has %v, want %v", i, has, want)
+			}
+		}
+		// Degenerate ranges delete nothing: an inverted range and an empty
+		// range both stay empty whatever the iteration order is.
+		if err := db.DeleteRange([]byte("key-19"), []byte("key-03")); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.DeleteRange([]byte("key-16"), []byte("key-16")); err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"key-03", "key-04", "key-16", "key-19"} {
+			has, err := db.Has([]byte(key))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !has {
+				t.Fatalf("%s: deleted by a degenerate range", key)
+			}
+		}
+		// An empty lower bound is the first key, and the end stays exclusive.
+		if err := db.DeleteRange([]byte(""), []byte("key-04")); err != nil {
+			t.Fatal(err)
+		}
+		if has, err := db.Has([]byte("key-03")); err != nil || has {
+			t.Fatalf("key-03: has %v, err %v", has, err)
+		}
+		if has, err := db.Has([]byte("key-04")); err != nil || !has {
+			t.Fatalf("key-04: has %v, err %v", has, err)
+		}
+		// Unbounded range deletion.
+		if err := db.DeleteRange(nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 20; i++ {
+			has, err := db.Has([]byte(fmt.Sprintf("key-%02d", i)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if has {
+				t.Fatalf("key %d: still present after unbounded deletion", i)
+			}
+		}
+	})
+
+	t.Run("BatchDeleteRange", func(t *testing.T) {
+		db := New()
+		defer db.Close()
+
+		addKeys := func(start, stop int) {
+			for i := start; i <= stop; i++ {
+				if err := db.Put([]byte(strconv.Itoa(i)), []byte("val-"+strconv.Itoa(i))); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		checkKeys := func(start, stop int, shouldExist bool) {
+			for i := start; i <= stop; i++ {
+				key := []byte(strconv.Itoa(i))
+				has, err := db.Has(key)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if has != shouldExist {
+					t.Fatalf("key %s: has %v, want %v", key, has, shouldExist)
+				}
+			}
+		}
+
+		// A queued range deletion only takes effect on Write.
+		addKeys(1, 10)
+		batch := db.NewBatch()
+		if err := batch.DeleteRange([]byte("3"), []byte("8")); err != nil {
+			t.Fatal(err)
+		}
+		checkKeys(1, 10, true)
+		if err := batch.Write(); err != nil {
+			t.Fatal(err)
+		}
+		checkKeys(1, 2, true)
+		checkKeys(3, 7, false)
+		checkKeys(8, 10, true)
+
+		// Unbounded deletion.
+		addKeys(3, 7)
+		batch = db.NewBatch()
+		if err := batch.DeleteRange(nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := batch.Write(); err != nil {
+			t.Fatal(err)
+		}
+		checkKeys(1, 10, false)
+
+		// Mixed Put, Delete and DeleteRange in one batch.
+		addKeys(1, 10)
+		batch = db.NewBatch()
+		if err := batch.Put([]byte("5"), []byte("new-val-5")); err != nil {
+			t.Fatal(err)
+		}
+		if err := batch.Delete([]byte("9")); err != nil {
+			t.Fatal(err)
+		}
+		if err := batch.DeleteRange([]byte("1"), []byte("3")); err != nil {
+			t.Fatal(err)
+		}
+		if err := batch.Write(); err != nil {
+			t.Fatal(err)
+		}
+		checkKeys(1, 2, false)
+		checkKeys(3, 4, true)
+		checkKeys(6, 8, true)
+		checkKeys(9, 9, false)
+		if value, err := db.Get([]byte("5")); err != nil || !bytes.Equal(value, []byte("new-val-5")) {
+			t.Fatalf("key 5: value %q, err %v", value, err)
+		}
+
+		// Reset drops a queued range deletion.
+		batch = db.NewBatch()
+		if err := batch.DeleteRange([]byte("1"), []byte("9")); err != nil {
+			t.Fatal(err)
+		}
+		batch.Reset()
+		if err := batch.Delete([]byte("8")); err != nil {
+			t.Fatal(err)
+		}
+		if err := batch.Write(); err != nil {
+			t.Fatal(err)
+		}
+		checkKeys(3, 7, true)
+		checkKeys(8, 8, false)
+	})
+
+	t.Run("BatchDeleteRangeValueSize", func(t *testing.T) {
+		db := New()
+		defer db.Close()
+
+		// A range that only matches the empty key still queues one deletion.
+		// ValueSize must not report zero, or a caller flushing on
+		// ValueSize() > 0 would drop the batch and leave the key behind.
+		if err := db.Put([]byte(""), []byte("v")); err != nil {
+			t.Fatal(err)
+		}
+		batch := db.NewBatch()
+		if err := batch.DeleteRange(nil, []byte("a")); err != nil {
+			t.Fatal(err)
+		}
+		if size := batch.ValueSize(); size <= 0 {
+			t.Fatalf("range deletion of the empty key reports ValueSize %d, want > 0", size)
+		}
+		if err := batch.Write(); err != nil {
+			t.Fatal(err)
+		}
+		if has, err := db.Has([]byte("")); err != nil || has {
+			t.Fatalf("empty key: has %v, err %v", has, err)
+		}
+
+		// An unbounded range carries no bound bytes either, but it is still
+		// pending work.
+		if err := db.Put([]byte("k"), []byte("v")); err != nil {
+			t.Fatal(err)
+		}
+		batch = db.NewBatch()
+		if err := batch.DeleteRange(nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		if size := batch.ValueSize(); size <= 0 {
+			t.Fatalf("unbounded range deletion reports ValueSize %d, want > 0", size)
+		}
+		if err := batch.Write(); err != nil {
+			t.Fatal(err)
+		}
+		if has, err := db.Has([]byte("k")); err != nil || has {
+			t.Fatalf("key k: has %v, err %v", has, err)
+		}
+	})
+
+	t.Run("BatchReplayWithDeleteRange", func(t *testing.T) {
+		db := New()
+		defer db.Close()
+
+		for i := 1; i <= 10; i++ {
+			if err := db.Put([]byte(strconv.Itoa(i)), []byte("val-"+strconv.Itoa(i))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		batch := db.NewBatch()
+		batch.Put([]byte("new-key-1"), []byte("new-val-1"))
+		batch.DeleteRange([]byte("3"), []byte("7"))
+		batch.Delete([]byte("8"))
+		batch.Put([]byte("new-key-2"), []byte("new-val-2"))
+
+		// Replay into another batch, then write it.
+		replayed := db.NewBatch()
+		if err := batch.Replay(replayed); err != nil {
+			t.Fatal(err)
+		}
+		if err := replayed.Write(); err != nil {
+			t.Fatal(err)
+		}
+		for i := 3; i <= 6; i++ {
+			if has, err := db.Has([]byte(strconv.Itoa(i))); err != nil || has {
+				t.Fatalf("key %d: has %v, err %v", i, has, err)
+			}
+		}
+		if has, err := db.Has([]byte("7")); err != nil || !has {
+			t.Fatalf("key 7 must survive the exclusive end: has %v, err %v", has, err)
+		}
+		if has, err := db.Has([]byte("8")); err != nil || has {
+			t.Fatalf("key 8 must be deleted: has %v, err %v", has, err)
+		}
+		for _, key := range []string{"new-key-1", "new-key-2"} {
+			if has, err := db.Has([]byte(key)); err != nil || !has {
+				t.Fatalf("%s: has %v, err %v", key, has, err)
+			}
+		}
+		// Replay directly into the database.
+		direct := db.NewBatch()
+		if err := direct.DeleteRange([]byte("1"), []byte("3")); err != nil {
+			t.Fatal(err)
+		}
+		if err := direct.Replay(db); err != nil {
+			t.Fatal(err)
+		}
+		for i := 1; i <= 2; i++ {
+			if has, err := db.Has([]byte(strconv.Itoa(i))); err != nil || has {
+				t.Fatalf("key %d: has %v, err %v", i, has, err)
+			}
+		}
+	})
+
+	t.Run("OperationsAfterClose", func(t *testing.T) {
+		db := New()
+		if err := db.Put([]byte("key"), []byte("value")); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Get([]byte("key")); err == nil {
+			t.Fatalf("expected error on Get after Close")
+		}
+		if _, err := db.Has([]byte("key")); err == nil {
+			t.Fatalf("expected error on Has after Close")
+		}
+		if err := db.Put([]byte("key2"), []byte("value2")); err == nil {
+			t.Fatalf("expected error on Put after Close")
+		}
+		if err := db.Delete([]byte("key")); err == nil {
+			t.Fatalf("expected error on Delete after Close")
+		}
+		if err := db.DeleteRange([]byte("a"), []byte("b")); err == nil {
+			t.Fatalf("expected error on DeleteRange after Close")
+		}
+		batch := db.NewBatch()
+		if err := batch.Put([]byte("batchkey"), []byte("batchval")); err != nil {
+			t.Fatalf("expected no error on batch.Put after Close, got %v", err)
+		}
+		if err := batch.Write(); err == nil {
+			t.Fatalf("expected error on batch.Write after Close")
 		}
 	})
 }
