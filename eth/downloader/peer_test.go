@@ -17,12 +17,38 @@
 package downloader
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"testing"
 
+	eth "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
+
+// TestWaitResponseAcknowledgesDeliveryError checks that a response taken from
+// the sink always gets a Done verdict, even when queueing it fails.
+func TestWaitResponseAcknowledgesDeliveryError(t *testing.T) {
+	deliverErr := errors.New("delivery failed")
+	resCh := make(chan *eth.Response, 1)
+	res := &eth.Response{
+		Res:  &eth.BlockHeadersPacket{},
+		Done: make(chan error, 1),
+	}
+	resCh <- res
+
+	p := &peerConnection{deliver: func(dataPack) error { return deliverErr }}
+	p.waitResponse(&eth.Request{}, resCh, func(*eth.Response) dataPack { return &headerPack{} })
+
+	select {
+	case err := <-res.Done:
+		if !errors.Is(err, deliverErr) {
+			t.Fatalf("Done verdict: have %v, want %v", err, deliverErr)
+		}
+	default:
+		t.Fatal("response was not acknowledged on Done")
+	}
+}
 
 // TestIdlePeersProtocolVersions verifies that peers running every supported
 // protocol version (xdc100, xdc164, xdc165, xdc166) are eligible for concurrent
@@ -36,7 +62,7 @@ func TestIdlePeersProtocolVersions(t *testing.T) {
 	ps := newPeerSet()
 	for i, version := range []uint{xdc100, xdc164, xdc165, xdc166, xdc167} {
 		id := fmt.Sprintf("peer-%d", i)
-		if err := ps.Register(newPeerConnection(id, version, nil, log.New("id", id))); err != nil {
+		if err := ps.Register(newPeerConnection(id, version, nil, log.New("id", id), nil, nil)); err != nil {
 			t.Fatalf("failed to register version %d peer: %v", version, err)
 		}
 	}

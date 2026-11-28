@@ -19,6 +19,7 @@ package eth
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -30,6 +31,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
+	"github.com/XinFinOrg/XDPoSChain/p2p/tracker"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
@@ -164,31 +166,46 @@ func TestPeerSends(t *testing.T) {
 		},
 		{
 			name: "RequestHeadersByHash",
-			send: func() error { return peer.RequestHeadersByHash(hash, 3, 1, true) },
+			send: func() error {
+				_, err := peer.RequestHeadersByHash(hash, 3, 1, true, nil)
+				return err
+			},
 			code: GetBlockHeadersMsg,
 			want: &GetBlockHeadersPacket{Origin: HashOrNumber{Hash: hash}, Amount: 3, Skip: 1, Reverse: true},
 		},
 		{
 			name: "RequestHeadersByNumber",
-			send: func() error { return peer.RequestHeadersByNumber(314, 3, 1, false) },
+			send: func() error {
+				_, err := peer.RequestHeadersByNumber(314, 3, 1, false, nil)
+				return err
+			},
 			code: GetBlockHeadersMsg,
 			want: &GetBlockHeadersPacket{Origin: HashOrNumber{Number: 314}, Amount: 3, Skip: 1},
 		},
 		{
 			name: "RequestBodies",
-			send: func() error { return peer.RequestBodies([]common.Hash{hash}) },
+			send: func() error {
+				_, err := peer.RequestBodies([]common.Hash{hash}, nil)
+				return err
+			},
 			code: GetBlockBodiesMsg,
 			want: []common.Hash{hash},
 		},
 		{
 			name: "RequestNodeData",
-			send: func() error { return peer.RequestNodeData([]common.Hash{hash}) },
+			send: func() error {
+				_, err := peer.RequestNodeData([]common.Hash{hash}, nil)
+				return err
+			},
 			code: GetNodeDataMsg,
 			want: []common.Hash{hash},
 		},
 		{
 			name: "RequestReceipts",
-			send: func() error { return peer.RequestReceipts([]common.Hash{hash}) },
+			send: func() error {
+				_, err := peer.RequestReceipts([]common.Hash{hash}, nil)
+				return err
+			},
 			code: GetReceiptsMsg,
 			want: []common.Hash{hash},
 		},
@@ -207,10 +224,209 @@ func TestPeerSends(t *testing.T) {
 			if err := p2p.ExpectMsg(app, tt.code, tt.want); err != nil {
 				t.Fatalf("unexpected message: %v", err)
 			}
-			if err := <-sent; err != nil {
+			if err := <-sent; err != nil && !errors.Is(err, ErrLegacyRequest) {
 				t.Fatalf("send failed: %v", err)
 			}
 		})
+	}
+}
+
+// TestRequestTxsTracks166 checks that the pooled-tx request keeps its
+// error-only signature but still reserves its request id in the tracker.
+func TestRequestTxsTracks166(t *testing.T) {
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatalf("failed to generate random peer id: %v", err)
+	}
+	app, net := p2p.MsgPipe()
+	defer app.Close()
+
+	peer := NewPeer(XDC166, p2p.NewPeer(id, "peer", nil), net, func(common.Hash) *types.Transaction { return nil })
+	defer peer.Close()
+
+	requestID := make(chan uint64, 1)
+	go func() {
+		msg, err := app.ReadMsg()
+		if err != nil {
+			requestID <- 0
+			return
+		}
+		defer msg.Discard()
+		var fields []rlp.RawValue
+		if err := msg.Decode(&fields); err != nil || len(fields) == 0 {
+			requestID <- 0
+			return
+		}
+		var reqID uint64
+		if err := rlp.DecodeBytes(fields[0], &reqID); err != nil {
+			requestID <- 0
+			return
+		}
+		requestID <- reqID
+	}()
+	if err := peer.RequestTxs([]common.Hash{{0x01}}); err != nil {
+		t.Fatalf("RequestTxs failed: %v", err)
+	}
+	reqID := uint64(0)
+	select {
+	case reqID = <-requestID:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out reading the pooled-tx request")
+	}
+	if reqID == 0 {
+		t.Fatal("failed to decode the pooled-tx request id")
+	}
+	defer requestTracker.Drop(peer.id, peer.conn, reqID)
+
+	if err := requestTracker.Track(peer.id, peer.conn, peer.version, GetPooledTransactionsMsg, PooledTransactionsMsg, reqID); !errors.Is(err, tracker.ErrCollision) {
+		t.Fatalf("request id was not tracked by RequestTxs: %v", err)
+	}
+}
+
+// requestID issues a header request on peer and returns the id it carried on
+// the wire.
+func requestID(t *testing.T, peer *Peer, app *p2p.MsgPipeRW) uint64 {
+	t.Helper()
+
+	sent := make(chan error, 1)
+	go func() {
+		_, err := peer.RequestHeadersByNumber(1, 1, 0, false, make(chan *Response, 1))
+		sent <- err
+	}()
+	type readResult struct {
+		msg p2p.Msg
+		err error
+	}
+	read := make(chan readResult, 1)
+	go func() {
+		msg, err := app.ReadMsg()
+		read <- readResult{msg: msg, err: err}
+	}()
+	var res readResult
+	select {
+	case res = <-read:
+	case <-time.After(3 * time.Second):
+		// A rejected dispatch (e.g. a repeated id) never reaches the wire;
+		// fail fast instead of hanging until the test binary times out.
+		t.Fatal("request never reached the wire")
+	}
+	if res.err != nil {
+		t.Fatalf("failed to read request: %v", res.err)
+	}
+	msg := res.msg
+	defer msg.Discard()
+
+	var fields []rlp.RawValue
+	if err := msg.Decode(&fields); err != nil || len(fields) != 2 {
+		t.Fatalf("unexpected request shape: %d fields, err %v", len(fields), err)
+	}
+	var id uint64
+	if err := rlp.DecodeBytes(fields[0], &id); err != nil {
+		t.Fatalf("failed to decode request id: %v", err)
+	}
+	if err := <-sent; err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	return id
+}
+
+// TestPeerRequestIDsAreSequential checks the per-connection allocator the
+// dispatcher relies on: ids never repeat within a connection, and a reconnect
+// starts a fresh id scope. Random draws are explicitly ruled out by Request.
+func TestPeerRequestIDsAreSequential(t *testing.T) {
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatalf("failed to generate random peer id: %v", err)
+	}
+	newPeer := func(t *testing.T) (*Peer, *p2p.MsgPipeRW) {
+		t.Helper()
+		app, net := p2p.MsgPipe()
+		peer := NewPeer(XDC166, p2p.NewPeer(id, "peer", nil), net, func(common.Hash) *types.Transaction { return nil })
+		return peer, app
+	}
+	peer, app := newPeer(t)
+	defer app.Close()
+	defer peer.Close()
+
+	if first, second := requestID(t, peer, app), requestID(t, peer, app); first != 1 || second != 2 {
+		t.Fatalf("request ids: have %d, %d, want 1, 2", first, second)
+	}
+	// A reconnect is a fresh id scope.
+	reconnected, reconnectApp := newPeer(t)
+	defer reconnectApp.Close()
+	defer reconnected.Close()
+
+	if got := requestID(t, reconnected, reconnectApp); got != 1 {
+		t.Fatalf("reconnect request id: have %d, want 1", got)
+	}
+}
+
+// TestRequestTxsSurvivesTrackerCollision checks that a local tracker bookkeeping
+// failure does not fail the request: the tracker only meters the round trip, and
+// the tx fetcher drops a peer on a fetch error.
+func TestRequestTxsSurvivesTrackerCollision(t *testing.T) {
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatalf("failed to generate random peer id: %v", err)
+	}
+	app, net := p2p.MsgPipe()
+	defer app.Close()
+
+	peer := NewPeer(XDC166, p2p.NewPeer(id, "peer", nil), net, func(common.Hash) *types.Transaction { return nil })
+	defer peer.Close()
+
+	// Occupy the id RequestTxs is about to draw, so its Track call collides.
+	if err := requestTracker.Track(peer.id, peer.conn, peer.version, GetPooledTransactionsMsg, PooledTransactionsMsg, 1); err != nil {
+		t.Fatalf("failed to occupy the next request id: %v", err)
+	}
+	defer requestTracker.Drop(peer.id, peer.conn, 1)
+
+	received := make(chan error, 1)
+	go func() {
+		msg, err := app.ReadMsg()
+		if err == nil {
+			msg.Discard()
+		}
+		received <- err
+	}()
+	if err := peer.RequestTxs([]common.Hash{{0x01}}); err != nil {
+		t.Fatalf("RequestTxs failed on a tracker collision: %v", err)
+	}
+	if err := <-received; err != nil {
+		t.Fatalf("request was not sent: %v", err)
+	}
+}
+
+// TestPeerRequestsLegacySentinel checks that a pre-xdc/166 request sends the
+// bare payload and returns the legacy sentinel instead of a sink request.
+func TestPeerRequestsLegacySentinel(t *testing.T) {
+	var id enode.ID
+	if _, err := rand.Read(id[:]); err != nil {
+		t.Fatalf("failed to generate random peer id: %v", err)
+	}
+	app, net := p2p.MsgPipe()
+	defer app.Close()
+
+	peer := NewPeer(XDC165, p2p.NewPeer(id, "peer", nil), net, func(common.Hash) *types.Transaction { return nil })
+	defer peer.Close()
+
+	received := make(chan error, 1)
+	go func() {
+		msg, err := app.ReadMsg()
+		if err == nil {
+			msg.Discard()
+		}
+		received <- err
+	}()
+	req, err := peer.RequestHeadersByNumber(1, 1, 0, false, make(chan *Response))
+	if req != nil {
+		t.Fatalf("legacy request returned a dispatcher request: %v", req)
+	}
+	if !errors.Is(err, ErrLegacyRequest) {
+		t.Fatalf("legacy request error: have %v, want ErrLegacyRequest", err)
+	}
+	if err := <-received; err != nil {
+		t.Fatalf("failed to read legacy request: %v", err)
 	}
 }
 
@@ -230,37 +446,55 @@ func TestPeerSendsRequests166(t *testing.T) {
 	}{
 		{
 			name: "RequestOneHeader",
-			send: func(p *Peer) error { return p.RequestOneHeader(hash) },
+			send: func(p *Peer) error {
+				_, err := p.RequestOneHeader(hash, make(chan *Response, 1))
+				return err
+			},
 			code: GetBlockHeadersMsg,
 			want: &GetBlockHeadersPacket{Origin: HashOrNumber{Hash: hash}, Amount: 1},
 		},
 		{
 			name: "RequestHeadersByHash",
-			send: func(p *Peer) error { return p.RequestHeadersByHash(hash, 3, 1, true) },
+			send: func(p *Peer) error {
+				_, err := p.RequestHeadersByHash(hash, 3, 1, true, make(chan *Response, 1))
+				return err
+			},
 			code: GetBlockHeadersMsg,
 			want: &GetBlockHeadersPacket{Origin: HashOrNumber{Hash: hash}, Amount: 3, Skip: 1, Reverse: true},
 		},
 		{
 			name: "RequestHeadersByNumber",
-			send: func(p *Peer) error { return p.RequestHeadersByNumber(314, 3, 1, false) },
+			send: func(p *Peer) error {
+				_, err := p.RequestHeadersByNumber(314, 3, 1, false, make(chan *Response, 1))
+				return err
+			},
 			code: GetBlockHeadersMsg,
 			want: &GetBlockHeadersPacket{Origin: HashOrNumber{Number: 314}, Amount: 3, Skip: 1},
 		},
 		{
 			name: "RequestBodies",
-			send: func(p *Peer) error { return p.RequestBodies([]common.Hash{hash}) },
+			send: func(p *Peer) error {
+				_, err := p.RequestBodies([]common.Hash{hash}, make(chan *Response, 1))
+				return err
+			},
 			code: GetBlockBodiesMsg,
 			want: []common.Hash{hash},
 		},
 		{
 			name: "RequestNodeData",
-			send: func(p *Peer) error { return p.RequestNodeData([]common.Hash{hash}) },
+			send: func(p *Peer) error {
+				_, err := p.RequestNodeData([]common.Hash{hash}, make(chan *Response, 1))
+				return err
+			},
 			code: GetNodeDataMsg,
 			want: []common.Hash{hash},
 		},
 		{
 			name: "RequestReceipts",
-			send: func(p *Peer) error { return p.RequestReceipts([]common.Hash{hash}) },
+			send: func(p *Peer) error {
+				_, err := p.RequestReceipts([]common.Hash{hash}, make(chan *Response, 1))
+				return err
+			},
 			code: GetReceiptsMsg,
 			want: []common.Hash{hash},
 		},

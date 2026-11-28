@@ -18,6 +18,7 @@ package eth
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -79,6 +80,163 @@ func waitBackendPacket[T Packet](t *testing.T, r *backendPacketRecorder, timeout
 		t.Fatalf("backend received %T, want %T", r.gotPacket, *new(T))
 	}
 	return packet
+}
+
+// expectDispatchedResponse registers a pending xdc/166 request on the test peer,
+// sends the matching response and returns the response delivered to its sink.
+// The caller owns the Response and must write Done once it has inspected it.
+func expectDispatchedResponse(t *testing.T, tp *testPeer, req *Request, send func()) *Response {
+	t.Helper()
+
+	resCh := make(chan *Response, 1)
+	req.sink = resCh
+
+	// dispatchRequest writes the request to the pipe; drain it so the send does
+	// not block the dispatcher.
+	go func() {
+		if msg, err := tp.app.ReadMsg(); err == nil {
+			msg.Discard()
+		}
+	}()
+	if err := tp.Peer.dispatchRequest(req); err != nil {
+		t.Fatalf("failed to dispatch test request: %v", err)
+	}
+	send()
+
+	select {
+	case res := <-resCh:
+		return res
+	case <-time.After(5 * time.Second):
+		t.Fatal("dispatched response never reached its sink")
+		return nil
+	}
+}
+
+// assertNoBackendPacket fails if backend.Handle observed a response over
+// xdc/166, where the reply must be routed through the request dispatcher.
+func assertNoBackendPacket(t *testing.T, r *backendPacketRecorder) {
+	t.Helper()
+
+	select {
+	case <-r.packetHandled:
+		t.Fatalf("backend received %T over xdc/166", r.gotPacket)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// registerPendingRequest registers a request on the dispatcher without waiting
+// for its response. The outbound request is drained from the pipe.
+func registerPendingRequest(t *testing.T, tp *testPeer, req *Request) {
+	t.Helper()
+
+	go func() {
+		if msg, err := tp.app.ReadMsg(); err == nil {
+			msg.Discard()
+		}
+	}()
+	if err := tp.Peer.dispatchRequest(req); err != nil {
+		t.Fatalf("failed to register pending request: %v", err)
+	}
+}
+
+// TestDispatch166ResponsesByRequestID sends three headers responses out of
+// order and checks each one reaches the sink of its own request.
+func TestDispatch166ResponsesByRequestID(t *testing.T) {
+	backend := newTestBackend(t, 16, nil)
+	peer := newTestPeer(t, "peer", XDC166, backend)
+	chain := backend.chain
+
+	ids := []uint64{101, 102, 103}
+	sinks := make([]chan *Response, len(ids))
+	for i, id := range ids {
+		sinks[i] = make(chan *Response, 1)
+		registerPendingRequest(t, peer, &Request{
+			id:   id,
+			sink: sinks[i],
+			code: GetBlockHeadersMsg,
+			want: BlockHeadersMsg,
+			data: &GetBlockHeadersPacket{},
+		})
+	}
+	// Answer in reverse order so arrival order cannot be mistaken for id match.
+	for i := len(ids) - 1; i >= 0; i-- {
+		header := chain.GetBlockByNumber(uint64(i + 1)).Header()
+		go func(id uint64, header *types.Header) {
+			if err := p2p.Send(peer.app, BlockHeadersMsg, BlockHeadersPacket166{
+				RequestId:          id,
+				BlockHeadersPacket: BlockHeadersPacket{header},
+			}); err != nil {
+				t.Errorf("failed to send response %d: %v", id, err)
+			}
+		}(ids[i], header)
+	}
+	done := make(chan struct{}, len(ids))
+	for i := range sinks {
+		go func(i int) {
+			res := <-sinks[i]
+			if res == nil {
+				t.Errorf("request %d: nil response", ids[i])
+				done <- struct{}{}
+				return
+			}
+			packet, ok := res.Res.(*BlockHeadersPacket)
+			if !ok || len(*packet) != 1 {
+				t.Errorf("request %d: unexpected response %T", ids[i], res.Res)
+			}
+			res.Done <- nil
+			done <- struct{}{}
+		}(i)
+	}
+	for range ids {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("timed out waiting for out-of-order responses")
+		}
+	}
+}
+
+// TestDispatch166UnknownID checks an unregistered response is rejected without
+// stopping the peer's read loop.
+func TestDispatch166UnknownID(t *testing.T) {
+	backend := newTestBackend(t, 1, nil)
+	peer := newTestPeer(t, "peer", XDC166, backend)
+
+	go func() {
+		_ = p2p.Send(peer.app, BlockHeadersMsg, BlockHeadersPacket166{
+			RequestId:          987654,
+			BlockHeadersPacket: BlockHeadersPacket{backend.chain.GetBlockByNumber(0).Header()},
+		})
+	}()
+	select {
+	case err := <-peer.errc:
+		if !errors.Is(err, errDanglingResponse) {
+			t.Fatalf("unknown response: have %v, want errDanglingResponse", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("unknown response left the reader blocked")
+	}
+}
+
+// TestPooledTransactions166BackendPath checks the pooled-tx exception: its
+// reply has no pending dispatcher id and must still reach backend.Handle.
+func TestPooledTransactions166BackendPath(t *testing.T) {
+	backend := newTestBackend(t, 1, nil)
+	backend.accepted.Store(true)
+	recorder := newBackendPacketRecorder(backend, XDC166)
+	peer := newTestPeer(t, "peer", XDC166, backend)
+
+	tx := newTestTransaction(testBankKey, 0, 0)
+	go func() {
+		_ = p2p.Send(peer.app, PooledTransactionsMsg, PooledTransactionsPacket166{
+			RequestId:                55,
+			PooledTransactionsPacket: PooledTransactionsPacket{tx},
+		})
+	}()
+	packet := waitBackendPacket[*PooledTransactionsPacket](t, recorder, "pooled-tx response never reached the backend")
+	if len(*packet) != 1 || (*packet)[0].Hash() != tx.Hash() {
+		t.Fatalf("pooled-tx response mismatch: %v", *packet)
+	}
 }
 
 func TestGetBlockHeaders165(t *testing.T) { testGetBlockHeaders(t, XDC165) }
@@ -283,18 +441,37 @@ func testGetBlockHeaders(t *testing.T, protocol uint) {
 			}
 		}
 	}
-	// Over xdc/166, deliver a 66-encoded headers response and assert the
-	// backend observed the unwrapped legacy packet, not the *66 wrapper.
+	// Over xdc/166, deliver a 66-encoded headers response and assert it reaches
+	// the request sink rather than backend.Handle.
 	if protocol >= XDC166 {
 		headers := []*types.Header{
 			chain.GetBlockByNumber(1).Header(),
 			chain.GetBlockByNumber(2).Header(),
 		}
-		p2p.Send(peer.app, BlockHeadersMsg, BlockHeadersPacket166{
-			RequestId:          789,
-			BlockHeadersPacket: headers,
+		res := expectDispatchedResponse(t, peer, &Request{
+			id:   789,
+			code: GetBlockHeadersMsg,
+			want: BlockHeadersMsg,
+			data: &GetBlockHeadersPacket{},
+		}, func() {
+			p2p.Send(peer.app, BlockHeadersMsg, BlockHeadersPacket166{
+				RequestId:          789,
+				BlockHeadersPacket: headers,
+			})
 		})
-		waitBackendPacket[*BlockHeadersPacket](t, recorder, "headers response never reached the backend")
+		if res == nil {
+			return
+		}
+		defer func() { res.Done <- nil }()
+
+		packet, ok := res.Res.(*BlockHeadersPacket)
+		if !ok {
+			t.Fatalf("dispatched %T, want *BlockHeadersPacket", res.Res)
+		}
+		if len(*packet) != len(headers) {
+			t.Fatalf("dispatched %d headers, want %d", len(*packet), len(headers))
+		}
+		assertNoBackendPacket(t, recorder)
 	}
 }
 
@@ -538,15 +715,35 @@ func testGetBlockBodies(t *testing.T, protocol uint) {
 			}
 		}
 	}
-	// Over xdc/166, deliver a 66-encoded bodies response and assert the
-	// backend observed the unwrapped legacy packet, not the *66 wrapper.
+	// Over xdc/166, deliver a 66-encoded bodies response and assert it reaches
+	// the request sink rather than backend.Handle.
 	if protocol >= XDC166 {
 		block := chain.GetBlockByNumber(1)
-		p2p.Send(peer.app, BlockBodiesMsg, BlockBodiesPacket166{
-			RequestId:         789,
-			BlockBodiesPacket: BlockBodiesPacket{{Transactions: block.Transactions(), Uncles: block.Uncles()}},
+		bodies := BlockBodiesPacket{{Transactions: block.Transactions(), Uncles: block.Uncles()}}
+		res := expectDispatchedResponse(t, peer, &Request{
+			id:   789,
+			code: GetBlockBodiesMsg,
+			want: BlockBodiesMsg,
+			data: &GetBlockBodiesPacket{},
+		}, func() {
+			p2p.Send(peer.app, BlockBodiesMsg, BlockBodiesPacket166{
+				RequestId:         789,
+				BlockBodiesPacket: bodies,
+			})
 		})
-		waitBackendPacket[*BlockBodiesPacket](t, recorder, "bodies response never reached the backend")
+		if res == nil {
+			return
+		}
+		defer func() { res.Done <- nil }()
+
+		packet, ok := res.Res.(*BlockBodiesPacket)
+		if !ok {
+			t.Fatalf("dispatched %T, want *BlockBodiesPacket", res.Res)
+		}
+		if len(*packet) != len(bodies) {
+			t.Fatalf("dispatched %d bodies, want %d", len(*packet), len(bodies))
+		}
+		assertNoBackendPacket(t, recorder)
 	}
 }
 
@@ -730,14 +927,34 @@ func testGetNodeData(t *testing.T, protocol uint) {
 			}
 		}
 	}
-	// Over xdc/166, deliver a 66-encoded node data response and assert the
-	// backend observed the unwrapped legacy packet, not the *66 wrapper.
+	// Over xdc/166, deliver a 66-encoded node data response and assert it
+	// reaches the request sink rather than backend.Handle.
 	if protocol >= XDC166 {
-		p2p.Send(peer.app, NodeDataMsg, NodeDataPacket166{
-			RequestId:      789,
-			NodeDataPacket: NodeDataPacket{{0x01}},
+		data := NodeDataPacket{{0x01}}
+		res := expectDispatchedResponse(t, peer, &Request{
+			id:   789,
+			code: GetNodeDataMsg,
+			want: NodeDataMsg,
+			data: &GetNodeDataPacket{},
+		}, func() {
+			p2p.Send(peer.app, NodeDataMsg, NodeDataPacket166{
+				RequestId:      789,
+				NodeDataPacket: data,
+			})
 		})
-		waitBackendPacket[*NodeDataPacket](t, recorder, "node data response never reached the backend")
+		if res == nil {
+			return
+		}
+		defer func() { res.Done <- nil }()
+
+		packet, ok := res.Res.(*NodeDataPacket)
+		if !ok {
+			t.Fatalf("dispatched %T, want *NodeDataPacket", res.Res)
+		}
+		if len(*packet) != len(data) {
+			t.Fatalf("dispatched %d node data entries, want %d", len(*packet), len(data))
+		}
+		assertNoBackendPacket(t, recorder)
 	}
 }
 
@@ -887,14 +1104,34 @@ func testGetReceipt(t *testing.T, protocol uint) {
 			t.Errorf("receipts mismatch: %v", err)
 		}
 	}
-	// Over xdc/166, deliver a 66-encoded receipts response and assert the
-	// backend observed the unwrapped legacy packet, not the *66 wrapper.
+	// Over xdc/166, deliver a 66-encoded receipts response and assert it
+	// reaches the request sink rather than backend.Handle.
 	if protocol >= XDC166 {
-		p2p.Send(peer.app, ReceiptsMsg, ReceiptsPacket166{
-			RequestId:      789,
-			ReceiptsPacket: receipts[:1],
+		packet := receipts[:1]
+		res := expectDispatchedResponse(t, peer, &Request{
+			id:   789,
+			code: GetReceiptsMsg,
+			want: ReceiptsMsg,
+			data: &GetReceiptsPacket{},
+		}, func() {
+			p2p.Send(peer.app, ReceiptsMsg, ReceiptsPacket166{
+				RequestId:      789,
+				ReceiptsPacket: packet,
+			})
 		})
-		waitBackendPacket[*ReceiptsPacket](t, recorder, "receipts response never reached the backend")
+		if res == nil {
+			return
+		}
+		defer func() { res.Done <- nil }()
+
+		delivered, ok := res.Res.(*ReceiptsPacket)
+		if !ok {
+			t.Fatalf("dispatched %T, want *ReceiptsPacket", res.Res)
+		}
+		if len(*delivered) != len(packet) {
+			t.Fatalf("dispatched %d receipt sets, want %d", len(*delivered), len(packet))
+		}
+		assertNoBackendPacket(t, recorder)
 	}
 }
 
@@ -1330,17 +1567,53 @@ func TestRejectMalformed166Responses(t *testing.T) {
 			t.Fatal("malformed 166 response was not rejected within 2 seconds")
 		}
 	}
+	// rejectPending registers the matching request id first. Without it a
+	// dropped sanity check would still be rejected as an unknown id, which
+	// would make the assertion pass for the wrong reason.
+	rejectPending := func(t *testing.T, backend *testBackend, code uint64, payload interface{}, req *Request) {
+		t.Helper()
+		peer := newTestPeer(t, "peer", XDC166, backend)
+		registerPendingRequest(t, peer, req)
 
+		go func() { _ = p2p.Send(peer.app, code, payload) }()
+
+		select {
+		case err := <-peer.errc:
+			if err == nil {
+				t.Fatal("malformed 166 response was accepted")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("malformed 166 response was not rejected within 2 seconds")
+		}
+	}
+
+	t.Run("oversized header extra", func(t *testing.T) {
+		backend := newTestBackend(t, 1, nil)
+		header := &types.Header{Extra: bytes.Repeat([]byte{0x01}, 20*1024+1)}
+		rejectPending(t, backend, BlockHeadersMsg, BlockHeadersPacket166{
+			RequestId:          123,
+			BlockHeadersPacket: BlockHeadersPacket{header},
+		}, &Request{
+			id:   123,
+			code: GetBlockHeadersMsg,
+			want: BlockHeadersMsg,
+			data: &GetBlockHeadersPacket{},
+		})
+	})
 	t.Run("oversized uncle extra", func(t *testing.T) {
 		backend := newTestBackend(t, 1, nil)
 		// The payload decodes cleanly, so the retained sanity check is the only
-		// thing that can reject it: dropping the check lets the backend accept
-		// the packet silently, so the peer is never torn down and this subtest
-		// fails when the 2 s rejection window in reject expires.
+		// thing that can reject it. The request id is registered so a dropped
+		// check cannot masquerade as an unknown-id rejection.
 		bodies := BlockBodiesPacket{{Uncles: []*types.Header{{Extra: bytes.Repeat([]byte{0x01}, 20*1024+1)}}}}
-		reject(t, backend, BlockBodiesMsg, BlockBodiesPacket166{
+		rejectPending(t, backend, BlockBodiesMsg, BlockBodiesPacket166{
 			RequestId:         123,
 			BlockBodiesPacket: bodies,
+		}, &Request{
+			id:   123,
+			code: GetBlockBodiesMsg,
+			want: BlockBodiesMsg,
+			data: &GetBlockBodiesPacket{},
 		})
 	})
 	t.Run("nil block body", func(t *testing.T) {

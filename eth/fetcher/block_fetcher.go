@@ -28,6 +28,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/prque"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	eth "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/trie"
@@ -113,10 +114,10 @@ var (
 type blockRetrievalFn func(common.Hash) *types.Block
 
 // headerRequesterFn is a callback type for sending a header retrieval request.
-type headerRequesterFn func(common.Hash) error
+type headerRequesterFn func(common.Hash, chan *eth.Response) (*eth.Request, error)
 
 // bodyRequesterFn is a callback type for sending a body retrieval request.
-type bodyRequesterFn func([]common.Hash) error
+type bodyRequesterFn func([]common.Hash, chan *eth.Response) (*eth.Request, error)
 
 // headerVerifierFn is a callback type to verify a block's header for fast propagation.
 type headerVerifierFn func(header *types.Header) error
@@ -497,15 +498,36 @@ func (f *BlockFetcher) loop() {
 
 				// Create a closure of the fetch and schedule in on a new thread
 				fetchHeader := f.fetching[hashes[0]].fetchHeader
-				go func() {
+				go func(peer string) {
 					if f.fetchingHook != nil {
 						f.fetchingHook(hashes)
 					}
 					for _, hash := range hashes {
 						headerFetchMeter.Mark(1)
-						fetchHeader(hash) // Suboptimal, but protocol doesn't allow batch header retrievals
+						go func(hash common.Hash) {
+							resCh := make(chan *eth.Response)
+
+							req, err := fetchHeader(hash, resCh)
+							if err != nil {
+								// A legacy peer delivers the reply through the
+								// node layer; a failed send has no reply to wait
+								// for. Neither may be counted as a peer failure.
+								return
+							}
+							if req == nil {
+								return
+							}
+							defer req.Close()
+
+							res := <-resCh
+							if res == nil {
+								return
+							}
+							res.Done <- nil
+							f.FilterHeaders(peer, *res.Res.(*eth.BlockHeadersPacket), time.Now().Add(res.Time))
+						}(hash)
 					}
-				}()
+				}(peer)
 			}
 			// Schedule the next fetch if blocks are still pending
 			f.rescheduleFetch(fetchTimer)
@@ -533,8 +555,29 @@ func (f *BlockFetcher) loop() {
 				if f.completingHook != nil {
 					f.completingHook(hashes)
 				}
+				fetchBodies := f.completing[hashes[0]].fetchBodies
 				bodyFetchMeter.Mark(int64(len(hashes)))
-				go f.completing[hashes[0]].fetchBodies(hashes)
+
+				go func(peer string, hashes []common.Hash) {
+					resCh := make(chan *eth.Response)
+
+					req, err := fetchBodies(hashes, resCh)
+					if err != nil {
+						return
+					}
+					if req == nil {
+						return
+					}
+					defer req.Close()
+
+					res := <-resCh
+					if res == nil {
+						return
+					}
+					res.Done <- nil
+					txs, uncles := res.Res.(*eth.BlockBodiesPacket).Unpack()
+					f.FilterBodies(peer, txs, uncles, time.Now())
+				}(peer, hashes)
 			}
 			// Schedule the next fetch if blocks are still pending
 			f.rescheduleComplete(completeTimer)

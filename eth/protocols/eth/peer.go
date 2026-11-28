@@ -17,9 +17,9 @@
 package eth
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -79,6 +79,12 @@ const (
 	MaxKnownSyncInfo = 131072
 )
 
+// ErrLegacyRequest is returned by the request senders on protocol versions
+// below xdc/166. The request has already been written to the wire; its reply
+// still travels through the node layer's legacy Handle path instead of a
+// request sink. It is not a failure and must not penalise the peer.
+var ErrLegacyRequest = errors.New("legacy request")
+
 // propEvent is a block propagation, waiting for its turn in the broadcast queue.
 type propEvent struct {
 	block *types.Block
@@ -97,6 +103,8 @@ var peerConnSeq atomic.Uint64
 type Peer struct {
 	id   string
 	conn uint64 // Process-unique connection id for request tracking
+
+	reqIDSeq atomic.Uint64 // Per-connection request id allocator, reset by reconnect
 
 	*p2p.Peer
 	rw p2p.MsgReadWriter
@@ -640,9 +648,17 @@ func (p *Peer) SendSyncInfo(syncInfo *types.SyncInfo) error {
 	return p2p.Send(p.rw, SyncInfoMsg, (*SyncInfoPacket)(syncInfo))
 }
 
+// nextRequestID hands out the wire-level id of the next request on this
+// connection. Both the dispatcher and the tracker require ids that never repeat
+// within a connection (see Request), so this is a plain counter rather than a
+// random draw; a reconnect gets a fresh Peer and therefore a fresh id scope.
+func (p *Peer) nextRequestID() uint64 {
+	return p.reqIDSeq.Add(1)
+}
+
 // RequestOneHeader is a wrapper around the header query functions to fetch a
 // single header. It is used solely by the fetcher.
-func (p *Peer) RequestOneHeader(hash common.Hash) error {
+func (p *Peer) RequestOneHeader(hash common.Hash, sink chan *Response) (*Request, error) {
 	p.Log().Debug("Fetching single header", "hash", hash)
 	query := GetBlockHeadersPacket{
 		Origin:  HashOrNumber{Hash: hash},
@@ -650,18 +666,29 @@ func (p *Peer) RequestOneHeader(hash common.Hash) error {
 		Skip:    uint64(0),
 		Reverse: false,
 	}
-	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &GetBlockHeadersPacket166{
-			RequestId:             rand.Uint64(),
-			GetBlockHeadersPacket: &query,
-		})
+	if p.Version() < XDC166 {
+		return nil, p.sendLegacyRequest(GetBlockHeadersMsg, &query)
 	}
-	return p2p.Send(p.rw, GetBlockHeadersMsg, &query)
+	id := p.nextRequestID()
+	req := &Request{
+		id:   id,
+		sink: sink,
+		code: GetBlockHeadersMsg,
+		want: BlockHeadersMsg,
+		data: &GetBlockHeadersPacket166{
+			RequestId:             id,
+			GetBlockHeadersPacket: &query,
+		},
+	}
+	if err := p.dispatchRequest(req); err != nil {
+		return nil, err
+	}
+	return req, nil
 }
 
 // RequestHeadersByHash fetches a batch of blocks' headers corresponding to the
 // specified header query, based on the hash of an origin block.
-func (p *Peer) RequestHeadersByHash(origin common.Hash, amount int, skip int, reverse bool) error {
+func (p *Peer) RequestHeadersByHash(origin common.Hash, amount int, skip int, reverse bool, sink chan *Response) (*Request, error) {
 	p.Log().Debug("Fetching batch of headers", "count", amount, "fromhash", origin, "skip", skip, "reverse", reverse)
 	query := GetBlockHeadersPacket{
 		Origin:  HashOrNumber{Hash: origin},
@@ -669,18 +696,29 @@ func (p *Peer) RequestHeadersByHash(origin common.Hash, amount int, skip int, re
 		Skip:    uint64(skip),
 		Reverse: reverse,
 	}
-	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &GetBlockHeadersPacket166{
-			RequestId:             rand.Uint64(),
-			GetBlockHeadersPacket: &query,
-		})
+	if p.Version() < XDC166 {
+		return nil, p.sendLegacyRequest(GetBlockHeadersMsg, &query)
 	}
-	return p2p.Send(p.rw, GetBlockHeadersMsg, &query)
+	id := p.nextRequestID()
+	req := &Request{
+		id:   id,
+		sink: sink,
+		code: GetBlockHeadersMsg,
+		want: BlockHeadersMsg,
+		data: &GetBlockHeadersPacket166{
+			RequestId:             id,
+			GetBlockHeadersPacket: &query,
+		},
+	}
+	if err := p.dispatchRequest(req); err != nil {
+		return nil, err
+	}
+	return req, nil
 }
 
 // RequestHeadersByNumber fetches a batch of blocks' headers corresponding to the
 // specified header query, based on the number of an origin block.
-func (p *Peer) RequestHeadersByNumber(origin uint64, amount int, skip int, reverse bool) error {
+func (p *Peer) RequestHeadersByNumber(origin uint64, amount int, skip int, reverse bool, sink chan *Response) (*Request, error) {
 	p.Log().Debug("Fetching batch of headers", "count", amount, "fromnum", origin, "skip", skip, "reverse", reverse)
 	query := GetBlockHeadersPacket{
 		Origin:  HashOrNumber{Number: origin},
@@ -688,63 +726,132 @@ func (p *Peer) RequestHeadersByNumber(origin uint64, amount int, skip int, rever
 		Skip:    uint64(skip),
 		Reverse: reverse,
 	}
-	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetBlockHeadersMsg, &GetBlockHeadersPacket166{
-			RequestId:             rand.Uint64(),
-			GetBlockHeadersPacket: &query,
-		})
+	if p.Version() < XDC166 {
+		return nil, p.sendLegacyRequest(GetBlockHeadersMsg, &query)
 	}
-	return p2p.Send(p.rw, GetBlockHeadersMsg, &query)
+	id := p.nextRequestID()
+	req := &Request{
+		id:   id,
+		sink: sink,
+		code: GetBlockHeadersMsg,
+		want: BlockHeadersMsg,
+		data: &GetBlockHeadersPacket166{
+			RequestId:             id,
+			GetBlockHeadersPacket: &query,
+		},
+	}
+	if err := p.dispatchRequest(req); err != nil {
+		return nil, err
+	}
+	return req, nil
 }
 
 // RequestBodies fetches a batch of blocks' bodies corresponding to the hashes
 // specified.
-func (p *Peer) RequestBodies(hashes []common.Hash) error {
+func (p *Peer) RequestBodies(hashes []common.Hash, sink chan *Response) (*Request, error) {
 	p.Log().Debug("Fetching batch of block bodies", "count", len(hashes))
-	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetBlockBodiesMsg, &GetBlockBodiesPacket166{
-			RequestId:            rand.Uint64(),
-			GetBlockBodiesPacket: hashes,
-		})
+	if p.Version() < XDC166 {
+		return nil, p.sendLegacyRequest(GetBlockBodiesMsg, hashes)
 	}
-	return p2p.Send(p.rw, GetBlockBodiesMsg, hashes)
+	id := p.nextRequestID()
+	req := &Request{
+		id:   id,
+		sink: sink,
+		code: GetBlockBodiesMsg,
+		want: BlockBodiesMsg,
+		data: &GetBlockBodiesPacket166{
+			RequestId:            id,
+			GetBlockBodiesPacket: hashes,
+		},
+	}
+	if err := p.dispatchRequest(req); err != nil {
+		return nil, err
+	}
+	return req, nil
 }
 
 // RequestNodeData fetches a batch of arbitrary data from a node's known state
 // data, corresponding to the specified hashes.
-func (p *Peer) RequestNodeData(hashes []common.Hash) error {
+func (p *Peer) RequestNodeData(hashes []common.Hash, sink chan *Response) (*Request, error) {
 	p.Log().Debug("Fetching batch of state data", "count", len(hashes))
-	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetNodeDataMsg, &GetNodeDataPacket166{
-			RequestId:         rand.Uint64(),
-			GetNodeDataPacket: hashes,
-		})
+	if p.Version() < XDC166 {
+		return nil, p.sendLegacyRequest(GetNodeDataMsg, hashes)
 	}
-	return p2p.Send(p.rw, GetNodeDataMsg, hashes)
+	id := p.nextRequestID()
+	req := &Request{
+		id:   id,
+		sink: sink,
+		code: GetNodeDataMsg,
+		want: NodeDataMsg,
+		data: &GetNodeDataPacket166{
+			RequestId:         id,
+			GetNodeDataPacket: hashes,
+		},
+	}
+	if err := p.dispatchRequest(req); err != nil {
+		return nil, err
+	}
+	return req, nil
 }
 
 // RequestReceipts fetches a batch of transaction receipts from a remote node.
-func (p *Peer) RequestReceipts(hashes []common.Hash) error {
+func (p *Peer) RequestReceipts(hashes []common.Hash, sink chan *Response) (*Request, error) {
 	p.Log().Debug("Fetching batch of receipts", "count", len(hashes))
-	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetReceiptsMsg, &GetReceiptsPacket166{
-			RequestId:         rand.Uint64(),
-			GetReceiptsPacket: hashes,
-		})
+	if p.Version() < XDC166 {
+		return nil, p.sendLegacyRequest(GetReceiptsMsg, hashes)
 	}
-	return p2p.Send(p.rw, GetReceiptsMsg, hashes)
+	id := p.nextRequestID()
+	req := &Request{
+		id:   id,
+		sink: sink,
+		code: GetReceiptsMsg,
+		want: ReceiptsMsg,
+		data: &GetReceiptsPacket166{
+			RequestId:         id,
+			GetReceiptsPacket: hashes,
+		},
+	}
+	if err := p.dispatchRequest(req); err != nil {
+		return nil, err
+	}
+	return req, nil
 }
 
 // RequestTxs fetches a batch of transactions from a remote node.
 func (p *Peer) RequestTxs(hashes []common.Hash) error {
 	p.Log().Debug("Fetching batch of transactions", "count", len(hashes))
-	if p.Version() >= XDC166 {
-		return p2p.Send(p.rw, GetPooledTransactionsMsg, &GetPooledTransactionsPacket166{
-			RequestId:                   rand.Uint64(),
-			GetPooledTransactionsPacket: hashes,
-		})
+	if p.Version() < XDC166 {
+		return p2p.Send(p.rw, GetPooledTransactionsMsg, hashes)
 	}
-	return p2p.Send(p.rw, GetPooledTransactionsMsg, hashes)
+	id := p.nextRequestID()
+	// The tracker only meters the round trip: a local id collision or the
+	// pending limit must not fail an otherwise fine request, nor make the tx
+	// fetcher treat the peer as faulty. The reply then simply counts as stale.
+	tracked := true
+	if err := requestTracker.Track(p.id, p.conn, p.version, GetPooledTransactionsMsg, PooledTransactionsMsg, id); err != nil {
+		tracked = false
+		p.Log().Debug("Failed to track pooled transactions request", "err", err, "id", id)
+	}
+	if err := p2p.Send(p.rw, GetPooledTransactionsMsg, &GetPooledTransactionsPacket166{
+		RequestId:                   id,
+		GetPooledTransactionsPacket: hashes,
+	}); err != nil {
+		if tracked {
+			requestTracker.Drop(p.id, p.conn, id)
+		}
+		return err
+	}
+	return nil
+}
+
+// sendLegacyRequest writes a bare request payload on a pre-xdc/166 peer and
+// reports the legacy sentinel on success. The reply arrives through the node
+// layer instead of a request sink.
+func (p *Peer) sendLegacyRequest(code uint64, data interface{}) error {
+	if err := p2p.Send(p.rw, code, data); err != nil {
+		return err
+	}
+	return ErrLegacyRequest
 }
 
 // String implements fmt.Stringer.

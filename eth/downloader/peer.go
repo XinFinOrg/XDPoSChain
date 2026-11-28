@@ -29,6 +29,8 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/types"
+	eth "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
@@ -72,6 +74,9 @@ type peerConnection struct {
 
 	peer Peer
 
+	deliver func(dataPack) error   // Injects xdc/166 responses into the downloader queue
+	cancel  func() <-chan struct{} // Current sync cancellation channel
+
 	version uint       // Eth protocol version number to switch strategies
 	log     log.Logger // Contextual logger to add extra infos to peer logs
 	lock    sync.RWMutex
@@ -80,16 +85,16 @@ type peerConnection struct {
 // LightPeer encapsulates the methods required to synchronise with a remote light peer.
 type LightPeer interface {
 	Head() (common.Hash, *big.Int)
-	RequestHeadersByHash(common.Hash, int, int, bool) error
-	RequestHeadersByNumber(uint64, int, int, bool) error
+	RequestHeadersByHash(common.Hash, int, int, bool, chan *eth.Response) (*eth.Request, error)
+	RequestHeadersByNumber(uint64, int, int, bool, chan *eth.Response) (*eth.Request, error)
 }
 
 // Peer encapsulates the methods required to synchronise with a remote full peer.
 type Peer interface {
 	LightPeer
-	RequestBodies([]common.Hash) error
-	RequestReceipts([]common.Hash) error
-	RequestNodeData([]common.Hash) error
+	RequestBodies([]common.Hash, chan *eth.Response) (*eth.Request, error)
+	RequestReceipts([]common.Hash, chan *eth.Response) (*eth.Request, error)
+	RequestNodeData([]common.Hash, chan *eth.Response) (*eth.Request, error)
 }
 
 // lightPeerWrapper wraps a LightPeer struct, stubbing out the Peer-only methods.
@@ -98,19 +103,19 @@ type lightPeerWrapper struct {
 }
 
 func (w *lightPeerWrapper) Head() (common.Hash, *big.Int) { return w.peer.Head() }
-func (w *lightPeerWrapper) RequestHeadersByHash(h common.Hash, amount int, skip int, reverse bool) error {
-	return w.peer.RequestHeadersByHash(h, amount, skip, reverse)
+func (w *lightPeerWrapper) RequestHeadersByHash(h common.Hash, amount int, skip int, reverse bool, sink chan *eth.Response) (*eth.Request, error) {
+	return w.peer.RequestHeadersByHash(h, amount, skip, reverse, sink)
 }
-func (w *lightPeerWrapper) RequestHeadersByNumber(i uint64, amount int, skip int, reverse bool) error {
-	return w.peer.RequestHeadersByNumber(i, amount, skip, reverse)
+func (w *lightPeerWrapper) RequestHeadersByNumber(i uint64, amount int, skip int, reverse bool, sink chan *eth.Response) (*eth.Request, error) {
+	return w.peer.RequestHeadersByNumber(i, amount, skip, reverse, sink)
 }
-func (w *lightPeerWrapper) RequestBodies([]common.Hash) error {
+func (w *lightPeerWrapper) RequestBodies([]common.Hash, chan *eth.Response) (*eth.Request, error) {
 	panic("RequestBodies not supported in light client mode sync")
 }
-func (w *lightPeerWrapper) RequestReceipts([]common.Hash) error {
+func (w *lightPeerWrapper) RequestReceipts([]common.Hash, chan *eth.Response) (*eth.Request, error) {
 	panic("RequestReceipts not supported in light client mode sync")
 }
-func (w *lightPeerWrapper) RequestNodeData([]common.Hash) error {
+func (w *lightPeerWrapper) RequestNodeData([]common.Hash, chan *eth.Response) (*eth.Request, error) {
 	panic("RequestNodeData not supported in light client mode sync")
 }
 
@@ -124,12 +129,16 @@ func shortPeerID(id string) string {
 	return id[:16]
 }
 
-// newPeerConnection creates a new downloader peer.
-func newPeerConnection(id string, version uint, peer Peer, logger log.Logger) *peerConnection {
+// newPeerConnection creates a new downloader peer. The deliver and cancel
+// callbacks bridge xdc/166 request sinks back into the downloader; they are
+// unused by the legacy request path.
+func newPeerConnection(id string, version uint, peer Peer, logger log.Logger, deliver func(dataPack) error, cancel func() <-chan struct{}) *peerConnection {
 	return &peerConnection{
 		id:      id,
 		lacking: make(map[common.Hash]struct{}),
 		peer:    peer,
+		deliver: deliver,
+		cancel:  cancel,
 		version: version,
 		log:     logger,
 	}
@@ -161,9 +170,22 @@ func (p *peerConnection) FetchHeaders(from uint64, count int) error {
 	}
 	p.headerStarted = time.Now()
 
-	// Issue the header retrieval request (absolut upwards without gaps)
-	go p.peer.RequestHeadersByNumber(from, count, 0, false)
-
+	go func() {
+		resCh := make(chan *eth.Response)
+		req, err := p.peer.RequestHeadersByNumber(from, count, 0, false, resCh)
+		if errors.Is(err, eth.ErrLegacyRequest) {
+			return // Reply arrives through the node layer.
+		}
+		if err != nil {
+			// fetchParts panics when fetch returns an error; release the peer
+			// so a later scheduling round can retry it and let the queue time
+			// the reservation out.
+			atomic.StoreInt32(&p.headerIdle, 0)
+			p.log.Debug("Failed to request headers", "err", err)
+			return
+		}
+		p.waitResponse(req, resCh, p.packHeaders)
+	}()
 	return nil
 }
 
@@ -175,15 +197,26 @@ func (p *peerConnection) FetchBodies(request *fetchRequest) error {
 	}
 	p.blockStarted = time.Now()
 
+	hashes := make([]common.Hash, 0, len(request.Headers))
+	for _, header := range request.Headers {
+		hashes = append(hashes, header.Hash())
+	}
 	go func() {
-		// Convert the header set to a retrievable slice
-		hashes := make([]common.Hash, 0, len(request.Headers))
-		for _, header := range request.Headers {
-			hashes = append(hashes, header.Hash())
+		resCh := make(chan *eth.Response)
+		req, err := p.peer.RequestBodies(hashes, resCh)
+		if errors.Is(err, eth.ErrLegacyRequest) {
+			return
 		}
-		p.peer.RequestBodies(hashes)
+		if err != nil {
+			atomic.StoreInt32(&p.blockIdle, 0)
+			p.log.Debug("Failed to request bodies", "err", err)
+			return
+		}
+		p.waitResponse(req, resCh, func(res *eth.Response) dataPack {
+			txs, uncles := res.Res.(*eth.BlockBodiesPacket).Unpack()
+			return &bodyPack{p.id, txs, uncles}
+		})
 	}()
-
 	return nil
 }
 
@@ -195,15 +228,25 @@ func (p *peerConnection) FetchReceipts(request *fetchRequest) error {
 	}
 	p.receiptStarted = time.Now()
 
+	hashes := make([]common.Hash, 0, len(request.Headers))
+	for _, header := range request.Headers {
+		hashes = append(hashes, header.Hash())
+	}
 	go func() {
-		// Convert the header set to a retrievable slice
-		hashes := make([]common.Hash, 0, len(request.Headers))
-		for _, header := range request.Headers {
-			hashes = append(hashes, header.Hash())
+		resCh := make(chan *eth.Response)
+		req, err := p.peer.RequestReceipts(hashes, resCh)
+		if errors.Is(err, eth.ErrLegacyRequest) {
+			return
 		}
-		p.peer.RequestReceipts(hashes)
+		if err != nil {
+			atomic.StoreInt32(&p.receiptIdle, 0)
+			p.log.Debug("Failed to request receipts", "err", err)
+			return
+		}
+		p.waitResponse(req, resCh, func(res *eth.Response) dataPack {
+			return &receiptPack{p.id, [][]*types.Receipt(*res.Res.(*eth.ReceiptsPacket))}
+		})
 	}()
-
 	return nil
 }
 
@@ -215,9 +258,86 @@ func (p *peerConnection) FetchNodeData(hashes []common.Hash) error {
 	}
 	p.stateStarted = time.Now()
 
-	go p.peer.RequestNodeData(hashes)
-
+	go func() {
+		resCh := make(chan *eth.Response)
+		req, err := p.peer.RequestNodeData(hashes, resCh)
+		if errors.Is(err, eth.ErrLegacyRequest) {
+			return
+		}
+		if err != nil {
+			atomic.StoreInt32(&p.stateIdle, 0)
+			p.log.Debug("Failed to request state data", "err", err)
+			return
+		}
+		p.waitResponse(req, resCh, func(res *eth.Response) dataPack {
+			return &statePack{p.id, [][]byte(*res.Res.(*eth.NodeDataPacket))}
+		})
+	}()
 	return nil
+}
+
+// requestHeadersByHash issues a header request whose reply is injected into
+// the downloader without reserving an idle slot (the ancestor search does not
+// use fetchParts).
+func (p *peerConnection) requestHeadersByHash(hash common.Hash, amount int, skip int, reverse bool) {
+	go func() {
+		resCh := make(chan *eth.Response)
+		req, err := p.peer.RequestHeadersByHash(hash, amount, skip, reverse, resCh)
+		if err != nil {
+			return // Legacy replies arrive through the node layer.
+		}
+		p.waitResponse(req, resCh, p.packHeaders)
+	}()
+}
+
+// requestHeadersByNumber issues a numbered header request without reserving an
+// idle slot (see requestHeadersByHash).
+func (p *peerConnection) requestHeadersByNumber(origin uint64, amount int, skip int, reverse bool) {
+	go func() {
+		resCh := make(chan *eth.Response)
+		req, err := p.peer.RequestHeadersByNumber(origin, amount, skip, reverse, resCh)
+		if err != nil {
+			return
+		}
+		p.waitResponse(req, resCh, p.packHeaders)
+	}()
+}
+
+// packHeaders converts a xdc/166 header response into a downloader packet.
+func (p *peerConnection) packHeaders(res *eth.Response) dataPack {
+	return &headerPack{p.id, []*types.Header(*res.Res.(*eth.BlockHeadersPacket))}
+}
+
+// waitResponse bridges one xdc/166 request sink into the downloader. A
+// response taken from the sink must always be acknowledged on Done, including
+// when delivery fails; the peer-teardown and sync-cancel paths took no
+// response and therefore owe no verdict.
+func (p *peerConnection) waitResponse(req *eth.Request, resCh chan *eth.Response, pack func(*eth.Response) dataPack) {
+	if req == nil {
+		return
+	}
+	defer req.Close()
+
+	select {
+	case res := <-resCh:
+		if res == nil {
+			return
+		}
+		var err error
+		if p.deliver != nil {
+			err = p.deliver(pack(res))
+		}
+		res.Done <- err
+	case <-p.cancelChannel():
+	}
+}
+
+// cancelChannel returns the downloader's current sync cancellation channel.
+func (p *peerConnection) cancelChannel() <-chan struct{} {
+	if p.cancel == nil {
+		return nil
+	}
+	return p.cancel()
 }
 
 // SetHeadersIdle sets the peer to idle, allowing it to execute new header retrieval

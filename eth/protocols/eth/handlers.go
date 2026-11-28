@@ -18,6 +18,7 @@ package eth
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -281,10 +282,16 @@ func handleBlockHeaders66(backend Backend, msg p2p.Msg, peer *Peer) error {
 	if err := msg.Decode(&res); err != nil {
 		return errResp(ErrDecode, "msg %v: %v", msg, err)
 	}
-	// Unwrap the embedded legacy packet: the backend type switch only
-	// recognizes legacy types, so delivering the wrapper would silently drop
-	// the response.
-	return backend.Handle(peer, &res.BlockHeadersPacket, msg.Size)
+	// The xdc/166 reply no longer reaches the node layer's Handle, so keep the
+	// legacy header hardening on this path before the response is dispatched.
+	if err := types.SanityCheckHeaders([]*types.Header(res.BlockHeadersPacket)); err != nil {
+		return err
+	}
+	return peer.dispatchResponse(&Response{
+		id:   res.RequestId,
+		code: BlockHeadersMsg,
+		Res:  &res.BlockHeadersPacket,
+	})
 }
 
 func handleGetBlockBodies(backend Backend, msg p2p.Msg, peer *Peer) error {
@@ -346,8 +353,11 @@ func handleBlockBodies66(backend Backend, msg p2p.Msg, peer *Peer) error {
 	if err := res.BlockBodiesPacket.sanityCheck(); err != nil {
 		return err
 	}
-	// Unwrap the embedded legacy packet (see handleBlockHeaders66).
-	return backend.Handle(peer, &res.BlockBodiesPacket, msg.Size)
+	return peer.dispatchResponse(&Response{
+		id:   res.RequestId,
+		code: BlockBodiesMsg,
+		Res:  &res.BlockBodiesPacket,
+	})
 }
 
 func handleGetNodeData(backend Backend, msg p2p.Msg, peer *Peer) error {
@@ -407,8 +417,11 @@ func handleNodeData66(backend Backend, msg p2p.Msg, peer *Peer) error {
 	if err := msg.Decode(&res); err != nil {
 		return errResp(ErrDecode, "msg %v: %v", msg, err)
 	}
-	// Unwrap the embedded legacy packet (see handleBlockHeaders66).
-	return backend.Handle(peer, &res.NodeDataPacket, msg.Size)
+	return peer.dispatchResponse(&Response{
+		id:   res.RequestId,
+		code: NodeDataMsg,
+		Res:  &res.NodeDataPacket,
+	})
 }
 
 func handleGetReceipts(backend Backend, msg p2p.Msg, peer *Peer) error {
@@ -470,8 +483,11 @@ func handleReceipts66(backend Backend, msg p2p.Msg, peer *Peer) error {
 	if err := msg.Decode(&res); err != nil {
 		return errResp(ErrDecode, "msg %v: %v", msg, err)
 	}
-	// Unwrap the embedded legacy packet (see handleBlockHeaders66).
-	return backend.Handle(peer, &res.ReceiptsPacket, msg.Size)
+	return peer.dispatchResponse(&Response{
+		id:   res.RequestId,
+		code: ReceiptsMsg,
+		Res:  &res.ReceiptsPacket,
+	})
 }
 
 func handleNewBlockHashes(backend Backend, msg p2p.Msg, peer *Peer) error {
@@ -628,7 +644,10 @@ func handlePooledTransactions66(backend Backend, msg p2p.Msg, peer *Peer) error 
 	if err := res.PooledTransactionsPacket.sanityCheck(); err != nil {
 		return errResp(ErrDecode, "%v", err)
 	}
-	// Unwrap the embedded legacy packet (see handleBlockHeaders66).
+	// RequestTxs keeps its error-only signature and does not register a
+	// pending dispatcher id, so the reply must stay on the node-layer path.
+	// Only fulfil the tracker entry created when the request was sent.
+	requestTracker.Fulfil(peer.id, peer.conn, peer.version, PooledTransactionsMsg, res.RequestId, time.Now())
 	return backend.Handle(peer, &res.PooledTransactionsPacket, msg.Size)
 }
 
