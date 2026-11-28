@@ -229,6 +229,12 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				// Loop for each block to check missing sign. with comeback nodes
 				mapBlockHash := map[common.Hash]bool{}
 				txSignerMap := map[common.Address]int{}
+				// A signer counts once per signed block toward the parole threshold.
+				type signedBlock struct {
+					signer common.Address
+					block  common.Hash
+				}
+				counted := map[signedBlock]struct{}{}
 				startRange := int(chain.Config().XDPoS.Epoch) - 1
 				// to prevent visiting outside index of listBlockHash
 				if startRange >= len(listBlockHash) {
@@ -248,14 +254,19 @@ func AttachConsensusV2Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 							signingTxs = adaptor.CacheSigningTxs(bhash, txs)
 						}
 					}
-					// Check signer signed?
-					// TODO: check here needs dedup?
+					// Count the distinct signed blocks of each signer.
 					for _, tx := range signingTxs {
 						blkHash := common.BytesToHash(tx.Data()[len(tx.Data())-32:])
 						from := *tx.From()
-						if mapBlockHash[blkHash] {
-							txSignerMap[from]++
+						if !mapBlockHash[blkHash] {
+							continue
 						}
+						key := signedBlock{signer: from, block: blkHash}
+						if _, ok := counted[key]; ok {
+							continue
+						}
+						counted[key] = struct{}{}
+						txSignerMap[from]++
 					}
 				}
 				// check addr in lastPenalty, and if they does not meet condition, add them to penalty
