@@ -121,6 +121,10 @@ type (
 	// GasChangeHook is invoked when the gas changes.
 	GasChangeHook = func(old, new uint64, reason GasChangeReason)
 
+	// GasChangeHookV2 is invoked when any gas dimension changes, including the
+	// EIP-8037 state dimension.
+	GasChangeHookV2 = func(old, new Gas, reason GasChangeReason)
+
 	/*
 		- Chain events -
 	*/
@@ -194,13 +198,14 @@ type (
 
 type Hooks struct {
 	// VM events
-	OnTxStart   TxStartHook
-	OnTxEnd     TxEndHook
-	OnEnter     EnterHook
-	OnExit      ExitHook
-	OnOpcode    OpcodeHook
-	OnFault     FaultHook
-	OnGasChange GasChangeHook
+	OnTxStart     TxStartHook
+	OnTxEnd       TxEndHook
+	OnEnter       EnterHook
+	OnExit        ExitHook
+	OnOpcode      OpcodeHook
+	OnFault       FaultHook
+	OnGasChange   GasChangeHook
+	OnGasChangeV2 GasChangeHookV2
 	// Chain events
 	OnBlockchainInit    BlockchainInitHook
 	OnClose             CloseHook
@@ -220,6 +225,26 @@ type Hooks struct {
 	OnLog           LogHook
 	// Block hash read
 	OnBlockHashRead BlockHashReadHook
+}
+
+// HasGasHook reports whether any gas-change hook is registered.
+func (h *Hooks) HasGasHook() bool {
+	return h != nil && (h.OnGasChangeV2 != nil || h.OnGasChange != nil)
+}
+
+// EmitGasChange dispatches a gas change, preferring the V2 hook and falling
+// back to the V1 hook with the regular dimension only. Only one is invoked.
+func (h *Hooks) EmitGasChange(old, new Gas, reason GasChangeReason) {
+	if h == nil || reason == GasChangeIgnored {
+		return
+	}
+	if h.OnGasChangeV2 != nil {
+		h.OnGasChangeV2(old, new, reason)
+		return
+	}
+	if h.OnGasChange != nil {
+		h.OnGasChange(old.Regular, new.Regular, reason)
+	}
 }
 
 // BalanceChangeReason is used to indicate the reason for a balance change, useful
@@ -284,6 +309,13 @@ const (
 	// It is only emitted when the tracer has opted in to use the journaling wrapper (WrapWithJournal).
 	BalanceChangeRevert BalanceChangeReason = 15
 )
+
+// Gas is the multi-dimensional gas vector introduced by EIP-8037. State is
+// always zero before Amsterdam.
+type Gas struct {
+	Regular uint64
+	State   uint64
+}
 
 // GasChangeReason is used to indicate the reason for a gas change, useful
 // for tracing and reporting.

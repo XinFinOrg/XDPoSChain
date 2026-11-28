@@ -282,8 +282,8 @@ func RunPrecompiledContract(evm *EVM, p PrecompiledContract, input []byte, gas G
 		gas.Exhaust()
 		return nil, gas, ErrOutOfGas
 	}
-	if logger != nil && logger.OnGasChange != nil {
-		logger.OnGasChange(prior, gas.RegularGas, tracing.GasChangeCallPrecompiledContract)
+	if logger.HasGasHook() {
+		logger.EmitGasChange(prior.AsTracing(), gas.AsTracing(), tracing.GasChangeCallPrecompiledContract)
 	}
 	output, err := p.Run(input)
 	return output, gas, err

@@ -407,8 +407,10 @@ func (st *stateTransition) buyGas() error {
 		return err
 	}
 
-	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil {
-		st.evm.Config.Tracer.OnGasChange(0, st.msg.GasLimit, tracing.GasChangeTxInitialBalance)
+	if st.evm.Config.Tracer.HasGasHook() {
+		empty := vm.GasBudget{}
+		initial := vm.NewGasBudget(st.msg.GasLimit)
+		st.evm.Config.Tracer.EmitGasChange(empty.AsTracing(), initial.AsTracing(), tracing.GasChangeTxInitialBalance)
 	}
 	st.gasRemaining = vm.NewGasBudget(st.msg.GasLimit)
 	st.initialBudget = st.gasRemaining.Copy()
@@ -540,8 +542,8 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 	if !sufficient {
 		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gasRemaining.RegularGas, cost)
 	}
-	if t := st.evm.Config.Tracer; t != nil && t.OnGasChange != nil {
-		t.OnGasChange(prior, st.gasRemaining.RegularGas, tracing.GasChangeTxIntrinsicGas)
+	if st.evm.Config.Tracer.HasGasHook() {
+		st.evm.Config.Tracer.EmitGasChange(prior.AsTracing(), st.gasRemaining.AsTracing(), tracing.GasChangeTxIntrinsicGas)
 	}
 	// Gas limit suffices for the floor data cost (EIP-7623)
 	if rules.IsPrague {
@@ -613,8 +615,8 @@ func (st *stateTransition) execute(owner common.Address) (*ExecutionResult, erro
 		// After EIP-7623: Data-heavy transactions pay the floor gas.
 		if used := st.gasUsed(); used < floorDataGas {
 			prior, _ := st.gasRemaining.Charge(vm.GasCosts{RegularGas: floorDataGas - used})
-			if t := st.evm.Config.Tracer; t != nil && t.OnGasChange != nil {
-				t.OnGasChange(prior, st.gasRemaining.RegularGas, tracing.GasChangeTxDataFloor)
+			if st.evm.Config.Tracer.HasGasHook() {
+				st.evm.Config.Tracer.EmitGasChange(prior.AsTracing(), st.gasRemaining.AsTracing(), tracing.GasChangeTxDataFloor)
 			}
 		}
 		if peakGasUsed < floorDataGas {
@@ -726,8 +728,11 @@ func (st *stateTransition) calcRefund() vm.GasBudget {
 	if refund > st.state.GetRefund() {
 		refund = st.state.GetRefund()
 	}
-	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil && refund > 0 {
-		st.evm.Config.Tracer.OnGasChange(st.gasRemaining.RegularGas, st.gasRemaining.RegularGas+refund, tracing.GasChangeTxRefunds)
+	if refund > 0 && st.evm.Config.Tracer.HasGasHook() {
+		after := st.gasRemaining
+		after.RegularGas += refund
+
+		st.evm.Config.Tracer.EmitGasChange(st.gasRemaining.AsTracing(), after.AsTracing(), tracing.GasChangeTxRefunds)
 	}
 	return vm.NewGasBudget(refund)
 }
@@ -741,8 +746,10 @@ func (st *stateTransition) returnGas() {
 		st.state.AddBalance(st.from(), remaining, tracing.BalanceIncreaseGasReturn)
 	}
 
-	if st.evm.Config.Tracer != nil && st.evm.Config.Tracer.OnGasChange != nil && st.gasRemaining.RegularGas > 0 {
-		st.evm.Config.Tracer.OnGasChange(st.gasRemaining.RegularGas, 0, tracing.GasChangeTxLeftOverReturned)
+	if st.gasRemaining.RegularGas > 0 && st.evm.Config.Tracer.HasGasHook() {
+		after := st.gasRemaining
+		after.RegularGas = 0
+		st.evm.Config.Tracer.EmitGasChange(st.gasRemaining.AsTracing(), after.AsTracing(), tracing.GasChangeTxLeftOverReturned)
 	}
 
 	// Also return remaining gas to the block gas counter so it is
