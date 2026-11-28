@@ -12,6 +12,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/log"
 )
@@ -30,6 +31,13 @@ func (x *XDPoS_v2) sendVote(chainReader consensus.ChainReader, blockInfo *types.
 	}
 	epochSwitchNumber := epochSwitchInfo.EpochSwitchBlockInfo.Number.Uint64()
 	gapNumber, _ := x.config.GapBlockNumber(epochSwitchNumber)
+	// Record the round before signing: a node that restarts after this point
+	// loads it and refuses to vote in the same round again. If it cannot be
+	// recorded, do not vote.
+	if err := rawdb.WriteXdposV2HighestVotedRound(x.db, uint64(x.currentRound)); err != nil {
+		log.Error("Failed to record the voted round, not voting", "round", x.currentRound, "BlockInfoHash", blockInfo.Hash, "Error", err)
+		return err
+	}
 	signedHash, err := x.signSignature(types.VoteSigHash(&types.VoteForSign{
 		ProposedBlockInfo: blockInfo,
 		GapNumber:         gapNumber,

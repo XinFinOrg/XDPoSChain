@@ -63,6 +63,38 @@ func WriteXdposV2Snapshot(db ethdb.KeyValueWriter, hash common.Hash, blob []byte
 	return nil
 }
 
+// ReadXdposV2HighestVotedRound returns the highest XDPoS v2 round this node has
+// voted in, or 0 if it has never voted. A stored round that cannot be read or
+// is malformed also reads as 0, which lets the node vote again in a round it
+// may have voted in, so that case is logged as an error.
+func ReadXdposV2HighestVotedRound(db ethdb.KeyValueReader) uint64 {
+	has, err := db.Has(xdposV2HighestVotedRoundKey)
+	if err != nil {
+		log.Error("Failed to read the highest voted round, assuming none", "err", err)
+		return 0
+	}
+	if !has {
+		return 0
+	}
+	data, err := db.Get(xdposV2HighestVotedRoundKey)
+	if err != nil {
+		log.Error("Failed to read the highest voted round, assuming none", "err", err)
+		return 0
+	}
+	if len(data) != 8 {
+		log.Error("Malformed highest voted round, assuming none", "len", len(data))
+		return 0
+	}
+	return binary.BigEndian.Uint64(data)
+}
+
+// WriteXdposV2HighestVotedRound stores the highest XDPoS v2 round this node has
+// voted in. The error is returned rather than logged fatally, so a caller can
+// refuse to vote when the round cannot be recorded.
+func WriteXdposV2HighestVotedRound(db ethdb.KeyValueWriter, round uint64) error {
+	return db.Put(xdposV2HighestVotedRoundKey, encodeBlockNumber(round))
+}
+
 // DeleteXdposSnapshot removes the snapshot entry for a block hash.
 func DeleteXdposSnapshot(db ethdb.KeyValueWriter, hash common.Hash) {
 	if err := db.Delete(xdposV2Key(hash)); err != nil {

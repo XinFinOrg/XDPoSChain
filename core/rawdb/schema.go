@@ -103,6 +103,11 @@ var (
 	xdposV1Prefix = []byte("XDPoS-")
 	xdposV2Prefix = []byte("XDPoS-V2-")
 
+	// xdposV2HighestVotedRoundKey tracks the highest XDPoS v2 round this node
+	// has voted in. It is outside xdposV1Prefix and xdposV2Prefix on purpose,
+	// so snapshot prefix scans never see it.
+	xdposV2HighestVotedRoundKey = []byte("XDPoSV2HighestVotedRound")
+
 	randomizeKey         = []byte("randomizeKey")
 	sectionHeadKeyPrefix = []byte("shead")
 	validSectionsKey     = []byte("count")
