@@ -46,6 +46,9 @@ func TestValidateSpecialTx(t *testing.T) {
 		zeroData    = make([]byte, 100)
 		secretData  = append(common.Hex2Bytes(common.HexSetSecret), make([]byte, 96)...)
 		openingData = append(common.Hex2Bytes(common.HexSetOpening), make([]byte, 32)...)
+		// signCall signs block 0 with a dummy hash: a well-formed sign call for
+		// any block above 0.
+		signCall = append(append(common.Hex2Bytes(common.HexSignMethod), make([]byte, 32)...), bytes.Repeat([]byte{0x01}, 32)...)
 	)
 	amsterdam := params.TestChainConfig.Clone()
 	amsterdam.PragueBlock = big.NewInt(0)
@@ -125,7 +128,8 @@ func TestValidateSpecialTx(t *testing.T) {
 	}{
 		{"amsterdam below floor", amsterdam, common.RandomizeSMCBinary, data, 21_399, 1, 0, false, core.ErrFloorDataGas},
 		{"amsterdam at floor", amsterdam, common.RandomizeSMCBinary, data, 21_400, 1, 0, false, nil},
-		{"sign route skips gas checks", amsterdam, common.BlockSignersBinary, data, 21_399, 0, 0, false, nil},
+		{"sign route skips gas checks", amsterdam, common.BlockSignersBinary, signCall, 21_399, 0, 0, false, nil},
+		{"sign route rejects a malformed call", amsterdam, common.BlockSignersBinary, data, 200_000, 0, 0, false, core.ErrSignTxData},
 		{"prague below intrinsic", prague, common.RandomizeSMCBinary, data, 21_000, 1, 0, false, core.ErrIntrinsicGas},
 		{"prague between intrinsic and floor", prague, common.RandomizeSMCBinary, data, 24_000, 1, 0, false, core.ErrFloorDataGas},
 		{"pre-prague below intrinsic", prePrague, common.RandomizeSMCBinary, data, 21_000, 1, 0, false, core.ErrIntrinsicGas},
@@ -136,7 +140,7 @@ func TestValidateSpecialTx(t *testing.T) {
 		{"secret randomize", amsterdam, common.RandomizeSMCBinary, secretData, 200_000, 0, 0, false, nil},
 		{"opening randomize", amsterdam, common.RandomizeSMCBinary, openingData, 200_000, 0, 0, false, nil},
 		{"block signers without signing fork", amsterdamNoSigning, common.BlockSignersBinary, data, 21_399, 1, 0, false, core.ErrFloorDataGas},
-		{"sign route activates at next block", signingNext, common.BlockSignersBinary, zeroData, 21_000, 0, 0, false, nil},
+		{"sign route activates at next block", signingNext, common.BlockSignersBinary, signCall, 21_000, 0, 0, false, nil},
 		{"sign route not active at next block", signingLater, common.BlockSignersBinary, zeroData, 15_399, 0, 0, false, core.ErrIntrinsicGas},
 		{"head rules gate the floor", pragueNext, common.RandomizeSMCBinary, zeroData, 21_500, 1, 0, false, nil},
 		{"special tx from non-signer", amsterdam, common.BlockSignersBinary, data, 200_000, 0, 0, true, ErrSpecialTxNotFromSigner},

@@ -205,6 +205,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	signer := types.MakeSigner(p.config, blockNumber)
 	ApplyBlockLevelHooks(block.ParentHash(), evm)
 	InitSignerInTransactions(p.config, header, block.Transactions())
+	signRules := p.signTxRules(block)
 	balanceUpdated := map[common.Address]*big.Int{}
 	totalFeeUsed := big.NewInt(0)
 
@@ -246,12 +247,16 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 		if err != nil {
 			return nil, nil, 0, err
 		}
+		if err := signRules.Check(tx, msg.From); err != nil {
+			return nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+		}
 		statedb.SetTxContext(tx.Hash(), i)
 
 		receipt, gas, tokenFeeUsed, err := ApplyTransactionWithEVM(msg, gp, statedb, blockNumber, blockHash, tx, usedGas, evm, balanceFee)
 		if err != nil {
 			return nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
+		signRules.Record(tx, msg.From)
 		receipts = append(receipts, receipt)
 		allLogs = append(allLogs, receipt.Logs...)
 		if tokenFeeUsed {
@@ -311,6 +316,7 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	signer := types.MakeSigner(p.config, blockNumber)
 	ApplyBlockLevelHooks(block.ParentHash(), evm)
 	InitSignerInTransactions(p.config, header, block.Transactions())
+	signRules := p.signTxRules(block)
 	balanceUpdated := map[common.Address]*big.Int{}
 	totalFeeUsed := big.NewInt(0)
 
@@ -356,12 +362,16 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 		if err != nil {
 			return nil, nil, 0, err
 		}
+		if err := signRules.Check(tx, msg.From); err != nil {
+			return nil, nil, 0, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
+		}
 		statedb.SetTxContext(tx.Hash(), i)
 
 		receipt, gas, tokenFeeUsed, err := ApplyTransactionWithEVM(msg, gp, statedb, blockNumber, blockHash, tx, usedGas, evm, balanceFee)
 		if err != nil {
 			return nil, nil, 0, err
 		}
+		signRules.Record(tx, msg.From)
 		if cBlock.stop.Load() {
 			return nil, nil, 0, ErrStopPreparingBlock
 		}
@@ -387,6 +397,16 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 		return nil, nil, 0, fmt.Errorf("%w: %w", ErrFinalize, err)
 	}
 	return receipts, allLogs, *usedGas, nil
+}
+
+// signTxRules returns the sign transaction rules block processing applies to
+// block, or nil before TIPSignTxRules, where sign transactions are only checked
+// for their nonce.
+func (p *StateProcessor) signTxRules(block *types.Block) *SignTxRules {
+	if !p.config.IsTIPSignTxRules(block.Number()) {
+		return nil
+	}
+	return SignTxRulesFor(p.config, p.bc, p.engine, block.Header())
 }
 
 // txRoute describes how a transaction is handled while a block is processed.

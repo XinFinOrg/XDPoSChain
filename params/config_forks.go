@@ -210,6 +210,12 @@ func (c *ChainConfig) IsTIPProportionalReward(num *big.Int) bool {
 	return isForked(c.TIPProportionalRewardBlock, num)
 }
 
+// IsTIPSignTxRules reports whether the sign transaction rules are part of block
+// validation at num. See TIPSignTxRulesBlock.
+func (c *ChainConfig) IsTIPSignTxRules(num *big.Int) bool {
+	return isForked(c.TIPSignTxRulesBlock, num)
+}
+
 // IsTIPTieredReward reports whether the per-role reward model, with its
 // masternode, protector and observer tiers, is active at num. Both the fixed
 // and the proportional reward forks pay through it, and each one can be

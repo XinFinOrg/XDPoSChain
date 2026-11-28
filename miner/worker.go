@@ -111,6 +111,10 @@ type Work struct {
 	receipts []*types.Receipt
 	uncles   map[common.Hash]*types.Header
 
+	// signRules are the sign transaction rules of the block, shared by every
+	// commitTransactions call on it so a sender gets one sign tx per block.
+	signRules *core.SignTxRules
+
 	createdAt time.Time
 }
 
@@ -734,6 +738,7 @@ func (w *worker) makeCurrent(parent *types.Block, header *types.Header) error {
 		header:       header,
 		evm:          vm.NewEVM(core.NewEVMBlockContext(header, w.chain, &header.Coinbase), state, XDCxState, w.chainConfig, vm.Config{}),
 		uncles:       make(map[common.Hash]*types.Header),
+		signRules:    core.SignTxRulesFor(w.chainConfig, w.chain, w.chain.Engine(), header),
 		createdAt:    time.Now(),
 	}
 
@@ -1117,6 +1122,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 	balanceUpdated := map[common.Address]*big.Int{}
 	totalFeeUsed := big.NewInt(0)
 	var coalescedLogs []*types.Log
+	signRules := w.signRules
 	// first priority for special Txs
 	for _, tx := range specialTxs {
 		if !w.txFitsSize(tx) {
@@ -1171,7 +1177,14 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			log.Trace("Ignoring reply protected special transaction", "hash", hash, "eip155", w.config.EIP155Block)
 			continue
 		}
-		if *to == common.BlockSignersBinary {
+		// A sign transaction must pass the rules block validation applies from
+		// TIPSignTxRules on. Applying them before the fork too keeps the block
+		// valid either way.
+		if err := signRules.Check(tx, from); err != nil {
+			log.Trace("Skipping invalid sign transaction", "hash", hash, "sender", from, "err", err)
+			continue
+		}
+		if *to == common.BlockSignersBinary && !core.IsSignTransactionRoute(w.config, w.header.Number, tx) {
 			if len(data) < 68 {
 				log.Trace("Data special transaction invalid length", "hash", hash, "data", len(data))
 				continue
@@ -1203,6 +1216,7 @@ func (w *Work) commitTransactions(mux *event.TypeMux, balanceFee map[common.Addr
 			// Everything ok, collect the logs and shift in the next transaction from the same account
 			coalescedLogs = append(coalescedLogs, logs...)
 			w.tcount++
+			signRules.Record(tx, from)
 
 		default:
 			// Strange error, discard the transaction and get the next in line (note, the

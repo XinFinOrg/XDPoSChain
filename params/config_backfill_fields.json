@@ -316,6 +316,14 @@
     "xdcSpecific": true
   },
   {
+    "name": "TIPSignTxRulesBlock",
+    "jsonKey": "tipSignTxRulesBlock",
+    "backfillSet": "builtin",
+    "xdcSpecific": true,
+    "forkOrder": 35,
+    "forkOrderOptional": true
+  },
+  {
     "kind": "address",
     "name": "TRC21IssuerSMC",
     "jsonKey": "trc21IssuerSMC",
