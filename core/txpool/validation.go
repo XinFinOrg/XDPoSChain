@@ -91,8 +91,8 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 			return err
 		}
 	}
-	if rules.IsOsaka && tx.Gas() > params.MaxTxGas {
-		return fmt.Errorf("%w: cap %d, tx %d", core.ErrGasLimitTooHigh, params.MaxTxGas, tx.Gas())
+	if err := core.CheckGasLimitCap(tx.Gas(), rules); err != nil {
+		return err
 	}
 	// Transactions can't be negative. This may never happen using RLP decoded
 	// transactions but may occur for transactions created using the RPC.

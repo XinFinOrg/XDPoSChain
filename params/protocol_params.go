@@ -29,7 +29,8 @@ const (
 	GenesisGasLimit      uint64 = 4712388            // Gas limit of the Genesis block.
 	XDCGenesisGasLimit   uint64 = 42000000
 
-	MaxTxGas uint64 = 1 << 24 // Maximum transaction gas limit after EIP-7825 (16,777,216).
+	MaxTxGas      uint64 = 1 << 24   // Maximum transaction gas limit after EIP-7825 (16,777,216).
+	MaxTxTotalGas uint64 = 1<<32 - 1 // Maximum total transaction gas limit after EIP-8037 (4,294,967,295).
 
 	MaximumExtraDataSize  uint64 = 32    // Maximum size extra data may be after Genesis.
 	ExpByteGas            uint64 = 10    // Times ceil(log256(exponent)) for the EXP instruction.

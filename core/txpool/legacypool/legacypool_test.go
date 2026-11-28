@@ -971,18 +971,30 @@ type osakaTestEnv struct {
 	oversizedKey *ecdsa.PrivateKey
 }
 
+// osakaTestForkBlock returns the block at which the test environment activates
+// the Osaka fork.
+func osakaTestForkBlock() *big.Int { return big.NewInt(300) }
+
 // newOsakaTestEnv creates an Osaka test environment over an in-memory test
-// chain. Its GetBlock returns a synthetic block for any hash, so the reorg
+// chain, with Amsterdam activating at the given block when amsterdam is
+// non-nil. Its GetBlock returns a synthetic block for any hash, so the reorg
 // walk in reset short-circuits and the headers built by header move the pool
 // head directly instead of bailing out on the missing old head.
-func newOsakaTestEnv() *osakaTestEnv {
+func newOsakaTestEnv(amsterdam *big.Int) *osakaTestEnv {
+	return newOsakaTestEnvWithGasLimit(amsterdam, params.MaxTxGas+100000)
+}
+
+// newOsakaTestEnvWithGasLimit is newOsakaTestEnv with a custom block gas
+// limit, for cases that need headroom above the Amsterdam total cap.
+func newOsakaTestEnvWithGasLimit(amsterdam *big.Int, gasLimit uint64) *osakaTestEnv {
 	env := &osakaTestEnv{
 		config: &params.ChainConfig{
-			ChainID:    big.NewInt(1339),
-			Ethash:     new(params.EthashConfig),
-			OsakaBlock: big.NewInt(300),
+			ChainID:        big.NewInt(1339),
+			Ethash:         new(params.EthashConfig),
+			OsakaBlock:     osakaTestForkBlock(),
+			AmsterdamBlock: amsterdam,
 		},
-		gasLimit: params.MaxTxGas + 100000,
+		gasLimit: gasLimit,
 	}
 	diskdb := rawdb.NewMemoryDatabase()
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(diskdb))
@@ -1049,7 +1061,18 @@ func (env *osakaTestEnv) setupPool(t *testing.T) {
 func newStartedEnv(t *testing.T) *osakaTestEnv {
 	t.Helper()
 
-	env := newOsakaTestEnv()
+	env := newOsakaTestEnv(nil)
+	env.setupPool(t)
+	return env
+}
+
+// newStartedEnvWithAmsterdamAtOsaka creates the Osaka test environment with
+// Amsterdam activating at the same block, a block gas limit above the
+// Amsterdam total cap, and the pool set up on the parked head.
+func newStartedEnvWithAmsterdamAtOsaka(t *testing.T) *osakaTestEnv {
+	t.Helper()
+
+	env := newOsakaTestEnvWithGasLimit(osakaTestForkBlock(), params.MaxTxTotalGas+100000)
 	env.setupPool(t)
 	return env
 }
@@ -1060,7 +1083,7 @@ func newStartedEnv(t *testing.T) *osakaTestEnv {
 func newStartedEnvWithFailingState(t *testing.T) (*osakaTestEnv, *failingStateChain) {
 	t.Helper()
 
-	env := newOsakaTestEnv()
+	env := newOsakaTestEnv(nil)
 	gate := env.failState()
 	env.setupPool(t)
 	return env, gate
@@ -1150,8 +1173,19 @@ func TestOsakaGasCapDropsOversizedTransactions(t *testing.T) {
 
 	oversized, normal := env.addTransactions(t)
 	oversizedAddr := env.oversizedAddr()
-	if pending, _ := env.pool.Stats(); pending != 2 {
-		t.Fatalf("pool status before the fork: have %d pending, want 2", pending)
+
+	// A transaction exactly at the cap is the keep boundary of the sweep.
+	atCapKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate at-cap sender key: %v", err)
+	}
+	testAddBalance(env.pool, crypto.PubkeyToAddress(atCapKey.PublicKey), big.NewInt(1000000000000000000))
+	atCap := pricedTransaction(0, params.MaxTxGas, big.NewInt(300000000), atCapKey)
+	if err := env.pool.addRemotesSync([]*types.Transaction{atCap})[0]; err != nil {
+		t.Fatalf("failed to add at-cap transaction: %v", err)
+	}
+	if pending, _ := env.pool.Stats(); pending != 3 {
+		t.Fatalf("pool status before the fork: have %d pending, want 3", pending)
 	}
 
 	// Moving to the last pre-fork head makes the fork block pending, the first
@@ -1164,12 +1198,182 @@ func TestOsakaGasCapDropsOversizedTransactions(t *testing.T) {
 	// Crossing the fork must discard the transaction the cap excludes.
 	env.crossForkExpectDrop(t, oversized, env.lastPreForkHead(), "the Osaka fork")
 	env.assertPresent(t, normal, "transaction within the gas cap was dropped by the Osaka fork crossing")
-	if pending, _ := env.pool.Stats(); pending != 1 {
-		t.Fatalf("pool status after the fork: have %d pending, want 1", pending)
+	env.assertPresent(t, atCap, "transaction at the gas cap was dropped by the Osaka fork crossing")
+	if pending, _ := env.pool.Stats(); pending != 2 {
+		t.Fatalf("pool status after the fork: have %d pending, want 2", pending)
 	}
 	if nonce := env.pool.Nonce(oversizedAddr); nonce != 0 {
 		t.Fatalf("pending nonce after the fork: have %d, want 0", nonce)
 	}
+	env.validateInternals(t)
+}
+
+// TestOsakaGasCapKeepsOversizedWhenAmsterdamAtFork verifies that the boundary
+// discard leaves transactions within the Amsterdam total cap in the pool when
+// Amsterdam activates at the same block, while still dropping those above it.
+func TestOsakaGasCapKeepsOversizedWhenAmsterdamAtFork(t *testing.T) {
+	t.Parallel()
+
+	env := newStartedEnvWithAmsterdamAtOsaka(t)
+
+	oversized := env.oversizedTx()
+	aboveTotalKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate above-total sender key: %v", err)
+	}
+	testAddBalance(env.pool, crypto.PubkeyToAddress(aboveTotalKey.PublicKey), big.NewInt(2000000000000000000))
+	aboveTotal := pricedTransaction(0, 1<<32, big.NewInt(300000000), aboveTotalKey)
+
+	// A transaction exactly at the total cap is the keep boundary: it must stay.
+	atTotalKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate at-total sender key: %v", err)
+	}
+	testAddBalance(env.pool, crypto.PubkeyToAddress(atTotalKey.PublicKey), big.NewInt(2000000000000000000))
+	atTotal := pricedTransaction(0, 1<<32-1, big.NewInt(300000000), atTotalKey)
+
+	for i, tx := range []*types.Transaction{oversized, aboveTotal, atTotal} {
+		if err := env.pool.addRemotesSync([]*types.Transaction{tx})[0]; err != nil {
+			t.Fatalf("failed to add transaction %d: %v", i, err)
+		}
+	}
+	env.resetHead(env.header(env.lastPreForkHead()), env.forkBlock())
+	env.assertPresent(t, oversized, "over-cap transaction was dropped although Amsterdam activated with Osaka")
+	env.assertPresent(t, atTotal, "transaction at the Amsterdam total cap was dropped at the fork")
+	if env.pool.Has(aboveTotal.Hash()) {
+		t.Fatal("transaction above the Amsterdam total cap was kept at the fork")
+	}
+	env.validateInternals(t)
+}
+
+// TestOsakaGasCapDropsOnOsakaOnlyResetAfterAmsterdam verifies that a reset
+// falling back from an Amsterdam head to an Osaka-only head discards the
+// transactions admitted under the total cap, while a reset that stays on
+// Amsterdam keeps them.
+func TestOsakaGasCapDropsOnOsakaOnlyResetAfterAmsterdam(t *testing.T) {
+	t.Parallel()
+
+	env := newOsakaTestEnv(big.NewInt(340))
+	env.setupPool(t)
+
+	amsterdamHead := forkHeight(350)
+	env.resetHead(nil, amsterdamHead)
+
+	oversized, normal := env.addTransactions(t)
+
+	// Staying on Amsterdam keeps the total cap, so nothing is discarded.
+	env.resetHead(env.header(amsterdamHead), forkHeight(345))
+	env.assertPresent(t, oversized, "over-cap transaction was dropped by a reset that stayed on Amsterdam")
+	env.assertPresent(t, normal, "transaction within the gas cap was dropped by a reset that stayed on Amsterdam")
+
+	// Falling back to an Osaka-only head restores the EIP-7825 cap.
+	env.resetHead(env.header(345), forkHeight(310))
+	if env.pool.Has(oversized.Hash()) {
+		t.Fatal("over-cap transaction survived the fallback to an Osaka-only head")
+	}
+	env.assertPresent(t, normal, "transaction within the Osaka gas cap was dropped by the fallback")
+	env.validateInternals(t)
+}
+
+// TestOsakaGasCapRejectsAdmissionAfterForkReset verifies that a transaction
+// whose basic check ran under the pre-fork head cannot enter the pool through
+// the locked admission path once a reset has crossed the Osaka fork: the sweep
+// cannot discard a transaction that is not pooled yet.
+func TestOsakaGasCapRejectsAdmissionAfterForkReset(t *testing.T) {
+	t.Parallel()
+
+	env := newStartedEnv(t)
+
+	atCapKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate at-cap sender key: %v", err)
+	}
+	testAddBalance(env.pool, crypto.PubkeyToAddress(atCapKey.PublicKey), big.NewInt(1000000000000000000))
+
+	oversized := env.oversizedTx()
+	atCap := pricedTransaction(0, params.MaxTxGas, big.NewInt(300000000), atCapKey)
+
+	// Add's first phase runs the basic checks without the pool lock, under the
+	// pre-fork head where the cap is not active yet.
+	for i, tx := range []*types.Transaction{oversized, atCap} {
+		if err := env.pool.ValidateTxBasics(tx); err != nil {
+			t.Fatalf("basic check of transaction %d under the pre-fork head: %v", i, err)
+		}
+	}
+	// The reset onto the fork runs before Add takes the pool lock, so its sweep
+	// finds an empty pool.
+	env.resetHead(nil, env.forkBlock())
+
+	// Add's second phase admits under the pool lock.
+	env.pool.mu.Lock()
+	_, err = env.pool.add(oversized)
+	env.pool.mu.Unlock()
+	if !errors.Is(err, core.ErrGasLimitTooHigh) {
+		t.Fatalf("over-cap admission after the fork reset: have %v, want %v", err, core.ErrGasLimitTooHigh)
+	}
+	if env.pool.Has(oversized.Hash()) {
+		t.Fatal("over-cap transaction entered the pool after the fork reset")
+	}
+
+	env.pool.mu.Lock()
+	_, err = env.pool.add(atCap)
+	env.pool.mu.Unlock()
+	if err != nil {
+		t.Fatalf("at-cap admission after the fork reset: %v", err)
+	}
+	env.assertPresent(t, atCap, "transaction at the gas cap was rejected by the admission re-check")
+	env.validateInternals(t)
+}
+
+// TestOsakaGasCapRejectsAdmissionAfterAmsterdamFallback verifies the same for a
+// reset that falls back from an Amsterdam head to an Osaka-only one, where the
+// basic check ran under the wider Amsterdam total cap.
+func TestOsakaGasCapRejectsAdmissionAfterAmsterdamFallback(t *testing.T) {
+	t.Parallel()
+
+	env := newOsakaTestEnv(big.NewInt(340))
+	env.setupPool(t)
+
+	amsterdamHead := forkHeight(350)
+	env.resetHead(nil, amsterdamHead)
+
+	atCapKey, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("failed to generate at-cap sender key: %v", err)
+	}
+	testAddBalance(env.pool, crypto.PubkeyToAddress(atCapKey.PublicKey), big.NewInt(1000000000000000000))
+
+	oversized := env.oversizedTx()
+	atCap := pricedTransaction(0, params.MaxTxGas, big.NewInt(300000000), atCapKey)
+
+	// Both pass the basic checks under Amsterdam, whose total cap admits the
+	// oversized one.
+	for i, tx := range []*types.Transaction{oversized, atCap} {
+		if err := env.pool.ValidateTxBasics(tx); err != nil {
+			t.Fatalf("basic check of transaction %d under the Amsterdam head: %v", i, err)
+		}
+	}
+	// Falling back to an Osaka-only head restores the EIP-7825 cap before the
+	// admission lock is taken.
+	env.resetHead(env.header(amsterdamHead), forkHeight(310))
+
+	env.pool.mu.Lock()
+	_, err = env.pool.add(oversized)
+	env.pool.mu.Unlock()
+	if !errors.Is(err, core.ErrGasLimitTooHigh) {
+		t.Fatalf("over-cap admission after the Amsterdam fallback: have %v, want %v", err, core.ErrGasLimitTooHigh)
+	}
+	if env.pool.Has(oversized.Hash()) {
+		t.Fatal("over-cap transaction entered the pool after the Amsterdam fallback")
+	}
+
+	env.pool.mu.Lock()
+	_, err = env.pool.add(atCap)
+	env.pool.mu.Unlock()
+	if err != nil {
+		t.Fatalf("at-cap admission after the Amsterdam fallback: %v", err)
+	}
+	env.assertPresent(t, atCap, "transaction at the gas cap was rejected by the admission re-check")
 	env.validateInternals(t)
 }
 

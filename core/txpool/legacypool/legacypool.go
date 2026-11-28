@@ -599,6 +599,15 @@ func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
+	// ValidateTxBasics ran without the pool lock, so the head may have crossed
+	// a fork boundary since. Re-check the cap of the head the transaction
+	// actually lands under: the reset sweep cannot catch a transaction that was
+	// not pooled yet.
+	if head := pool.currentHead.Load(); head != nil {
+		if err := core.CheckGasLimitCap(tx.Gas(), pool.chainconfig.Rules(head.Number)); err != nil {
+			return err
+		}
+	}
 	opts := &txpool.ValidationOptionsWithState{
 		Config: pool.chainconfig,
 
@@ -1350,13 +1359,26 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 		pool.reset(reset.oldHead, reset.newHead)
 		newPoolHead := pool.currentHead.Load()
 
-		// Discard transactions whose gas limit exceeds the cap once the reset
-		// actually moved the pool across the Osaka fork boundary.
-		if newPoolHead != nil && oldPoolHead != nil &&
-			pool.chainconfig.IsOsaka(newPoolHead.Number) && !pool.chainconfig.IsOsaka(oldPoolHead.Number) {
-			pool.dropWhere(func(tx *types.Transaction) bool {
-				return tx.Gas() <= params.MaxTxGas
-			}, "gas-limit-cap")
+		// Discard transactions above the gas cap that applies at the head the
+		// pool actually landed on, whenever the move tightens it: entering
+		// Osaka-only activates the EIP-7825 cap, entering Amsterdam activates
+		// the EIP-8037 total cap, and falling back from Amsterdam to an
+		// Osaka-only head restores the EIP-7825 cap. Moves between heads under
+		// the same cap keep their transactions.
+		if newPoolHead != nil && oldPoolHead != nil {
+			var limit uint64
+			switch {
+			case pool.chainconfig.IsAmsterdam(newPoolHead.Number) && !pool.chainconfig.IsAmsterdam(oldPoolHead.Number):
+				limit = params.MaxTxTotalGas
+			case pool.chainconfig.IsOsaka(newPoolHead.Number) && !pool.chainconfig.IsAmsterdam(newPoolHead.Number) &&
+				(!pool.chainconfig.IsOsaka(oldPoolHead.Number) || pool.chainconfig.IsAmsterdam(oldPoolHead.Number)):
+				limit = params.MaxTxGas
+			}
+			if limit != 0 {
+				pool.dropWhere(func(tx *types.Transaction) bool {
+					return tx.Gas() <= limit
+				}, "gas-limit-cap")
+			}
 		}
 
 		// Discard transactions a gas schedule fork priced out of the pool. Sweeping

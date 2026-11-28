@@ -672,6 +672,26 @@ func TestPendingFilterForHeaderGasLimitCapOsaka(t *testing.T) {
 	}
 }
 
+// TestPendingFilterForHeaderGasLimitCapAmsterdam tests pending filter for
+// header gas limit cap amsterdam.
+func TestPendingFilterForHeaderGasLimitCapAmsterdam(t *testing.T) {
+	header := &types.Header{
+		Number:  big.NewInt(1),
+		BaseFee: big.NewInt(12_500_000_000),
+	}
+	minGasPrice := uint256.NewInt(12_500_000_000)
+	// Amsterdam raises the cap to the EIP-8037 total, so no EIP-7825 cap is
+	// applied once it activates.
+	cfg := &params.ChainConfig{
+		OsakaBlock:     big.NewInt(1),
+		AmsterdamBlock: big.NewInt(1),
+	}
+	filter := pendingFilterForHeader(minGasPrice, header, cfg)
+	if filter.GasLimitCap != 0 {
+		t.Fatalf("unexpected gas limit cap after Amsterdam activation: have %v want %v", filter.GasLimitCap, 0)
+	}
+}
+
 // TestPendingFilterForHeaderTxPoolBoundarySelection tests pending filter for header tx pool boundary selection.
 func TestPendingFilterForHeaderTxPoolBoundarySelection(t *testing.T) {
 	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")

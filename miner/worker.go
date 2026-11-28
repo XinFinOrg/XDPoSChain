@@ -311,7 +311,7 @@ func pendingFilterForHeader(minGasPrice *uint256.Int, header *types.Header, chai
 	if baseFee != nil {
 		filter.BaseFee = baseFee
 	}
-	if chainConfig.IsOsaka(header.Number) {
+	if chainConfig.IsOsaka(header.Number) && !chainConfig.IsAmsterdam(header.Number) {
 		filter.GasLimitCap = params.MaxTxGas
 	}
 	return filter
