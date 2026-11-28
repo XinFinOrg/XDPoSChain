@@ -836,8 +836,15 @@ func (api *API) GetBlockInfoByEpochNum(epochNumber uint64) (*utils.EpochNumInfo,
 
 // GetSigningTxCountByEpoch returns the signing transaction count for ALL masternodes
 // (including non-active ones) in the epoch that immediately precedes the epoch
-// that starts at epochBlockNum. In other words, it walks blocks from
-// epochBlockNum-1 backwards to the previous epoch-switch block (inclusive).
+// that starts at epochBlockNum, counted over the same window the reward hook uses
+// when it pays that epoch at the following epoch switch:
+//   - the sign slots are the blocks after the previous epoch switch block up to
+//     epochBlockNum-1; an epoch switch block is never a sign slot,
+//   - signing txs are gathered up to the block before the next epoch switch, since
+//     the signatures for the last slots of an epoch are often mined in the next one.
+//
+// If the next epoch switch is not mined yet, signing txs are gathered up to the
+// current head, so the counts can still grow until that switch.
 // epochBlockNum must be an epoch-switch block number that marks the start of an epoch.
 // The genesis block is an epoch switch block but no epoch precedes it, so its count
 // is empty.
@@ -867,27 +874,25 @@ func (api *API) GetSigningTxCountByEpoch(epochBlockNum rpc.BlockNumber) (map[com
 		return map[common.Address]uint64{}, nil
 	}
 
-	// Walk backwards from epochBlockNum-1 to the previous epoch switch block,
-	// collecting signing txs from every block.
-	mapBlkHash := map[uint64]common.Hash{}
+	// isBoundary mirrors the reward hook: the first v2 block is an epoch switch to the
+	// engine, but the hook does not end an epoch there.
+	isBoundary := func(h *types.Header) (bool, error) {
+		isSwitch, _, err := api.XDPoS.IsEpochSwitch(h)
+		if err != nil || !isSwitch {
+			return false, err
+		}
+		v2 := api.XDPoS.config.V2
+		return v2 == nil || v2.SwitchBlock == nil || h.Number.Uint64() != v2.SwitchBlock.Uint64()+1, nil
+	}
+
 	// sigData maps blockHash -> list of signers who signed for that block
 	sigData := make(map[common.Hash][]common.Address)
-
-	h := header
-	for i := header.Number.Uint64() - 1; ; i-- {
-		parentHash := h.ParentHash
-		h = api.chain.GetHeader(parentHash, i)
-		if h == nil {
-			return nil, fmt.Errorf("failed to get header at number %d hash %s", i, parentHash.Hex())
-		}
-
-		mapBlkHash[i] = h.Hash()
-
+	collect := func(h *types.Header) error {
 		signingTxs, ok := api.XDPoS.GetCachedSigningTxs(h.Hash())
 		if !ok {
-			block := api.chain.GetBlock(h.Hash(), i)
+			block := api.chain.GetBlock(h.Hash(), h.Number.Uint64())
 			if block == nil {
-				return nil, fmt.Errorf("failed to get block at number %d hash %s", i, h.Hash().Hex())
+				return fmt.Errorf("failed to get block at number %d hash %s", h.Number.Uint64(), h.Hash().Hex())
 			}
 			signingTxs = api.XDPoS.CacheSigningTxs(h.Hash(), block.Transactions())
 		}
@@ -896,13 +901,53 @@ func (api *API) GetSigningTxCountByEpoch(epochBlockNum rpc.BlockNumber) (map[com
 			from := *tx.From()
 			sigData[blkHash] = append(sigData[blkHash], from)
 		}
+		return nil
+	}
 
-		prevIsEpochSwitch, _, err := api.XDPoS.IsEpochSwitch(h)
+	// Walk backwards from epochBlockNum-1 to the block after the previous epoch switch
+	// block. These are the blocks whose sign slots are counted.
+	mapBlkHash := map[uint64]common.Hash{}
+	h := header
+	for i := header.Number.Uint64() - 1; ; i-- {
+		parentHash := h.ParentHash
+		h = api.chain.GetHeader(parentHash, i)
+		if h == nil {
+			return nil, fmt.Errorf("failed to get header at number %d hash %s", i, parentHash.Hex())
+		}
+		prevIsEpochSwitch, err := isBoundary(h)
 		if err != nil {
 			return nil, err
 		}
-		if prevIsEpochSwitch || i == 0 {
+		if prevIsEpochSwitch {
 			break
+		}
+		mapBlkHash[i] = h.Hash()
+		if err := collect(h); err != nil {
+			return nil, err
+		}
+		if i == 0 {
+			break
+		}
+	}
+
+	// Walk forward from epochBlockNum to the block before the next epoch switch block,
+	// or to the head if it is not mined yet, for signatures mined late.
+	for i := header.Number.Uint64(); ; i++ {
+		h := header
+		if i > header.Number.Uint64() {
+			if h = api.chain.GetHeaderByNumber(i); h == nil {
+				break
+			}
+			nextIsEpochSwitch, err := isBoundary(h)
+			if err != nil {
+				return nil, err
+			}
+			if nextIsEpochSwitch {
+				break
+			}
+		}
+		if err := collect(h); err != nil {
+			return nil, err
 		}
 	}
 

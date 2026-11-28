@@ -1,15 +1,19 @@
 package engine_v2_tests
 
 import (
+	"encoding/json"
 	"math/big"
 	"reflect"
 	"testing"
 
+	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/eth/hooks"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetMissedRoundsInEpochByBlockNumOnlyForV2Consensus(t *testing.T) {
@@ -230,4 +234,72 @@ func TestGetBlockByEpochNumber(t *testing.T) {
 	info, err = engine.APIs(blockchain)[0].Service.(*XDPoS.API).GetBlockInfoByEpochNum(6)
 	assert.NotNil(t, err)
 	assert.Nil(t, info)
+}
+
+// TestGetSigningTxCountByEpochMatchesRewardWindow checks that the count for an epoch is the one
+// the reward hook pays for it. The epoch before 3600 has the sign slots 2715..3585: the previous
+// epoch switch 2700 is a multiple of MergeSignRange but not a slot, and a signature for the last
+// slot that is only mined in the next epoch (block 3700) still counts.
+func TestGetSigningTxCountByEpochMatchesRewardWindow(t *testing.T) {
+	skipLongInShortMode(t)
+	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
+	require.NoError(t, err)
+	var config params.ChainConfig
+	require.NoError(t, json.Unmarshal(b, &config))
+	config.XDPoS.V2.SwitchBlock.SetUint64(1800)
+	config.XDPoS.V2.SwitchEpoch = 2
+
+	epoch := config.XDPoS.Epoch // 900
+	blockchain, _, _, signer, signFn := PrepareXDCTestBlockChainWithProtectorObserver(t, int(epoch)*5+10, &config)
+	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
+	api := adaptor.APIs(blockchain)[0].Service.(*XDPoS.API)
+
+	header2700 := blockchain.GetHeaderByNumber(epoch * 3)
+	header3599 := blockchain.GetHeaderByNumber(epoch*4 - 1)
+	header3700 := blockchain.GetHeaderByNumber(epoch*4 + 100)
+	header4500 := blockchain.GetHeaderByNumber(epoch * 5)
+	require.Contains(t, adaptor.GetMasternodesFromCheckpointHeader(header2700), acc1Addr)
+
+	var slots []*types.Header
+	for i := epoch*3 + 1; i < epoch*4; i++ {
+		if i%common.MergeSignRange == 0 {
+			slots = append(slots, blockchain.GetHeaderByNumber(i))
+		}
+	}
+	require.Len(t, slots, 59)
+	last := slots[len(slots)-1]
+	require.Equal(t, uint64(3585), last.Number.Uint64())
+
+	// signer signs every slot, but its signature for the last one is mined in the next epoch;
+	// acc1 signs the previous epoch switch block and two slots.
+	var txs []*types.Transaction
+	for _, h := range slots[:len(slots)-1] {
+		tx, err := signingTxWithSignerFn(h, 0, signer, signFn)
+		require.NoError(t, err)
+		txs = append(txs, tx)
+	}
+	for _, h := range []*types.Header{header2700, slots[0], slots[1]} {
+		tx, err := signingTxWithKey(h, 0, acc1Key)
+		require.NoError(t, err)
+		txs = append(txs, tx)
+	}
+	adaptor.CacheSigningTxs(header3599.Hash(), txs)
+	late, err := signingTxWithSignerFn(last, 0, signer, signFn)
+	require.NoError(t, err)
+	adaptor.CacheSigningTxs(header3700.Hash(), []*types.Transaction{late})
+
+	got, err := api.GetSigningTxCountByEpoch(rpc.BlockNumber(epoch * 4))
+	require.NoError(t, err)
+	require.Equal(t, uint64(59), got[signer], "the late-mined signature for slot 3585 counts")
+	require.Equal(t, uint64(2), got[acc1Addr], "the switch block 2700 is not a sign slot")
+
+	round4500, err := adaptor.EngineV2.GetRoundNumber(header4500)
+	require.NoError(t, err)
+	paid, signSlots, _, err := hooks.GetSigningTxCount(adaptor, blockchain, header4500, adaptor.EngineV2.Config(uint64(round4500)))
+	require.NoError(t, err)
+	require.Equal(t, uint64(59), signSlots)
+	for addr, log := range paid[hooks.MasterNodeBeneficiary] {
+		require.Equal(t, log.Sign, got[addr], "sign count of %s differs from the reward hook", addr.Hex())
+	}
+	require.Len(t, paid[hooks.MasterNodeBeneficiary], 2)
 }
