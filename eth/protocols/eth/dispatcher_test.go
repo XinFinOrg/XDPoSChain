@@ -219,12 +219,12 @@ func TestDispatcherRequestResponse(t *testing.T) {
 }
 
 // TestDispatcherDanglingResponse checks that responses with an unknown request
-// id are reported as dangling and the dispatcher keeps serving later requests.
+// id are dropped silently and the dispatcher keeps serving later requests.
 func TestDispatcherDanglingResponse(t *testing.T) {
 	peer, app := newDispatcherTestPeer(t)
 
-	if err := peer.dispatchResponse(&Response{id: 1, code: BlockHeadersMsg, Res: &BlockHeadersPacket{}}); !errors.Is(err, errDanglingResponse) {
-		t.Fatalf("dangling response mismatch: have %v, want %v", err, errDanglingResponse)
+	if err := peer.dispatchResponse(&Response{id: 1, code: BlockHeadersMsg, Res: &BlockHeadersPacket{}}); err != nil {
+		t.Fatalf("dangling response returned %v, want nil", err)
 	}
 	// The dispatcher must stay alive after a dangling response.
 	sink := make(chan *Response, 1)
@@ -277,8 +277,8 @@ func TestDispatcherMismatchingResponseType(t *testing.T) {
 		res.Done <- nil
 		t.Fatal("mismatching response was delivered")
 	case err := <-resErr:
-		if !errors.Is(err, errMismatchingResponseType) {
-			t.Fatalf("mismatching response mismatch: have %v, want %v", err, errMismatchingResponseType)
+		if err != nil {
+			t.Fatalf("mismatching response returned %v, want nil", err)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("dispatchResponse hung on mismatching response")
@@ -324,11 +324,11 @@ func TestDispatcherCancelledRequest(t *testing.T) {
 		t.Fatal("cancelled request received a response")
 	case err := <-resErr:
 		// The request left the pending table on cancellation, so the late reply
-		// is rejected as dangling even though the tracker still holds the id:
-		// the tracker matches it to the cancelled request, releases the id and
-		// meters the reply as stale instead of recording a round trip.
-		if !errors.Is(err, errDanglingResponse) {
-			t.Fatalf("late response mismatch: have %v, want %v", err, errDanglingResponse)
+		// is dropped even though the tracker still holds the id: the tracker
+		// matches it to the cancelled request, releases the id and meters the
+		// reply as stale instead of recording a round trip.
+		if err != nil {
+			t.Fatalf("late response returned %v, want nil", err)
 		}
 		if got := stale.Snapshot().Count() - staleBase; got != 1 {
 			t.Fatalf("late reply not counted as stale: have %d, want 1", got)
@@ -631,9 +631,9 @@ func TestDispatcherDoubleClose(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("reuse of a cancelled id was not rejected")
 	}
-	// The late reply releases the id and is rejected as dangling.
-	if _, err := dispatchTestResponse(t, peer, first.id, nil); !errors.Is(err, errDanglingResponse) {
-		t.Fatalf("late reply mismatch: have %v, want %v", err, errDanglingResponse)
+	// The late reply releases the id and is dropped.
+	if _, err := dispatchTestResponse(t, peer, first.id, nil); err != nil {
+		t.Fatalf("late reply returned %v, want nil", err)
 	}
 	// The id is free again and a new request can use it.
 	third := &Request{
@@ -912,9 +912,9 @@ func TestDispatcherCancelReservesID(t *testing.T) {
 	if got := int64(gauge.Snapshot()) - base; got != 1 {
 		t.Fatalf("tracked gauge mismatch after cancel: have %d, want 1", got)
 	}
-	// The late reply releases the reservation and is rejected as dangling.
-	if _, err := dispatchTestResponse(t, peer, req.id, nil); !errors.Is(err, errDanglingResponse) {
-		t.Fatalf("late reply mismatch: have %v, want %v", err, errDanglingResponse)
+	// The late reply releases the reservation and is dropped.
+	if _, err := dispatchTestResponse(t, peer, req.id, nil); err != nil {
+		t.Fatalf("late reply returned %v, want nil", err)
 	}
 	if got := int64(gauge.Snapshot()) - base; got != 0 {
 		t.Fatalf("tracked gauge mismatch after the late reply: have %d, want 0", got)
@@ -1053,10 +1053,10 @@ func TestDispatcherReconnectKeepsIDScope(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("reuse after a stale teardown was not rejected")
 	}
-	// The late reply for the cancelled request is dangling, not delivered to
+	// The late reply for the cancelled request is dropped, not delivered to
 	// whichever request would have taken over the id.
-	if _, err := dispatchTestResponse(t, peer2, 1, nil); !errors.Is(err, errDanglingResponse) {
-		t.Fatalf("late reply mismatch: have %v, want %v", err, errDanglingResponse)
+	if _, err := dispatchTestResponse(t, peer2, 1, nil); err != nil {
+		t.Fatalf("late reply returned %v, want nil", err)
 	}
 }
 
@@ -1194,8 +1194,8 @@ func TestDispatcherMultipleRequestsOutOfOrder(t *testing.T) {
 	}
 	// The table is empty again, so the same ids are now dangling.
 	for _, req := range reqs {
-		if _, err := dispatchTestResponse(t, peer, req.id, nil); !errors.Is(err, errDanglingResponse) {
-			t.Fatalf("reply to fulfilled id %d: have %v, want %v", req.id, err, errDanglingResponse)
+		if _, err := dispatchTestResponse(t, peer, req.id, nil); err != nil {
+			t.Fatalf("reply to fulfilled id %d returned %v, want nil", req.id, err)
 		}
 	}
 }
@@ -1214,8 +1214,8 @@ func TestDispatcherLateReplyAfterCancelNotMisrouted(t *testing.T) {
 	if err := cancelled.Close(); err != nil {
 		t.Fatalf("failed to cancel request: %v", err)
 	}
-	if _, err := dispatchTestResponse(t, peer, cancelled.id, nil); !errors.Is(err, errDanglingResponse) {
-		t.Fatalf("late reply to a cancelled id: have %v, want %v", err, errDanglingResponse)
+	if _, err := dispatchTestResponse(t, peer, cancelled.id, nil); err != nil {
+		t.Fatalf("late reply to a cancelled id returned %v, want nil", err)
 	}
 	select {
 	case res := <-live.sink:

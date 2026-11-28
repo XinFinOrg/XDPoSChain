@@ -390,17 +390,19 @@ func (d *Downloader) RegisterPeer(id string, version uint, peer Peer) error {
 
 // deliverPack routes a xdc/166 response packet back into the same channel the
 // node layer uses for legacy replies, preserving the delivery meters and the
-// cancellation/backpressure behaviour of Downloader.deliver.
-func (d *Downloader) deliverPack(packet dataPack) error {
+// cancellation/backpressure behaviour of Downloader.deliver. The cancel channel
+// is the one captured when the request was issued, so a reply cannot leak into
+// a later sync's shared delivery channel.
+func (d *Downloader) deliverPack(packet dataPack, cancel <-chan struct{}) error {
 	switch pack := packet.(type) {
 	case *headerPack:
-		return d.deliver(pack.peerId, d.headerCh, pack, headerInMeter, headerDropMeter)
+		return d.deliverWithCancel(pack.peerId, d.headerCh, pack, headerInMeter, headerDropMeter, cancel)
 	case *bodyPack:
-		return d.deliver(pack.peerId, d.bodyCh, pack, bodyInMeter, bodyDropMeter)
+		return d.deliverWithCancel(pack.peerId, d.bodyCh, pack, bodyInMeter, bodyDropMeter, cancel)
 	case *receiptPack:
-		return d.deliver(pack.peerId, d.receiptCh, pack, receiptInMeter, receiptDropMeter)
+		return d.deliverWithCancel(pack.peerId, d.receiptCh, pack, receiptInMeter, receiptDropMeter, cancel)
 	case *statePack:
-		return d.deliver(pack.peerId, d.stateCh, pack, stateInMeter, stateDropMeter)
+		return d.deliverWithCancel(pack.peerId, d.stateCh, pack, stateInMeter, stateDropMeter, cancel)
 	default:
 		return fmt.Errorf("unknown data pack %T", packet)
 	}
@@ -2350,6 +2352,18 @@ func (d *Downloader) DeliverNodeData(id string, data [][]byte) (err error) {
 
 // deliver injects a new batch of data received from a remote node.
 func (d *Downloader) deliver(id string, destCh chan dataPack, packet dataPack, inMeter, dropMeter *metrics.Meter) (err error) {
+	d.cancelLock.RLock()
+	cancel := d.cancelCh
+	d.cancelLock.RUnlock()
+
+	return d.deliverWithCancel(id, destCh, packet, inMeter, dropMeter, cancel)
+}
+
+// deliverWithCancel injects a packet into destCh, aborting if the sync that
+// issued the request was cancelled while queuing. The cancel channel is passed
+// in so a xdc/166 reply is judged against the sync that issued it, not against
+// whatever sync happens to be running when the reply arrives.
+func (d *Downloader) deliverWithCancel(id string, destCh chan dataPack, packet dataPack, inMeter, dropMeter *metrics.Meter, cancel <-chan struct{}) (err error) {
 	// Update the delivery metrics for both good and failed deliveries
 	inMeter.Mark(int64(packet.Items()))
 	defer func() {
@@ -2357,12 +2371,16 @@ func (d *Downloader) deliver(id string, destCh chan dataPack, packet dataPack, i
 			dropMeter.Mark(int64(packet.Items()))
 		}
 	}()
-	// Deliver or abort if the sync is canceled while queuing
-	d.cancelLock.RLock()
-	cancel := d.cancelCh
-	d.cancelLock.RUnlock()
+	// Deliver or abort if the sync is canceled while queuing. Check the
+	// cancellation first: a closed channel and a free slot are both ready for
+	// select, and a reply from a cancelled sync must never be delivered.
 	if cancel == nil {
 		return errNoSyncActive
+	}
+	select {
+	case <-cancel:
+		return errNoSyncActive
+	default:
 	}
 	select {
 	case destCh <- packet:

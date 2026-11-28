@@ -74,8 +74,8 @@ type peerConnection struct {
 
 	peer Peer
 
-	deliver func(dataPack) error   // Injects xdc/166 responses into the downloader queue
-	cancel  func() <-chan struct{} // Current sync cancellation channel
+	deliver func(dataPack, <-chan struct{}) error // Injects xdc/166 responses into the downloader queue
+	cancel  func() <-chan struct{}                // Current sync cancellation channel
 
 	version uint       // Eth protocol version number to switch strategies
 	log     log.Logger // Contextual logger to add extra infos to peer logs
@@ -132,7 +132,7 @@ func shortPeerID(id string) string {
 // newPeerConnection creates a new downloader peer. The deliver and cancel
 // callbacks bridge xdc/166 request sinks back into the downloader; they are
 // unused by the legacy request path.
-func newPeerConnection(id string, version uint, peer Peer, logger log.Logger, deliver func(dataPack) error, cancel func() <-chan struct{}) *peerConnection {
+func newPeerConnection(id string, version uint, peer Peer, logger log.Logger, deliver func(dataPack, <-chan struct{}) error, cancel func() <-chan struct{}) *peerConnection {
 	return &peerConnection{
 		id:      id,
 		lacking: make(map[common.Hash]struct{}),
@@ -318,6 +318,11 @@ func (p *peerConnection) waitResponse(req *eth.Request, resCh chan *eth.Response
 	}
 	defer req.Close()
 
+	// Capture the cancellation channel of the sync that issued the request: the
+	// reply belongs to that sync and must not be delivered into a later sync's
+	// shared channel.
+	cancel := p.cancelChannel()
+
 	select {
 	case res := <-resCh:
 		if res == nil {
@@ -325,10 +330,17 @@ func (p *peerConnection) waitResponse(req *eth.Request, resCh chan *eth.Response
 		}
 		var err error
 		if p.deliver != nil {
-			err = p.deliver(pack(res))
+			err = p.deliver(pack(res), cancel)
+		}
+		// A cancelled sync is a local condition, not a peer fault: acknowledge
+		// it so the reader keeps the connection instead of disconnecting an
+		// honest peer.
+		if errors.Is(err, errNoSyncActive) {
+			err = nil
 		}
 		res.Done <- err
-	case <-p.cancelChannel():
+	case <-req.Terminated():
+	case <-cancel:
 	}
 }
 

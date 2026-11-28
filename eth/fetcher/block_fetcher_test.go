@@ -679,6 +679,110 @@ func TestAnnouncedBlockFetchedThroughSink(t *testing.T) {
 	}
 }
 
+// TestFilterHeadersIgnoresResponseDuration checks that the header filter uses
+// the receive time, not the round trip added to it: a large response duration
+// must not stamp the imported block with a time in the future.
+func TestFilterHeadersIgnoresResponseDuration(t *testing.T) {
+	hashes, blocks := makeChain(2, 0, genesis)
+
+	// Start from a tester whose head is block 1, so the empty block 2 can be
+	// imported as soon as its header arrives. makeChain returns its hashes in
+	// reverse order: hashes[0] is the newest block.
+	tester := newIdleTester()
+	tester.hashes = append(tester.hashes, hashes[1])
+	tester.blocks[hashes[1]] = blocks[hashes[1]]
+	tester.fetcher.Start()
+	t.Cleanup(tester.fetcher.Stop)
+
+	headerFetcher := func(hash common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+		headers := eth.BlockHeadersPacket{blocks[hash].Header()}
+		go func() {
+			sink <- &eth.Response{Res: &headers, Time: 30 * time.Second, Done: make(chan error, 1)}
+		}()
+		return &eth.Request{}, nil
+	}
+	bodyFetcher := func(hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+		return &eth.Request{}, nil
+	}
+	imported := make(chan *types.Block)
+	tester.watchImports(imported)
+	if err := tester.fetcher.Notify("valid", hashes[0], 2, time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher); err != nil {
+		t.Fatalf("failed to notify: %v", err)
+	}
+	select {
+	case block := <-imported:
+		if block.ReceivedAt.After(time.Now().Add(time.Second)) {
+			t.Fatalf("block receive time %v is in the future", block.ReceivedAt)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("block was not imported")
+	}
+}
+
+// TestWaitResponseDropsSilentPeer checks that a peer which advertises a block
+// and then does not serve the requested header is dropped instead of leaving
+// the sink waiter (and its dispatcher entry) blocked forever.
+func TestWaitResponseDropsSilentPeer(t *testing.T) {
+	old := fetchResponseTimeout
+	fetchResponseTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { fetchResponseTimeout = old })
+
+	tester := newIdleTester()
+
+	type verdict struct {
+		res *eth.Response
+		ok  bool
+	}
+	verdictCh := make(chan verdict, 1)
+	go func() {
+		res, ok := tester.fetcher.waitResponse("silent", &eth.Request{}, make(chan *eth.Response))
+		verdictCh <- verdict{res, ok}
+	}()
+	var got verdict
+	select {
+	case got = <-verdictCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter did not return after the response timeout")
+	}
+	if got.ok || got.res != nil {
+		t.Fatalf("silent peer: have (%v, %v), want (nil, false)", got.res, got.ok)
+	}
+	tester.lock.RLock()
+	dropped := tester.drops["silent"]
+	tester.lock.RUnlock()
+	if !dropped {
+		t.Fatal("silent peer was not dropped")
+	}
+}
+
+// TestWaitResponseStopsOnQuit checks that shutting the fetcher down releases a
+// sink waiter through quit, not through the timeout path that drops the peer.
+func TestWaitResponseStopsOnQuit(t *testing.T) {
+	old := fetchResponseTimeout
+	fetchResponseTimeout = 5 * time.Second
+	t.Cleanup(func() { fetchResponseTimeout = old })
+
+	tester := newTester()
+	tester.fetcher.Stop()
+
+	done := make(chan struct{})
+	go func() {
+		tester.fetcher.waitResponse("peer", &eth.Request{}, make(chan *eth.Response))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Stop did not release the sink waiter")
+	}
+	tester.lock.RLock()
+	dropped := tester.drops["peer"]
+	tester.lock.RUnlock()
+	if dropped {
+		t.Fatal("Stop released the waiter through the timeout path")
+	}
+}
+
 // Tests that if blocks are announced by multiple peers (or even the same buggy
 // peer), they will only get downloaded at most once.
 func TestConcurrentAnnouncements62(t *testing.T) { testConcurrentAnnouncements(t, 62) }

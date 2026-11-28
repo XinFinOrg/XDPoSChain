@@ -40,6 +40,12 @@ const (
 	fetchTimeout  = 5 * time.Second        // Maximum allotted time to return an explicitly requested block/transaction
 )
 
+// fetchResponseTimeout bounds how long an explicitly requested block part may
+// stay unanswered. It is 2x fetchTimeout to leave room for a catchup after the
+// announce itself already expired; a peer that still does not answer is dropped
+// as a protocol violation. Tests shorten it to keep their runtime bounded.
+var fetchResponseTimeout = 2 * fetchTimeout
+
 const (
 	maxUncleDist = 7   // Maximum allowed backward distance from the chain head
 	maxQueueDist = 32  // Maximum allowed distance from the chain head to queue
@@ -332,6 +338,30 @@ func (f *BlockFetcher) Enqueue(peer string, block *types.Block) error {
 	}
 }
 
+// waitResponse waits for the reply of an explicitly requested block part. It
+// reports false if the request was abandoned: the peer went away, the fetcher
+// stopped, or the peer did not answer in time and was dropped. No response was
+// taken on those paths, so the caller owes no Done verdict; its deferred
+// Request.Close releases the dispatcher entry either way.
+func (f *BlockFetcher) waitResponse(peer string, req *eth.Request, resCh chan *eth.Response) (*eth.Response, bool) {
+	timeout := time.NewTimer(fetchResponseTimeout)
+	defer timeout.Stop()
+
+	select {
+	case res := <-resCh:
+		return res, true
+	case <-req.Terminated():
+		return nil, false
+	case <-timeout.C:
+		// The peer advertised the block and then did not serve it. The hash was
+		// already rescheduled, so an unresponsive peer is a protocol violation.
+		f.dropPeer(peer)
+		return nil, false
+	case <-f.quit:
+		return nil, false
+	}
+}
+
 // FilterHeaders extracts all the headers that were explicitly requested by the fetcher,
 // returning those that should be handled differently.
 func (f *BlockFetcher) FilterHeaders(peer string, headers []*types.Header, time time.Time) []*types.Header {
@@ -519,12 +549,16 @@ func (f *BlockFetcher) loop() {
 							}
 							defer req.Close()
 
-							res := <-resCh
-							if res == nil {
+							res, ok := f.waitResponse(peer, req, resCh)
+							if !ok || res == nil {
 								return
 							}
 							res.Done <- nil
-							f.FilterHeaders(peer, *res.Res.(*eth.BlockHeadersPacket), time.Now().Add(res.Time))
+							// xdc/166 replies are matched by request id, so the
+							// leftovers are dropped on purpose: the legacy hand-off
+							// fed them to the downloader, which cannot tell them
+							// apart from a reply to its own request.
+							f.FilterHeaders(peer, *res.Res.(*eth.BlockHeadersPacket), time.Now())
 						}(hash)
 					}
 				}(peer)
@@ -570,12 +604,14 @@ func (f *BlockFetcher) loop() {
 					}
 					defer req.Close()
 
-					res := <-resCh
-					if res == nil {
+					res, ok := f.waitResponse(peer, req, resCh)
+					if !ok || res == nil {
 						return
 					}
 					res.Done <- nil
 					txs, uncles := res.Res.(*eth.BlockBodiesPacket).Unpack()
+					// Leftovers are dropped for the same reason as the header
+					// path above.
 					f.FilterBodies(peer, txs, uncles, time.Now())
 				}(peer, hashes)
 			}

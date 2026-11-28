@@ -37,7 +37,7 @@ func TestWaitResponseAcknowledgesDeliveryError(t *testing.T) {
 	}
 	resCh <- res
 
-	p := &peerConnection{deliver: func(dataPack) error { return deliverErr }}
+	p := &peerConnection{deliver: func(dataPack, <-chan struct{}) error { return deliverErr }}
 	p.waitResponse(&eth.Request{}, resCh, func(*eth.Response) dataPack { return &headerPack{} })
 
 	select {
@@ -47,6 +47,60 @@ func TestWaitResponseAcknowledgesDeliveryError(t *testing.T) {
 		}
 	default:
 		t.Fatal("response was not acknowledged on Done")
+	}
+}
+
+// TestWaitResponseAcknowledgesLocalCancel checks that a delivery aborted by a
+// cancelled sync is acknowledged with nil instead of disconnecting the peer,
+// which did nothing wrong.
+func TestWaitResponseAcknowledgesLocalCancel(t *testing.T) {
+	resCh := make(chan *eth.Response, 1)
+	res := &eth.Response{
+		Res:  &eth.BlockHeadersPacket{},
+		Done: make(chan error, 1),
+	}
+	resCh <- res
+
+	p := &peerConnection{deliver: func(dataPack, <-chan struct{}) error { return errNoSyncActive }}
+	p.waitResponse(&eth.Request{}, resCh, func(*eth.Response) dataPack { return &headerPack{} })
+
+	select {
+	case err := <-res.Done:
+		if err != nil {
+			t.Fatalf("Done verdict: have %v, want nil", err)
+		}
+	default:
+		t.Fatal("response was not acknowledged on Done")
+	}
+}
+
+// TestDeliverWithCancelRejectsCancelledSync checks that a reply is judged
+// against the sync that issued its request: once that sync is cancelled the
+// packet must not enter the shared delivery channel, even while a newer sync is
+// already running.
+func TestDeliverWithCancelRejectsCancelledSync(t *testing.T) {
+	// A newer sync is already running: its channel must not admit the packet.
+	d := &Downloader{headerCh: make(chan dataPack, 1), cancelCh: make(chan struct{})}
+
+	cancelled := make(chan struct{})
+	close(cancelled)
+	if err := d.deliverWithCancel("peer", d.headerCh, &headerPack{peerId: "peer"}, headerInMeter, headerDropMeter, cancelled); !errors.Is(err, errNoSyncActive) {
+		t.Fatalf("delivery from a cancelled sync: have %v, want %v", err, errNoSyncActive)
+	}
+	select {
+	case packet := <-d.headerCh:
+		t.Fatalf("packet from a cancelled sync was delivered: %v", packet)
+	default:
+	}
+	// The same packet must go through while the issuing sync is still live.
+	live := make(chan struct{})
+	if err := d.deliverWithCancel("peer", d.headerCh, &headerPack{peerId: "peer"}, headerInMeter, headerDropMeter, live); err != nil {
+		t.Fatalf("delivery from a live sync failed: %v", err)
+	}
+	select {
+	case <-d.headerCh:
+	default:
+		t.Fatal("packet from a live sync was not delivered")
 	}
 }
 

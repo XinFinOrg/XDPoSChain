@@ -18,7 +18,6 @@ package eth
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -182,6 +181,8 @@ func TestDispatch166ResponsesByRequestID(t *testing.T) {
 			packet, ok := res.Res.(*BlockHeadersPacket)
 			if !ok || len(*packet) != 1 {
 				t.Errorf("request %d: unexpected response %T", ids[i], res.Res)
+			} else if want := chain.GetBlockByNumber(uint64(i + 1)).Hash(); (*packet)[0].Hash() != want {
+				t.Errorf("request %d: received header %v, want %v", ids[i], (*packet)[0].Hash(), want)
 			}
 			res.Done <- nil
 			done <- struct{}{}
@@ -196,8 +197,9 @@ func TestDispatch166ResponsesByRequestID(t *testing.T) {
 	}
 }
 
-// TestDispatch166UnknownID checks an unregistered response is rejected without
-// stopping the peer's read loop.
+// TestDispatch166UnknownID checks an unregistered response is dropped without
+// stopping the peer's read loop: a late reply to a locally cancelled request
+// takes the same path and must not disconnect the peer either.
 func TestDispatch166UnknownID(t *testing.T) {
 	backend := newTestBackend(t, 1, nil)
 	peer := newTestPeer(t, "peer", XDC166, backend)
@@ -208,13 +210,67 @@ func TestDispatch166UnknownID(t *testing.T) {
 			BlockHeadersPacket: BlockHeadersPacket{backend.chain.GetBlockByNumber(0).Header()},
 		})
 	}()
+	// Give the reader time to consume the dangling reply before the follow-up
+	// request: the test must prove the loop survived it, not that both replies
+	// raced.
+	time.Sleep(100 * time.Millisecond)
+
+	sink := make(chan *Response, 1)
+	registerPendingRequest(t, peer, &Request{
+		id:   1,
+		sink: sink,
+		code: GetBlockHeadersMsg,
+		want: BlockHeadersMsg,
+		data: &GetBlockHeadersPacket{},
+	})
+	go func() {
+		_ = p2p.Send(peer.app, BlockHeadersMsg, BlockHeadersPacket166{
+			RequestId:          1,
+			BlockHeadersPacket: BlockHeadersPacket{backend.chain.GetBlockByNumber(0).Header()},
+		})
+	}()
 	select {
-	case err := <-peer.errc:
-		if !errors.Is(err, errDanglingResponse) {
-			t.Fatalf("unknown response: have %v, want errDanglingResponse", err)
+	case res := <-sink:
+		if res == nil {
+			t.Fatal("nil response after an unknown id")
 		}
+		res.Done <- nil
+	case err := <-peer.errc:
+		t.Fatalf("reader stopped after an unknown id: %v", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("response after an unknown id was not delivered")
+	}
+}
+
+// TestRequestTerminatedOnPeerClose checks the peer-exit wake-up used by the
+// fetcher and downloader consumers: closing the peer must release a goroutine
+// waiting on the response sink.
+func TestRequestTerminatedOnPeerClose(t *testing.T) {
+	backend := newTestBackend(t, 1, nil)
+	peer := newTestPeer(t, "peer", XDC166, backend)
+
+	req := &Request{
+		id:   7,
+		sink: make(chan *Response),
+		code: GetBlockHeadersMsg,
+		want: BlockHeadersMsg,
+		data: &GetBlockHeadersPacket{},
+	}
+	registerPendingRequest(t, peer, req)
+	peer.Peer.Close()
+
+	select {
+	case <-req.Terminated():
 	case <-time.After(2 * time.Second):
-		t.Fatal("unknown response left the reader blocked")
+		t.Fatal("request was not woken by the peer teardown")
+	}
+	select {
+	case res := <-req.sink:
+		t.Fatalf("unexpected response after peer teardown: %v", res)
+	case <-req.Terminated():
+		// Expected: the consumer's sink/term select takes the term branch.
+	case <-time.After(2 * time.Second):
+		t.Fatal("consumer select did not observe the teardown")
 	}
 }
 

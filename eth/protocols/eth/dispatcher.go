@@ -124,6 +124,19 @@ func (r *Request) Close() error {
 	return r.closeErr
 }
 
+// Terminated returns a channel that is closed once the peer connection tears
+// down. A consumer blocked on the response sink must also select on this
+// channel: the dispatcher returns on peer teardown without flushing pending
+// requests, so otherwise the consumer would wait forever. No response was
+// taken on that path, hence no Response.Done verdict is owed. Requests mocked
+// in tests have no peer and return a nil channel, which disables the case.
+func (r *Request) Terminated() <-chan struct{} {
+	if r.peer == nil {
+		return nil
+	}
+	return r.peer.term
+}
+
 // request is a wrapper around a client Request that has an error channel to
 // signal on if sending the request already failed on a network level.
 type request struct {
@@ -203,13 +216,15 @@ func (p *Peer) dispatchResponse(res *Response) error {
 	select {
 	case p.resDispatch <- resOp:
 		// Ensure the response is accepted by the dispatcher. A rejection means
-		// the packet was dropped (unknown request id or wrong packet type), so
-		// the caller must be told instead of waiting for a delivery that will
-		// never happen.
+		// the packet was dropped (unknown request id or wrong packet type), which
+		// must not tear down the peer: a late reply to a request cancelled
+		// locally looks exactly like an unknown id, and both are normal network
+		// events. Bailing out on them would let a slow reply disconnect a peer
+		// that did nothing wrong.
 		select {
 		case err := <-resOp.fail:
 			if err != nil {
-				return err
+				return nil
 			}
 		case <-p.term:
 			return errDisconnected
