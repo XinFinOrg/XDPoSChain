@@ -794,10 +794,11 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 		return false, nil
 	}
 
-	// GapNumber is attacker-controlled until here, and getSnapshot would read a
-	// canonical header for any height. Only a gap block can back a vote, plus the
-	// chain-start fallback 0, which names no gap block but is what GapBlockNumber
-	// returns for an epoch that starts no farther than Gap into the chain.
+	// GapNumber is peer-controlled and getSnapshot reads a canonical header at
+	// any height. With a gap trigger, only gap blocks and GapBlockNumber's
+	// chain-start fallback 0 pass this gate; without one, which only faker
+	// chains reach (New refuses such a schedule), any GapNumber passes.
+	// Bfter.Vote's epoch*3 window bounds the height.
 	if _, ok := x.config.GapTrigger(); ok && vote.GapNumber != 0 && !x.config.IsGapBlock(vote.GapNumber) {
 		log.Debug("[VerifyVoteMessage] Disqualified vote message as the gap number is not a gap block", "voteHash", vote.Hash(), "gapNumber", vote.GapNumber)
 		return false, nil

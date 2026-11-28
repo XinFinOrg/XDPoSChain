@@ -632,3 +632,28 @@ func TestProposedBlockStateReady(t *testing.T) {
 		t.Fatal("a nil header or a header without a number must not be ready")
 	}
 }
+
+// TestHandleVoteToleratesIncompleteVote pins the guard at its use site: the wire
+// decoder rejects these shapes, so only a direct call reaches it, and the
+// known-vote log line would dereference the missing block info.
+func TestHandleVoteToleratesIncompleteVote(t *testing.T) {
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
+	defer pm.Stop()
+
+	incomplete := &types.Vote{Signature: make([]byte, 65)}
+	known := incomplete.Hash()
+	pm.knownVotes.Add(known, struct{}{}) // take the only dereference: the log line
+
+	for _, tc := range []struct {
+		name string
+		vote *types.Vote
+		hash common.Hash
+	}{
+		{"nil vote", nil, common.Hash{}},
+		{"missing proposed block info", incomplete, known},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pm.handleVote("peer", tc.vote, tc.hash) // must not panic
+		})
+	}
+}
