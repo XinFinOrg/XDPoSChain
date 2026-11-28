@@ -44,6 +44,13 @@ const (
 	maxQueueDist = 32  // Maximum allowed distance from the chain head to queue
 	hashLimit    = 256 // Maximum number of unique blocks a peer may have announced
 	blockLimit   = 64  // Maximum number of unique blocks a peer may have delivered
+
+	// maxFutureBlockSeconds bounds how far ahead of the local clock a propagated
+	// block's timestamp may be before the block is dropped instead of awaited. It
+	// matches core.maxTimeFutureBlocks, the window in which the chain parks a block
+	// dated ahead of this node's clock; a block beyond it is not importable here,
+	// and waiting on a peer-supplied timestamp is otherwise unbounded.
+	maxFutureBlockSeconds = 30
 )
 
 const (
@@ -75,6 +82,23 @@ func IsPlausibleAnnouncement(number, height uint64) bool {
 	return number <= height+maxQueueDist
 }
 
+// futureBlockWait reports how long to wait for a block dated ahead of the local
+// clock, and whether the timestamp is inside the window worth waiting for. The
+// window is compared in whole seconds, the granularity the consensus engines use
+// for ErrFutureBlock, so a timestamp that would wrap int64 never reaches a timer.
+func futureBlockWait(headerTime uint64, now time.Time) (time.Duration, bool) {
+	// A clock before the epoch makes the unsigned bound wrap to a huge value,
+	// which would classify every timestamp as inside the window and bring back
+	// the unbounded wait this function exists to remove.
+	if now.Unix() < 0 {
+		return 0, false
+	}
+	if headerTime > uint64(now.Unix())+maxFutureBlockSeconds {
+		return 0, false
+	}
+	return time.Unix(int64(headerTime), 0).Sub(now), true
+}
+
 func belowUncleDist(number, height uint64) bool {
 	return number+maxUncleDist < height
 }
@@ -89,6 +113,7 @@ var (
 	blockBroadcastOutTimer  = metrics.NewRegisteredTimer("eth/fetcher/block/broadcasts/out", nil)
 	blockBroadcastDropMeter = metrics.NewRegisteredMeter("eth/fetcher/block/broadcasts/drop", nil)
 	blockBroadcastDOSMeter  = metrics.NewRegisteredMeter("eth/fetcher/block/broadcasts/dos", nil)
+	blockFutureDropMeter    = metrics.NewRegisteredMeter("eth/fetcher/block/broadcasts/future", nil)
 
 	headerFetchMeter = metrics.NewRegisteredMeter("eth/fetcher/block/headers", nil)
 	bodyFetchMeter   = metrics.NewRegisteredMeter("eth/fetcher/block/bodies", nil)
@@ -789,8 +814,17 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 				go f.broadcastBlock(block, true)
 			}
 		case consensus.ErrFutureBlock:
-			delay := time.Until(time.Unix(int64(block.Time()), 0))
-			log.Info("Receive future block", "number", block.NumberU64(), "hash", block.Hash().Hex(), "delay", delay)
+			delay, ok := futureBlockWait(block.Time(), time.Now())
+			if !ok {
+				log.Debug("Discarded propagated block, timestamp beyond the future window", "peer", peer, "number", block.Number(), "hash", hash, "time", block.Time())
+				blockFutureDropMeter.Mark(1)
+				// The block was never imported, so it must not stay in the known
+				// cache: a later delivery of the same hash would otherwise be
+				// dropped as "known block" and never retried here.
+				f.knowns.Remove(hash)
+				return
+			}
+			log.Debug("Receive future block", "number", block.NumberU64(), "hash", block.Hash().Hex(), "delay", delay)
 			time.Sleep(delay)
 			goto again
 		case consensus.ErrNoValidatorSignature:

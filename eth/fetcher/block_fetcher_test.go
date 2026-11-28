@@ -881,6 +881,274 @@ func TestMaxUint64PropagationDiscarding(t *testing.T) {
 	}
 }
 
+// newFutureTestTester builds a started tester holding a three-block chain and
+// returns it with the head block new blocks build on.
+func newFutureTestTester(t *testing.T) (*fetcherTester, *types.Block) {
+	t.Helper()
+
+	hashes, blocks := makeChain(3, 0, genesis)
+	head := hashes[2]
+
+	tester := newTester()
+	tester.lock.Lock()
+	tester.hashes = []common.Hash{head}
+	tester.blocks = map[common.Hash]*types.Block{head: blocks[head]}
+	tester.lock.Unlock()
+
+	return tester, blocks[head]
+}
+
+// newFutureTestBlock builds the block on top of parent that carries the given
+// timestamp.
+func newFutureTestBlock(parent *types.Block, timestamp uint64) *types.Block {
+	return types.NewBlockWithHeader(&types.Header{
+		ParentHash: parent.Hash(),
+		Number:     new(big.Int).SetUint64(parent.NumberU64() + 1),
+		Time:       timestamp,
+		Difficulty: big.NewInt(1),
+	})
+}
+
+// Tests that the future-block wait is bounded in whole seconds: a timestamp
+// inside core.maxTimeFutureBlocks yields the remaining wait, and one beyond it -
+// including timestamps that would wrap int64 - is refused outright.
+func TestFutureBlockWait(t *testing.T) {
+	now := time.Unix(1_700_000_000, 250_000_000)
+	second := uint64(now.Unix())
+
+	// The literal seconds fix this table to the fetcher's own window (30s). The
+	// chain's core.maxTimeFutureBlocks holds the same value today, but the two
+	// constants are independent and must be kept in sync by hand.
+	tests := []struct {
+		name  string
+		time  uint64
+		delay time.Duration
+		ok    bool
+	}{
+		{"inside the window", second + 5, 4750 * time.Millisecond, true},
+		{"the window edge", second + 30, 29750 * time.Millisecond, true},
+		{"one second past the window", second + 31, 0, false},
+		{"wraps int64", uint64(1) << 63, 0, false},
+		{"max uint64", ^uint64(0), 0, false},
+	}
+	for _, tt := range tests {
+		delay, ok := futureBlockWait(tt.time, now)
+		if delay != tt.delay || ok != tt.ok {
+			t.Fatalf("%s: delay=%v ok=%v, want %v/%v", tt.name, delay, ok, tt.delay, tt.ok)
+		}
+	}
+	// A pre-epoch clock must not turn the unsigned bound into "everything fits".
+	if _, ok := futureBlockWait(0, time.Unix(-1, 0)); ok {
+		t.Fatalf("a pre-epoch clock accepted a timestamp")
+	}
+}
+
+// Tests that a propagated block dated beyond the future window is dropped
+// instead of awaited: the import goroutine used to sleep until the peer-supplied
+// timestamp, and one that wraps int64 turned the retry into a spin.
+func TestFarFutureTimestampPropagationDiscarding(t *testing.T) {
+	tests := []struct {
+		name      string
+		timestamp uint64
+	}{
+		{"a year out", uint64(time.Now().Add(365 * 24 * time.Hour).Unix())},
+		{"wraps int64", uint64(1) << 63},
+		{"max uint64", ^uint64(0)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tester, head := newFutureTestTester(t)
+			defer tester.fetcher.Stop()
+
+			var verifies atomic.Int32
+			tester.fetcher.verifyHeader = func(header *types.Header) error {
+				verifies.Add(1)
+				return consensus.ErrFutureBlock
+			}
+			inserted := make(chan *types.Block, 1)
+			tester.fetcher.insertBlock = func(block *types.Block) error {
+				inserted <- block
+				return nil
+			}
+			block := newFutureTestBlock(head, tt.timestamp)
+			tester.fetcher.Enqueue("future", block)
+
+			// The verification, the drop and the untrack all happen on the import
+			// goroutine, and Enqueue returns on receipt, before the block reaches
+			// knowns: wait for the verification and then for the untrack instead of
+			// watching a fixed window a slow runner can miss.
+			deadline := time.Now().Add(fetchWait)
+			for verifies.Load() == 0 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			for tester.fetcher.knowns.Contains(block.Hash()) && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if n := verifies.Load(); n != 1 {
+				t.Fatalf("verifier ran %d times for a discarded block, want 1", n)
+			}
+			if tester.fetcher.knowns.Contains(block.Hash()) {
+				t.Fatalf("dropped block is still tracked as known after %v", fetchWait)
+			}
+			// The goroutine returned right after untracking, so the block cannot
+			// reach the chain any more.
+			select {
+			case <-inserted:
+				t.Fatalf("far-future block was handed to the chain")
+			default:
+			}
+			// The drop is a local clock condition, not peer misbehaviour: the
+			// peer must stay connected.
+			tester.lock.RLock()
+			dropped := tester.drops["future"]
+			tester.lock.RUnlock()
+			if dropped {
+				t.Fatalf("the peer was dropped for a future timestamp")
+			}
+			// A dropped block must stay retryable: re-announcing the same hash has
+			// to reach the verifier again instead of being discarded as known. The
+			// import goroutine untracks the hash before it reports done, and only
+			// that report clears the stale queue entry, so an Enqueue landing in
+			// between is ignored: resend until the queue reports the block again.
+			var requeued atomic.Int32
+			tester.fetcher.queueChangeHook = func(hash common.Hash, added bool) {
+				if added && hash == block.Hash() {
+					requeued.Add(1)
+				}
+			}
+			deadline = time.Now().Add(fetchWait)
+			for requeued.Load() == 0 && time.Now().Before(deadline) {
+				tester.fetcher.Enqueue("future", block)
+				time.Sleep(time.Millisecond)
+			}
+			if requeued.Load() == 0 {
+				t.Fatalf("re-announced block was never queued again")
+			}
+			deadline = time.Now().Add(fetchWait)
+			for verifies.Load() < 2 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			if n := verifies.Load(); n != 2 {
+				t.Fatalf("re-announced block was verified %d times, want 2", n)
+			}
+		})
+	}
+}
+
+// Tests that a block dated slightly ahead of the local clock is still imported
+// once its timestamp arrives, after exactly one re-verification: bounding the
+// wait must neither drop the clock-skewed delivery the wait existed for nor turn
+// the wait into a retry loop.
+func TestNearFutureTimestampPropagationImport(t *testing.T) {
+	tester, head := newFutureTestTester(t)
+	defer tester.fetcher.Stop()
+
+	// The stub rejects the first pass and accepts the second, the way a verifier
+	// whose clock has reached the timestamp does. Deciding per call from
+	// time.Now() made the first rejection depend on where in the second the
+	// import goroutine ran: a pass that landed after the timestamp imported in
+	// one shot. TestFutureBlockWait pins the delay itself; the completion time
+	// asserted below pins that the fetcher waits it out.
+	var verifies atomic.Int32
+	var reVerified atomic.Int64
+	tester.fetcher.verifyHeader = func(header *types.Header) error {
+		if verifies.Add(1) == 1 {
+			return consensus.ErrFutureBlock
+		}
+		reVerified.Store(time.Now().UnixNano())
+		return nil
+	}
+	inserted := make(chan *types.Block, 1)
+	tester.fetcher.insertBlock = func(block *types.Block) error {
+		inserted <- block
+		return nil
+	}
+	block := newFutureTestBlock(head, uint64(time.Now().Unix())+1)
+	tester.fetcher.Enqueue("near", block)
+
+	select {
+	case got := <-inserted:
+		if got.Hash() != block.Hash() {
+			t.Fatalf("imported block %v, want %v", got.Hash(), block.Hash())
+		}
+	case <-time.After(fetchWait):
+		t.Fatalf("near-future block was never imported")
+	}
+	// One rejection while the timestamp is ahead and one pass once it arrives:
+	// retrying instead of waiting shows up as extra verifications.
+	if n := verifies.Load(); n != 2 {
+		t.Fatalf("in-window block was verified %d times, want 2", n)
+	}
+	// A retry before the timestamp would mean the wait was skipped or cut short.
+	if at := reVerified.Load(); at < time.Unix(int64(block.Time()), 0).UnixNano() {
+		t.Fatalf("block was re-verified at %v, before its timestamp %v", time.Unix(0, at), time.Unix(int64(block.Time()), 0))
+	}
+}
+
+// Tests that a block beyond the future window releases the peer's in-flight
+// allowance: while the wait was unbounded, every awaited block kept its slot, so
+// one peer could hold all blockLimit of them and stall the fetcher queue.
+func TestFutureBlockFreesPeerAllowance(t *testing.T) {
+	tester, head := newFutureTestTester(t)
+	defer tester.fetcher.Stop()
+
+	// Hold every future block inside verification, so no slot can be released
+	// before the "allowance full" assertion has run.
+	release := make(chan struct{})
+	var blocked atomic.Int32
+
+	tester.fetcher.verifyHeader = func(header *types.Header) error {
+		if header.Time > uint64(time.Now().Unix()) {
+			blocked.Add(1)
+			<-release
+			return consensus.ErrFutureBlock
+		}
+		return nil
+	}
+	tester.fetcher.insertBlock = func(block *types.Block) error { return nil }
+
+	valid := newFutureTestBlock(head, uint64(time.Now().Unix()))
+	validHash := valid.Hash()
+	var validQueued atomic.Int32
+	tester.fetcher.queueChangeHook = func(hash common.Hash, added bool) {
+		if added && hash == validHash {
+			validQueued.Add(1)
+		}
+	}
+	// Fill the peer's allowance with blocks this node can never import.
+	future := uint64(time.Now().Add(365 * 24 * time.Hour).Unix())
+	for i := 0; i < blockLimit; i++ {
+		tester.fetcher.Enqueue("future", newFutureTestBlock(head, future+uint64(i)))
+	}
+	deadline := time.Now().Add(fetchWait)
+	for blocked.Load() < blockLimit && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if n := blocked.Load(); n != blockLimit {
+		t.Fatalf("only %d of %d future blocks reached verification", n, blockLimit)
+	}
+	// The valid block must be refused while the allowance is full. inject is
+	// unbuffered and the loop takes one op at a time, so the second Enqueue
+	// returning means the valid delivery was already handled; a fixed sleep
+	// could check the hook before the loop got to it.
+	tester.fetcher.Enqueue("future", valid)
+	tester.fetcher.Enqueue("future", newFutureTestBlock(head, future+uint64(blockLimit)))
+	if n := validQueued.Load(); n != 0 {
+		t.Fatalf("valid block was queued while the peer's allowance was full")
+	}
+	// Release the future blocks: their drops have to hand the slots back, after
+	// which the valid block must be accepted.
+	close(release)
+	deadline = time.Now().Add(fetchWait)
+	for validQueued.Load() == 0 && time.Now().Before(deadline) {
+		tester.fetcher.Enqueue("future", valid)
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := validQueued.Load(); n == 0 {
+		t.Fatalf("the peer's allowance never came back: discarded blocks kept their slots")
+	}
+}
+
 // Tests that IsPlausibleAnnouncement accepts announcements within the fetcher's
 // plausibility window and rejects those too far from the local chain head.
 func TestIsPlausibleAnnouncement(t *testing.T) {
