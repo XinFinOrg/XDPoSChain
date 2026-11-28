@@ -333,6 +333,7 @@ func (s *Suite) TestLargeTxRequest_Xdc166(t *utesting.T) {
 		return
 	}
 	defer sendConn.Close()
+	queryConn := sendConn
 
 	if matrixMode {
 		// The announcement-broadcast half cannot run here: the validators mine
@@ -385,6 +386,14 @@ func (s *Suite) TestLargeTxRequest_Xdc166(t *utesting.T) {
 		s.sendMultipleSuccessfulTxs(t, sendConn, txs)
 		from, _ := s.chain.GetSender(1)
 		s.chain.IncNonce(from, uint64(len(txs)))
+		// The delivery windows only read recvConn, so the node's block and BFT
+		// broadcasts pile up on sendConn; query over a fresh connection like
+		// upstream, where they cannot consume the response wait
+		queryConn, ok = s.setupConnectionXdc166(t)
+		if !ok {
+			return
+		}
+		defer queryConn.Close()
 	}
 
 	hashes := make(getPooledTransactionsData, 0, len(hashMap))
@@ -395,31 +404,62 @@ func (s *Suite) TestLargeTxRequest_Xdc166(t *utesting.T) {
 		RequestId: 1234,
 		Hashes:    hashes,
 	}
-	if err := sendConn.Write(ethProto, ethproto.GetPooledTransactionsMsg, getTxReq); err != nil {
+	if err := queryConn.Write(ethProto, ethproto.GetPooledTransactionsMsg, getTxReq); err != nil {
 		t.Fatalf("could not write to conn: %v", err)
+	}
+	deadline := time.Now().Add(announceTimeout)
+	gotTxs, err := waitPooledTransactionsXdc166(func() (uint64, interface{}, error) {
+		return s.readMsgXdc166Until(queryConn, deadline)
+	}, getTxReq.RequestId, deadline)
+	if err != nil {
+		t.Fatalf("failed to read pooled tx response: %v", err)
 	}
 	// The node may serve fewer than it was sent, but never one that was not
 	// part of the batch
-	for i := 0; i < maxXdc166ResponseReads; i++ {
-		id, msg, err := s.readMsgXdc166(sendConn)
-		if err != nil {
-			t.Fatalf("failed to read pooled tx response: %v", err)
+	for _, gotTx := range gotTxs {
+		if _, exists := hashMap[gotTx.Hash()]; !exists {
+			t.Fatalf("unexpected tx received: %v", gotTx.Hash())
 		}
-		gotTxs, ok := msg.(*types.Transactions)
+	}
+}
+
+var errPooledTxDeadline = errors.New("did not receive PooledTransactions response before the deadline")
+
+// waitPooledTransactionsXdc166 reads until the PooledTransactions response
+// carrying wantID arrives, skipping unrelated frames (block, BFT and full
+// transaction broadcasts) and giving up at the deadline; upstream waits for
+// the target message code for the same reason. The read window covers the
+// whole remaining budget, so a timeout means the deadline passed: an RLPx
+// frame read is not resumable, and the connection may be left mid-frame
+func waitPooledTransactionsXdc166(readMsg func() (uint64, interface{}, error), wantID uint64, deadline time.Time) (types.Transactions, error) {
+	for {
+		if !time.Now().Before(deadline) {
+			return nil, errPooledTxDeadline
+		}
+		id, msg, err := readMsg()
+		if err != nil {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				return nil, errPooledTxDeadline
+			}
+			return nil, fmt.Errorf("failed to read pooled tx response: %w", err)
+		}
+		// A read clamped to the deadline may still deliver a frame after it
+		if !time.Now().Before(deadline) {
+			return nil, errPooledTxDeadline
+		}
+		// Only a PooledTransactions payload carries the request id; a full
+		// TransactionMsg broadcast decodes to types.Transactions with a zero id
+		// and must be skipped rather than fail the id check
+		txs, ok := msg.(*pooledTransactionsResponse)
 		if !ok {
 			continue
 		}
-		if id != getTxReq.RequestId {
-			t.Fatalf("request id mismatch: wanted %d, got %d", getTxReq.RequestId, id)
+		if id != wantID {
+			return nil, fmt.Errorf("request id mismatch: wanted %d, got %d", wantID, id)
 		}
-		for _, gotTx := range *gotTxs {
-			if _, exists := hashMap[gotTx.Hash()]; !exists {
-				t.Fatalf("unexpected tx received: %v", gotTx.Hash())
-			}
-		}
-		return
+		return types.Transactions(*txs), nil
 	}
-	t.Fatalf("did not receive PooledTransactions response within %d read(s)", maxXdc166ResponseReads)
 }
 
 // A single message cannot advance the pending nonce, so each frame stays

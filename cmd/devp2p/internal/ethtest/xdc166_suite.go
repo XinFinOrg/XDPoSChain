@@ -19,9 +19,9 @@ package ethtest
 import (
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
-	"github.com/XinFinOrg/XDPoSChain/core/types"
 	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/internal/utesting"
 )
@@ -260,8 +260,14 @@ func (s *Suite) setupConnectionXdc166(t *utesting.T) (*Conn, bool) {
 }
 
 func (s *Suite) readMsgXdc166(conn *Conn) (uint64, interface{}, error) {
+	return s.readMsgXdc166Until(conn, time.Time{})
+}
+
+// readMsgXdc166Until serves header requests until another message arrives,
+// bounding every read, including the ones inside the header loop, by deadline
+func (s *Suite) readMsgXdc166Until(conn *Conn, deadline time.Time) (uint64, interface{}, error) {
 	for {
-		id, msg, err := conn.ReadXdc166()
+		id, msg, err := conn.readXdc166Until(deadline)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -275,7 +281,7 @@ func (s *Suite) readMsgXdc166(conn *Conn) (uint64, interface{}, error) {
 			headers = nil
 		}
 		resp := &blockHeadersPacket166{RequestId: id, Headers: blockHeadersData(headers)}
-		if err := conn.Write(ethProto, ethproto.BlockHeadersMsg, resp); err != nil {
+		if err := conn.writeUntil(ethProto, ethproto.BlockHeadersMsg, resp, deadline); err != nil {
 			return 0, nil, fmt.Errorf("failed to write BlockHeaders response: %w", err)
 		}
 	}
@@ -381,7 +387,7 @@ func (s *Suite) expectPooledTransactionsResponseXdc166(conn *Conn, wantID uint64
 		if err != nil {
 			return fmt.Errorf("failed to read pooled transactions response %d: %w", i+1, err)
 		}
-		txs, ok := msg.(*types.Transactions)
+		txs, ok := msg.(*pooledTransactionsResponse)
 		if !ok {
 			continue
 		}

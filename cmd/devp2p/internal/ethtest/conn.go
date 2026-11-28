@@ -100,7 +100,19 @@ func (s *Suite) dialAs(key *ecdsa.PrivateKey) (*Conn, error) {
 
 // Read reads a raw RLPx packet from the connection.
 func (c *Conn) Read() (uint64, []byte, error) {
-	c.SetReadDeadline(time.Now().Add(connTimeout))
+	return c.readUntil(time.Time{})
+}
+
+// readUntil reads a raw RLPx packet, never letting a read extend past
+// deadline; a zero deadline means connTimeout. A deadline-carrying read waits
+// out the whole remaining budget: an RLPx frame read is not resumable, so
+// cutting it short would leave the connection mid-frame
+func (c *Conn) readUntil(deadline time.Time) (uint64, []byte, error) {
+	wait := connTimeout
+	if !deadline.IsZero() {
+		wait = time.Until(deadline)
+	}
+	c.SetReadDeadline(time.Now().Add(wait))
 	code, data, _, err := c.Conn.Read()
 	if err != nil {
 		return 0, nil, err
@@ -110,7 +122,17 @@ func (c *Conn) Read() (uint64, []byte, error) {
 
 // Write writes an RLPx packet to the connection with protocol-relative code.
 func (c *Conn) Write(proto Proto, code uint64, msg interface{}) error {
-	c.SetWriteDeadline(time.Now().Add(connTimeout))
+	return c.writeUntil(proto, code, msg, time.Time{})
+}
+
+// writeUntil writes an RLPx packet, never letting a write extend past
+// deadline; a zero deadline means connTimeout
+func (c *Conn) writeUntil(proto Proto, code uint64, msg interface{}, deadline time.Time) error {
+	wait := connTimeout
+	if !deadline.IsZero() {
+		wait = time.Until(deadline)
+	}
+	c.SetWriteDeadline(time.Now().Add(wait))
 	payload, err := rlp.EncodeToBytes(msg)
 	if err != nil {
 		return err
@@ -323,8 +345,12 @@ func isXdc166MsgCode(code uint64) bool {
 
 // ReadXdc166 must only be used on connections that negotiated xdc/166
 func (c *Conn) ReadXdc166() (uint64, interface{}, error) {
+	return c.readXdc166Until(time.Time{})
+}
+
+func (c *Conn) readXdc166Until(deadline time.Time) (uint64, interface{}, error) {
 	for {
-		code, data, err := c.Read()
+		code, data, err := c.readUntil(deadline)
 		if err != nil {
 			return 0, nil, err
 		}
@@ -332,7 +358,7 @@ func (c *Conn) ReadXdc166() (uint64, interface{}, error) {
 			return 0, nil, errDisc
 		}
 		if code == pingMsg {
-			if err := c.Write(baseProto, pongMsg, []byte{}); err != nil {
+			if err := c.writeUntil(baseProto, pongMsg, []byte{}, deadline); err != nil {
 				return 0, nil, fmt.Errorf("failed to reply pong: %w", err)
 			}
 			continue
@@ -393,6 +419,11 @@ func decodeEthPayload(code uint64, data []byte) (interface{}, error) {
 	}
 	return msg, nil
 }
+
+// pooledTransactionsResponse is the PooledTransactions payload. The distinct
+// type keeps it apart from a full TransactionMsg broadcast, which also decodes
+// to types.Transactions but carries no request id and may arrive first.
+type pooledTransactionsResponse types.Transactions
 
 // decodeXdc166Payload returns a zero request id for codes outside the five 66 pairs
 func decodeXdc166Payload(code uint64, data []byte) (uint64, interface{}, error) {
@@ -456,7 +487,7 @@ func decodeXdc166Payload(code uint64, data []byte) (uint64, interface{}, error) 
 		if err := rlp.DecodeBytes(data, wrapped); err != nil {
 			return 0, nil, fmt.Errorf("unable to decode eth msg: %v", err)
 		}
-		return wrapped.RequestId, &wrapped.Txs, nil
+		return wrapped.RequestId, (*pooledTransactionsResponse)(&wrapped.Txs), nil
 	case ethproto.NewPooledTransactionHashesMsg:
 		// Peers announce pooled tx hashes at any time; keep the frame opaque
 		msg := new(rlp.RawValue)
