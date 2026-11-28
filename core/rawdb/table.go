@@ -17,6 +17,8 @@
 package rawdb
 
 import (
+	"errors"
+
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 )
 
@@ -103,6 +105,22 @@ func (t *table) Delete(key []byte) error {
 	return t.db.Delete(append([]byte(t.prefix), key...))
 }
 
+// DeleteRange deletes all of the keys (and values) in the range [start,end)
+// (inclusive on start, exclusive on end).
+//
+// A nil end is rewritten to ethdb.MaximumKey so that adding the prefix does
+// not turn an unbounded range into an empty one. The marker has to stay
+// relative because tableBatch.Replay strips the source prefix and re-adds the
+// destination one, and a computed next-prefix bound would not survive that
+// round trip. A table-relative key at or beyond 32 0xFF bytes is therefore
+// outside the range and survives.
+func (t *table) DeleteRange(start, end []byte) error {
+	if end == nil {
+		end = ethdb.MaximumKey
+	}
+	return t.db.DeleteRange(append([]byte(t.prefix), start...), append([]byte(t.prefix), end...))
+}
+
 // NewIterator creates a binary-alphabetical iterator over a subset
 // of database content with a particular key prefix, starting at a particular
 // initial key (or after, if it does not exist).
@@ -181,6 +199,18 @@ func (b *tableBatch) Delete(key []byte) error {
 	return b.batch.Delete(append([]byte(b.prefix), key...))
 }
 
+// DeleteRange removes all keys in the range [start, end) from the batch for later committing.
+//
+// A nil end becomes ethdb.MaximumKey before the prefix is added so the bounds
+// stay relative for replay, which leaves table-relative keys at or beyond
+// 32 0xFF bytes outside the range.
+func (b *tableBatch) DeleteRange(start, end []byte) error {
+	if end == nil {
+		end = ethdb.MaximumKey
+	}
+	return b.batch.DeleteRange(append([]byte(b.prefix), start...), append([]byte(b.prefix), end...))
+}
+
 // ValueSize retrieves the amount of data queued up for writing.
 func (b *tableBatch) ValueSize() int {
 	return b.batch.ValueSize()
@@ -215,7 +245,32 @@ func (r *tableReplayer) Delete(key []byte) error {
 	return r.w.Delete(trimmed)
 }
 
-// Replay replays the batch contents.
+// DeleteRange implements the interface KeyValueRangeDeleter.
+func (r *tableReplayer) DeleteRange(start, end []byte) error {
+	w, ok := r.w.(ethdb.KeyValueRangeDeleter)
+	if !ok {
+		return errors.New("ethdb.KeyValueWriter does not implement DeleteRange")
+	}
+	if start != nil {
+		start = start[len(r.prefix):]
+	}
+	if end != nil {
+		end = end[len(r.prefix):]
+	}
+	return w.DeleteRange(start, end)
+}
+
+// Replay replays the batch contents into w, stripping the table prefix from
+// keys and range bounds, so w must resolve them in its own namespace, as a
+// table does. Replaying into the underlying database instead spreads the batch
+// over that database's key space: an unbounded table range becomes
+// DeleteRange([], MaximumKey) there.
+//
+// A range deletion only reaches w when the backing batch still holds it. A
+// memorydb batch keeps the range, so it is stripped and forwarded, and w
+// deletes whatever it holds in it. A leveldb batch has already expanded the
+// range into the keys committed when DeleteRange was called, so only those
+// point deletions are replayed: a range that matched nothing replays nothing.
 func (b *tableBatch) Replay(w ethdb.KeyValueWriter) error {
 	return b.batch.Replay(&tableReplayer{w: w, prefix: b.prefix})
 }

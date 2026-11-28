@@ -18,7 +18,26 @@
 package ethdb
 
 import (
+	"bytes"
+	"errors"
 	"io"
+)
+
+var (
+	// MaximumKey is a special marker representing the largest possible key
+	// in the database.
+	//
+	// All prefixed database entries will be smaller than this marker.
+	// For trie nodes in hash mode we use a 32-byte slice filled with 0xFF,
+	// because shared prefixes may start with multiple 0xFF bytes; only a hash
+	// collision could match or exceed it.
+	//
+	// The marker stays relative under a table prefix, which a computed
+	// next-prefix bound does not, so table wrappers can add the prefix and
+	// strip it back off on replay. Table-relative keys at or beyond 32 0xFF
+	// bytes therefore fall outside an "unbounded" table range and survive
+	// deletion.
+	MaximumKey = bytes.Repeat([]byte{0xff}, 32)
 )
 
 // KeyValueReader wraps the Has and Get method of a backing data store.
@@ -37,6 +56,39 @@ type KeyValueWriter interface {
 
 	// Delete removes the key from the key-value data store.
 	Delete(key []byte) error
+}
+
+// ErrTooManyKeys is returned by DeleteRange implementations that limit the
+// number of keys deleted in a single call.
+var ErrTooManyKeys = errors.New("too many keys in deleted range")
+
+// KeyValueRangeDeleter wraps the DeleteRange method of a backing data store.
+type KeyValueRangeDeleter interface {
+	// DeleteRange deletes all of the keys (and values) in the range [start,end)
+	// (inclusive on start, exclusive on end).
+	//
+	// A nil start is treated as a key before all keys in the data store; a nil
+	// end is treated as a key after all keys in the data store. If both is nil
+	// then the entire data store will be purged. On a core/rawdb table the nil
+	// end is rewritten to MaximumKey after the table prefix, so there an
+	// unbounded range covers only table-relative keys smaller than 32 0xFF
+	// bytes.
+	//
+	// Some implementations of DeleteRange may return ErrTooManyKeys after
+	// partially deleting entries in the given range. A batch that returns it has
+	// only queued the deletions: nothing is committed until Write, and calling
+	// DeleteRange again on the same batch queues the same deletions again without
+	// making progress, so a batch caller has to Write before retrying.
+	//
+	// Batches need not agree with the store on when the bounds are resolved:
+	// a leveldb batch enumerates the keys already committed when DeleteRange
+	// is called, so keys that the batch inserts for the first time are left
+	// alone, but a put of an already committed key is still deleted because
+	// the deletion is appended after it. A memorydb batch applies the bounds
+	// at Write time against the whole key space, including writes queued in
+	// the same batch. Callers that need one behaviour across backends should
+	// delete ranges at the store level rather than through a batch.
+	DeleteRange(start, end []byte) error
 }
 
 // Stater wraps the Stat method of a backing data store.
@@ -64,6 +116,7 @@ type KeyValueStore interface {
 	KeyValueWriter
 	Batcher
 	Iteratee
+	KeyValueRangeDeleter
 	Stater
 	Compacter
 	io.Closer
@@ -109,6 +162,7 @@ type Reader interface {
 // immutable ancient data.
 type Writer interface {
 	KeyValueWriter
+	KeyValueRangeDeleter
 	AncientWriter
 }
 
