@@ -1419,11 +1419,20 @@ func (pool *LegacyPool) runReorg(done chan struct{}, reset *txpoolResetRequest, 
 		}
 		events[addr].Put(tx)
 	}
-	if len(events) > 0 {
-		var txs []*types.Transaction
-		for _, set := range events {
-			txs = append(txs, set.Flatten()...)
+	var txs []*types.Transaction
+	for _, set := range events {
+		for _, tx := range set.Flatten() {
+			// A transaction promoted or queued for announcement may have left
+			// the pool later in this run, for example through the Osaka gas-cap
+			// discard, the gas-schedule sweep or truncatePending. Announcing it
+			// would make peers mark the hash as known, so an identical
+			// re-submission would not be relayed to them later.
+			if pool.all.Get(tx.Hash()) != nil {
+				txs = append(txs, tx)
+			}
 		}
+	}
+	if len(txs) > 0 {
 		pool.txFeed.Send(core.NewTxsEvent{Txs: txs})
 	}
 }
