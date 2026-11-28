@@ -275,6 +275,21 @@ func GenerateChain(config *params.ChainConfig, parent *types.Block, engine conse
 			panic(err)
 		}
 		block, receipt := genblock(i, parent, statedb)
+
+		// Post-process the receipts: assign the final block hash and derive the
+		// per-log fields (block number/hash, indices, tx hash).
+		receiptsCount := len(receipt)
+		txs := block.Transactions()
+		if len(receipt) > len(txs) {
+			receipt = receipt[:len(txs)]
+		} else if len(receipt) < len(txs) {
+			txs = txs[:len(receipt)]
+		}
+		if err := receipt.DeriveFields(config, block.Hash(), block.NumberU64(), block.BaseFee(), txs); err != nil {
+			panic(err)
+		}
+		receipt = receipt[:receiptsCount]
+
 		blocks[i] = block
 		receipts[i] = receipt
 		parent = block

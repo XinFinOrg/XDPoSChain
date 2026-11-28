@@ -559,6 +559,10 @@ func (l *loggingDb) Delete(key []byte) error {
 	return l.backend.Delete(key)
 }
 
+func (l *loggingDb) DeleteRange(start, end []byte) error {
+	return l.backend.DeleteRange(start, end)
+}
+
 func (l *loggingDb) NewBatch() ethdb.Batch {
 	return l.backend.NewBatch()
 }

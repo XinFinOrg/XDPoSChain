@@ -30,3 +30,58 @@ func TestMemoryDB(t *testing.T) {
 		})
 	})
 }
+
+// TestBatchDeleteRangePendingPut pins the memorydb batch semantics: the bounds
+// are applied at Write time over the whole key space, including writes queued
+// in the same batch, so both a key this batch inserts for the first time and a
+// put of an already committed key are deleted. leveldb keeps the former
+// instead, see the same test there.
+func TestBatchDeleteRangePendingPut(t *testing.T) {
+	t.Run("FreshKey", func(t *testing.T) {
+		db := New()
+		defer db.Close()
+
+		batch := db.NewBatch()
+		if err := batch.Put([]byte("5"), []byte("v")); err != nil {
+			t.Fatal(err)
+		}
+		if err := batch.DeleteRange([]byte("1"), []byte("9")); err != nil {
+			t.Fatal(err)
+		}
+		if err := batch.Write(); err != nil {
+			t.Fatal(err)
+		}
+		has, err := db.Has([]byte("5"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if has {
+			t.Fatalf("key 5 was first inserted by the same batch and must be deleted at Write time")
+		}
+	})
+	t.Run("CommittedKey", func(t *testing.T) {
+		db := New()
+		defer db.Close()
+
+		if err := db.Put([]byte("5"), []byte("old")); err != nil {
+			t.Fatal(err)
+		}
+		batch := db.NewBatch()
+		if err := batch.Put([]byte("5"), []byte("new")); err != nil {
+			t.Fatal(err)
+		}
+		if err := batch.DeleteRange([]byte("1"), []byte("9")); err != nil {
+			t.Fatal(err)
+		}
+		if err := batch.Write(); err != nil {
+			t.Fatal(err)
+		}
+		has, err := db.Has([]byte("5"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if has {
+			t.Fatalf("key 5 was already committed and must be deleted at Write time")
+		}
+	})
+}

@@ -21,6 +21,7 @@
 package leveldb
 
 import (
+	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
@@ -202,6 +203,38 @@ func (db *Database) Put(key []byte, value []byte) error {
 // Delete removes the key from the key-value store.
 func (db *Database) Delete(key []byte) error {
 	return db.db.Delete(key, nil)
+}
+
+// DeleteRange deletes all of the keys (and values) in the range [start,end)
+// (inclusive on start, exclusive on end).
+//
+// Note that this is a fallback implementation as leveldb does not natively
+// support range deletion. It can be slow and therefore the number of deleted
+// keys is limited to 10,000 per call. ErrTooManyKeys is returned if the range
+// has only been partially deleted; in this case the caller can repeat the call
+// until it finally succeeds.
+func (db *Database) DeleteRange(start, end []byte) error {
+	batch := db.NewBatch()
+	it := db.NewIterator(nil, start)
+	defer it.Release()
+
+	var count int
+	for it.Next() && (end == nil || bytes.Compare(end, it.Key()) > 0) {
+		count++
+		if count > 10000 { // should not block for more than a second
+			if err := batch.Write(); err != nil {
+				return err
+			}
+			return ethdb.ErrTooManyKeys
+		}
+		if err := batch.Delete(it.Key()); err != nil {
+			return err
+		}
+	}
+	if err := it.Error(); err != nil {
+		return err
+	}
+	return batch.Write()
 }
 
 // NewBatch creates a write-only key-value store that buffers changes to its host
@@ -465,6 +498,45 @@ type batch struct {
 func (b *batch) Put(key, value []byte) error {
 	b.b.Put(key, value)
 	b.size += len(value)
+	return nil
+}
+
+// DeleteRange deletes all of the keys (and values) in the range [start,end)
+// (inclusive on start, exclusive on end).
+//
+// The bounds are resolved against the keys already committed when DeleteRange
+// is called: keys this batch inserts for the first time are left alone, but a
+// put of an already committed key is still deleted because the deletion is
+// appended after it. The memorydb batch applies them at Write time against the
+// whole key space instead; TestBatchDeleteRangePendingPut exists in both
+// packages to hold each behaviour in place.
+//
+// The batch stops after 10,000 keys and returns ethdb.ErrTooManyKeys with those
+// deletions queued but not committed: Write the batch before retrying, because a
+// retry on the same batch re-queues the same deletions without making progress.
+func (b *batch) DeleteRange(start, end []byte) error {
+	slice := &util.Range{
+		Start: start,
+		Limit: end,
+	}
+	it := b.db.NewIterator(slice, nil)
+	defer it.Release()
+
+	var count int
+	for it.Next() {
+		count++
+		key := it.Key()
+		if count > 10000 { // should not block for more than a second
+			return ethdb.ErrTooManyKeys
+		}
+		b.b.Delete(key)
+		// The empty key is still a key: count one unit so a batch that only
+		// queues this range does not look empty to ValueSize-based flushers.
+		b.size += max(1, len(key))
+	}
+	if err := it.Error(); err != nil {
+		return err
+	}
 	return nil
 }
 

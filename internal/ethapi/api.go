@@ -1658,6 +1658,11 @@ func effectiveGasPrice(tx *types.Transaction, baseFee *big.Int) *big.Int {
 	return fee
 }
 
+// NewRPCPendingTransaction returns a pending transaction that will serialize to the RPC representation
+func NewRPCPendingTransaction(tx *types.Transaction, current *types.Header, config *params.ChainConfig) *RPCTransaction {
+	return newRPCPendingTransaction(tx, current, config)
+}
+
 // newRPCPendingTransaction returns a pending transaction that will serialize to the RPC representation
 func newRPCPendingTransaction(tx *types.Transaction, current *types.Header, config *params.ChainConfig) *RPCTransaction {
 	var (
