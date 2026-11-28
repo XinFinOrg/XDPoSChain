@@ -244,6 +244,7 @@ type BlockFetcher struct {
 	// Testing hooks
 	announceChangeHook func(common.Hash, bool) // Method to call upon adding or deleting a hash from the blockAnnounce list
 	queueChangeHook    func(common.Hash, bool) // Method to call upon adding or deleting a block from the import queue
+	queueReleaseHook   func(common.Hash)       // Method to call upon releasing a block's peer allowance
 	fetchingHook       func([]common.Hash)     // Method to call upon starting a block (eth/61) or header (eth/62) fetch
 	completingHook     func([]common.Hash)     // Method to call upon starting a block body fetch (eth/62)
 	signHook           func(*types.Block) error
@@ -1626,6 +1627,9 @@ func (f *BlockFetcher) forgetBlock(hash common.Hash) {
 			delete(f.queues, insert.origin)
 		}
 		delete(f.queued, hash)
+		if f.queueReleaseHook != nil {
+			f.queueReleaseHook(hash)
+		}
 	}
 }
 
