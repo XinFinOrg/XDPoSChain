@@ -18,6 +18,7 @@ package locals
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/core/txpool"
@@ -37,5 +38,17 @@ func TestIsTemporaryRejectExcludesMinGasPrice(t *testing.T) {
 	}
 	if IsTemporaryReject(errors.New("unrelated failure")) {
 		t.Error("an unrelated error must not be a temporary reject")
+	}
+}
+
+// TestIsTemporaryRejectAccountLimit pins that hitting the per-account capacity
+// is a temporary reject: the queue frees up when the gap fills or entries are
+// trimmed, replaced or expire, so AddLocal must keep the transaction tracked.
+func TestIsTemporaryRejectAccountLimit(t *testing.T) {
+	if !IsTemporaryReject(txpool.ErrAccountLimitExceeded) {
+		t.Error("ErrAccountLimitExceeded must be a temporary reject")
+	}
+	if !IsTemporaryReject(fmt.Errorf("%w: queued %d txs", txpool.ErrAccountLimitExceeded, 64)) {
+		t.Error("the wrapped admission error must be a temporary reject")
 	}
 }
