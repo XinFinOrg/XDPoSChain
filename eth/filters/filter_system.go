@@ -209,6 +209,8 @@ type EventSystem struct {
 	// Channels
 	install       chan *subscription         // install filter for event notification
 	uninstall     chan *subscription         // remove filter for event notification
+	txInstall     chan *subscription         // install pending transaction filter
+	txUninstall   chan *subscription         // remove pending transaction filter
 	txsCh         chan core.NewTxsEvent      // Channel to receive new transactions event
 	logsCh        chan []*types.Log          // Channel to receive new log event
 	pendingLogsCh chan []*types.Log          // Channel to receive new log event
@@ -229,6 +231,8 @@ func NewEventSystem(sys *FilterSystem, lightMode bool) *EventSystem {
 		lightMode:     lightMode,
 		install:       make(chan *subscription),
 		uninstall:     make(chan *subscription),
+		txInstall:     make(chan *subscription),
+		txUninstall:   make(chan *subscription),
 		txsCh:         make(chan core.NewTxsEvent, txChanSize),
 		logsCh:        make(chan []*types.Log, logsChanSize),
 		rmLogsCh:      make(chan core.RemovedLogsEvent, rmLogsChanSize),
@@ -249,6 +253,7 @@ func NewEventSystem(sys *FilterSystem, lightMode bool) *EventSystem {
 	}
 
 	go m.eventLoop()
+	go m.txLoop()
 
 	return m
 }
@@ -269,6 +274,10 @@ func (sub *Subscription) Err() <-chan error {
 // Unsubscribe uninstalls the subscription from the event broadcast loop.
 func (sub *Subscription) Unsubscribe() {
 	sub.unsubOnce.Do(func() {
+		uninstall := sub.es.uninstall
+		if sub.f.typ == PendingTransactionsSubscription {
+			uninstall = sub.es.txUninstall
+		}
 	uninstallLoop:
 		for {
 			// write uninstall request and consume logs/hashes. This prevents
@@ -276,7 +285,7 @@ func (sub *Subscription) Unsubscribe() {
 			// filter event channel while the subscription loop is waiting for
 			// this method to return (and thus not reading these events).
 			select {
-			case sub.es.uninstall <- sub.f:
+			case uninstall <- sub.f:
 				break uninstallLoop
 			case <-sub.f.logs:
 			case <-sub.f.txs:
@@ -293,7 +302,11 @@ func (sub *Subscription) Unsubscribe() {
 
 // subscribe installs the subscription in the event broadcast loop.
 func (es *EventSystem) subscribe(sub *subscription) *Subscription {
-	es.install <- sub
+	if sub.typ == PendingTransactionsSubscription {
+		es.txInstall <- sub
+	} else {
+		es.install <- sub
+	}
 	<-sub.installed
 	return &Subscription{ID: sub.id, f: sub, es: es}
 }
@@ -459,9 +472,18 @@ func (es *EventSystem) handlePendingLogs(filters filterIndex, ev []*types.Log) {
 	}
 }
 
+// handleTxsEvent hands a batch of new pool transactions to every pending
+// transaction subscriber without waiting for it. A subscriber whose buffer is
+// full misses the batch: waiting would stall the event loop, then the txsCh
+// buffer, and finally the transaction pool, which delivers its events
+// synchronously at the end of every reorg. Pending transaction notifications
+// are best effort for a client that does not keep up.
 func (es *EventSystem) handleTxsEvent(filters filterIndex, ev core.NewTxsEvent) {
 	for _, f := range filters[PendingTransactionsSubscription] {
-		f.txs <- ev.Txs
+		select {
+		case f.txs <- ev.Txs:
+		default:
+		}
 	}
 }
 
@@ -556,16 +578,49 @@ func (es *EventSystem) lightFilterLogs(header *types.Header, addresses []common.
 	return logs
 }
 
-// eventLoop (un)installs filters and processes mux events.
+// unsubscribeAll cancels every backend subscription, which stops both the
+// event loop and the transaction loop.
+func (es *EventSystem) unsubscribeAll() {
+	es.txsSub.Unsubscribe()
+	es.logsSub.Unsubscribe()
+	es.rmLogsSub.Unsubscribe()
+	es.pendingLogsSub.Unsubscribe()
+	es.chainSub.Unsubscribe()
+}
+
+// txLoop (un)installs pending transaction filters and delivers new pool
+// transactions to them. It runs apart from the event loop because the pool
+// sends its events synchronously at the end of every reorg: a log or head
+// subscriber that stops reading blocks the event loop, and must not reach the
+// pool through it.
+func (es *EventSystem) txLoop() {
+	defer es.unsubscribeAll()
+
+	index := filterIndex{PendingTransactionsSubscription: make(map[rpc.ID]*subscription)}
+	for {
+		select {
+		case ev := <-es.txsCh:
+			es.handleTxsEvent(index, ev)
+
+		case f := <-es.txInstall:
+			index[f.typ][f.id] = f
+			close(f.installed)
+
+		case f := <-es.txUninstall:
+			delete(index[f.typ], f.id)
+			close(f.err)
+
+		// System stopped
+		case <-es.txsSub.Err():
+			return
+		}
+	}
+}
+
+// eventLoop (un)installs log and head filters and processes their events.
 func (es *EventSystem) eventLoop() {
 	// Ensure all subscriptions get cleaned up
-	defer func() {
-		es.txsSub.Unsubscribe()
-		es.logsSub.Unsubscribe()
-		es.rmLogsSub.Unsubscribe()
-		es.pendingLogsSub.Unsubscribe()
-		es.chainSub.Unsubscribe()
-	}()
+	defer es.unsubscribeAll()
 
 	index := make(filterIndex)
 	for i := UnknownSubscription; i < LastIndexSubscription; i++ {
@@ -574,8 +629,6 @@ func (es *EventSystem) eventLoop() {
 
 	for {
 		select {
-		case ev := <-es.txsCh:
-			es.handleTxsEvent(index, ev)
 		case ev := <-es.logsCh:
 			es.handleLogs(index, ev)
 		case ev := <-es.rmLogsCh:
@@ -606,8 +659,6 @@ func (es *EventSystem) eventLoop() {
 			close(f.err)
 
 		// System stopped
-		case <-es.txsSub.Err():
-			return
 		case <-es.logsSub.Err():
 			return
 		case <-es.rmLogsSub.Err():
