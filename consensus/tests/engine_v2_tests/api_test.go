@@ -3,6 +3,7 @@ package engine_v2_tests
 import (
 	"math/big"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
@@ -167,6 +168,36 @@ func TestGetEpochNumbersBetween(t *testing.T) {
 	assert.Nil(t, numbers)
 	assert.EqualError(t, err, "illegal begin block number 1803")
 }
+
+// A range whose begin and end are the same block reports that block only if it
+// is an epoch switch; a block inside an epoch reports nothing.
+func TestGetEpochNumbersBetweenEqualSwitchBlock(t *testing.T) {
+	t.Parallel()
+	_, bc, _, _, _ := PrepareXDCTestBlockChainWith128Candidates(t, 1802, params.TestXDPoSMockChainConfig)
+
+	api := bc.BlockChain().Engine().(*XDPoS.XDPoS).APIs(bc.BlockChain())[0].Service.(*XDPoS.API)
+
+	cases := []struct {
+		block rpc.BlockNumber
+		want  []uint64
+	}{
+		{901, []uint64{901}},
+		{1800, []uint64{1800}},
+		{1799, []uint64{}}, // inside an epoch, not a switch block
+		{1801, []uint64{}},
+		{1802, []uint64{}},
+	}
+	for _, c := range cases {
+		t.Run(strconv.FormatInt(c.block.Int64(), 10), func(t *testing.T) {
+			begin, end := c.block, c.block
+			numbers, err := api.GetEpochNumbersBetween(&begin, &end)
+
+			assert.Nil(t, err)
+			assert.Equal(t, c.want, numbers)
+		})
+	}
+}
+
 func TestGetBlockByEpochNumber(t *testing.T) {
 	t.Parallel()
 	blockchain, _, currentBlock, signer, signFn := PrepareXDCTestBlockChainWithPenaltyForV2Engine(t, 1802, params.TestXDPoSMockChainConfig)
