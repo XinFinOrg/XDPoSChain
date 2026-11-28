@@ -18,6 +18,7 @@ const (
 	LimitThresholdNonceInQueue = 10
 	DefaultMinGasPrice         = 250000000
 	MergeSignRange             = 15
+	SpecialTxGasLimit          = 200000 // Gas limit of the sign and randomize txs a node creates; the txpool admits no EVM-routed special tx above it
 	RangeReturnSigner          = 150
 	MinimunMinerBlockPerEpoch  = 1
 	BlocksPerYearTest          = uint64(200000)

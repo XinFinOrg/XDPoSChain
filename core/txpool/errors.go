@@ -82,6 +82,11 @@ var (
 	// by an account that is not an authorized signer.
 	ErrSpecialTxNotFromSigner = errors.New("special transaction sender is not a signer")
 
+	// ErrSpecialTxGasLimit is returned if a special transaction that runs through
+	// the EVM has a gas limit above common.SpecialTxGasLimit. Special transactions
+	// pay no gas price, so without the cap a signer could burn block gas for free.
+	ErrSpecialTxGasLimit = errors.New("special transaction gas limit too high")
+
 	// ErrMissingChainConfig is returned when txpool validation is invoked without
 	// a chain config. This prevents silently skipping fork-gated checks.
 	ErrMissingChainConfig = errors.New("missing chain config")

@@ -138,6 +138,13 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		if core.IsSignTransactionRoute(opts.Config, pendingBlockNumber(head.Number), tx) {
 			return nil
 		}
+		// The EVM charges this gas at a zero gas price, so burning it is free. Cap it
+		// at what the protocol's own randomize txs use; without the cap a signer
+		// could fill whole blocks at no cost, e.g. with an out-of-gas setSecret
+		// call during the secret window.
+		if tx.Gas() > common.SpecialTxGasLimit {
+			return fmt.Errorf("%w: gas %v, cap %v", ErrSpecialTxGasLimit, tx.Gas(), common.SpecialTxGasLimit)
+		}
 		if err := validateIntrinsicAndFloor(tx, from, value, rules); err != nil {
 			return err
 		}
