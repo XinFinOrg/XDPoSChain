@@ -360,6 +360,32 @@ func TestFilters(t *testing.T) {
 			t.Fatalf("expected context.DeadlineExceeded, got %v", err)
 		}
 	})
+
+	t.Run("timeout without matches", func(t *testing.T) {
+		// An address that matches no log keeps the scan off the delivery path,
+		// so the cancellation has to be observed while iterating blocks.
+		f := sys.NewRangeFilter(0, rpc.LatestBlockNumber.Int64(), []common.Address{{0x01}}, nil, 0)
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Hour))
+		defer cancel()
+		if _, err := f.Logs(ctx); err != context.DeadlineExceeded {
+			t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+		}
+	})
+
+	t.Run("stops at the first block after cancellation", func(t *testing.T) {
+		// Starting off a multiple of ten keeps the scan away from any periodic
+		// checkpoint, so where it stopped tells the per-block check from a
+		// coarser one.
+		f := sys.NewRangeFilter(3, rpc.LatestBlockNumber.Int64(), []common.Address{{0x01}}, nil, 0)
+		ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Hour))
+		defer cancel()
+		if _, err := f.Logs(ctx); err != context.DeadlineExceeded {
+			t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+		}
+		if f.begin != 3 {
+			t.Fatalf("scan advanced to block %d after the request was cancelled", f.begin)
+		}
+	})
 }
 
 // TestRangeLimit tests range limit.
