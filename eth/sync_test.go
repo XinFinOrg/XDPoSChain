@@ -114,21 +114,24 @@ func (p *stalledDownloaderPeer) claimedHead() *types.Header {
 }
 
 // RequestHeadersByHash answers the height probe with the claimed head header.
-func (p *stalledDownloaderPeer) RequestHeadersByHash(h common.Hash, amount int, skip int, reverse bool) error {
-	return p.download.DeliverHeaders(p.id, []*types.Header{p.claimedHead()})
+func (p *stalledDownloaderPeer) RequestHeadersByHash(h common.Hash, amount int, skip int, reverse bool, sink chan *ethproto.Response) (*ethproto.Request, error) {
+	if err := p.download.DeliverHeaders(p.id, []*types.Header{p.claimedHead()}); err != nil {
+		return nil, err
+	}
+	return nil, ethproto.ErrLegacyRequest
 }
 
 // RequestHeadersByNumber answers the ancestor search (the first call) with the
 // genesis and the claimed head so the search converges, then blocks all
 // subsequent bulk-download requests until released.
-func (p *stalledDownloaderPeer) RequestHeadersByNumber(from uint64, amount int, skip int, reverse bool) error {
+func (p *stalledDownloaderPeer) RequestHeadersByNumber(from uint64, amount int, skip int, reverse bool, sink chan *ethproto.Response) (*ethproto.Request, error) {
 	p.mu.Lock()
 	answer := !p.answeredNumber
 	p.answeredNumber = true
 	p.mu.Unlock()
 	if !answer {
 		<-p.releaseCh
-		return nil
+		return nil, ethproto.ErrLegacyRequest
 	}
 	// Reply with the genesis at number 0 plus synthetic headers matching the
 	// span request, so the downloader finds the genesis as the common ancestor.
@@ -145,17 +148,29 @@ func (p *stalledDownloaderPeer) RequestHeadersByNumber(from uint64, amount int, 
 			headers = append(headers, &types.Header{Number: new(big.Int).SetUint64(n)})
 		}
 	}
-	return p.download.DeliverHeaders(p.id, headers)
+	if err := p.download.DeliverHeaders(p.id, headers); err != nil {
+		return nil, err
+	}
+	return nil, ethproto.ErrLegacyRequest
 }
 
 // RequestBodies blocks until released (the sync is paused during body download).
-func (p *stalledDownloaderPeer) RequestBodies([]common.Hash) error { <-p.releaseCh; return nil }
+func (p *stalledDownloaderPeer) RequestBodies([]common.Hash, chan *ethproto.Response) (*ethproto.Request, error) {
+	<-p.releaseCh
+	return nil, ethproto.ErrLegacyRequest
+}
 
 // RequestReceipts blocks until released.
-func (p *stalledDownloaderPeer) RequestReceipts([]common.Hash) error { <-p.releaseCh; return nil }
+func (p *stalledDownloaderPeer) RequestReceipts([]common.Hash, chan *ethproto.Response) (*ethproto.Request, error) {
+	<-p.releaseCh
+	return nil, ethproto.ErrLegacyRequest
+}
 
 // RequestNodeData blocks until released.
-func (p *stalledDownloaderPeer) RequestNodeData([]common.Hash) error { <-p.releaseCh; return nil }
+func (p *stalledDownloaderPeer) RequestNodeData([]common.Hash, chan *ethproto.Response) (*ethproto.Request, error) {
+	<-p.releaseCh
+	return nil, ethproto.ErrLegacyRequest
+}
 
 // Tests that fast sync is disabled after a successful sync cycle.
 func TestFastSyncDisabling100(t *testing.T) { testFastSyncDisabling(t, ethproto.XDC100) }

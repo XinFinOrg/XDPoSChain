@@ -28,6 +28,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/prque"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	eth "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/trie"
@@ -38,6 +39,12 @@ const (
 	gatherSlack   = 100 * time.Millisecond // Interval used to collate almost-expired announces with fetches
 	fetchTimeout  = 5 * time.Second        // Maximum allotted time to return an explicitly requested block/transaction
 )
+
+// fetchResponseTimeout bounds how long an explicitly requested block part may
+// stay unanswered. It is 2x fetchTimeout to leave room for a catchup after the
+// announce itself already expired; a peer that still does not answer is dropped
+// as a protocol violation. Tests shorten it to keep their runtime bounded.
+var fetchResponseTimeout = 2 * fetchTimeout
 
 const (
 	maxUncleDist = 7   // Maximum allowed backward distance from the chain head
@@ -113,10 +120,10 @@ var (
 type blockRetrievalFn func(common.Hash) *types.Block
 
 // headerRequesterFn is a callback type for sending a header retrieval request.
-type headerRequesterFn func(common.Hash) error
+type headerRequesterFn func(common.Hash, chan *eth.Response) (*eth.Request, error)
 
 // bodyRequesterFn is a callback type for sending a body retrieval request.
-type bodyRequesterFn func([]common.Hash) error
+type bodyRequesterFn func([]common.Hash, chan *eth.Response) (*eth.Request, error)
 
 // headerVerifierFn is a callback type to verify a block's header for fast propagation.
 type headerVerifierFn func(header *types.Header) error
@@ -331,6 +338,30 @@ func (f *BlockFetcher) Enqueue(peer string, block *types.Block) error {
 	}
 }
 
+// waitResponse waits for the reply of an explicitly requested block part. It
+// reports false if the request was abandoned: the peer went away, the fetcher
+// stopped, or the peer did not answer in time and was dropped. No response was
+// taken on those paths, so the caller owes no Done verdict; its deferred
+// Request.Close releases the dispatcher entry either way.
+func (f *BlockFetcher) waitResponse(peer string, req *eth.Request, resCh chan *eth.Response) (*eth.Response, bool) {
+	timeout := time.NewTimer(fetchResponseTimeout)
+	defer timeout.Stop()
+
+	select {
+	case res := <-resCh:
+		return res, true
+	case <-req.Terminated():
+		return nil, false
+	case <-timeout.C:
+		// The peer advertised the block and then did not serve it. The hash was
+		// already rescheduled, so an unresponsive peer is a protocol violation.
+		f.dropPeer(peer)
+		return nil, false
+	case <-f.quit:
+		return nil, false
+	}
+}
+
 // FilterHeaders extracts all the headers that were explicitly requested by the fetcher,
 // returning those that should be handled differently.
 func (f *BlockFetcher) FilterHeaders(peer string, headers []*types.Header, time time.Time) []*types.Header {
@@ -497,15 +528,40 @@ func (f *BlockFetcher) loop() {
 
 				// Create a closure of the fetch and schedule in on a new thread
 				fetchHeader := f.fetching[hashes[0]].fetchHeader
-				go func() {
+				go func(peer string) {
 					if f.fetchingHook != nil {
 						f.fetchingHook(hashes)
 					}
 					for _, hash := range hashes {
 						headerFetchMeter.Mark(1)
-						fetchHeader(hash) // Suboptimal, but protocol doesn't allow batch header retrievals
+						go func(hash common.Hash) {
+							resCh := make(chan *eth.Response)
+
+							req, err := fetchHeader(hash, resCh)
+							if err != nil {
+								// A legacy peer delivers the reply through the
+								// node layer; a failed send has no reply to wait
+								// for. Neither may be counted as a peer failure.
+								return
+							}
+							if req == nil {
+								return
+							}
+							defer req.Close()
+
+							res, ok := f.waitResponse(peer, req, resCh)
+							if !ok || res == nil {
+								return
+							}
+							res.Done <- nil
+							// xdc/166 replies are matched by request id, so the
+							// leftovers are dropped on purpose: the legacy hand-off
+							// fed them to the downloader, which cannot tell them
+							// apart from a reply to its own request.
+							f.FilterHeaders(peer, *res.Res.(*eth.BlockHeadersPacket), time.Now())
+						}(hash)
 					}
-				}()
+				}(peer)
 			}
 			// Schedule the next fetch if blocks are still pending
 			f.rescheduleFetch(fetchTimer)
@@ -533,8 +589,31 @@ func (f *BlockFetcher) loop() {
 				if f.completingHook != nil {
 					f.completingHook(hashes)
 				}
+				fetchBodies := f.completing[hashes[0]].fetchBodies
 				bodyFetchMeter.Mark(int64(len(hashes)))
-				go f.completing[hashes[0]].fetchBodies(hashes)
+
+				go func(peer string, hashes []common.Hash) {
+					resCh := make(chan *eth.Response)
+
+					req, err := fetchBodies(hashes, resCh)
+					if err != nil {
+						return
+					}
+					if req == nil {
+						return
+					}
+					defer req.Close()
+
+					res, ok := f.waitResponse(peer, req, resCh)
+					if !ok || res == nil {
+						return
+					}
+					res.Done <- nil
+					txs, uncles := res.Res.(*eth.BlockBodiesPacket).Unpack()
+					// Leftovers are dropped for the same reason as the header
+					// path above.
+					f.FilterBodies(peer, txs, uncles, time.Now())
+				}(peer, hashes)
 			}
 			// Schedule the next fetch if blocks are still pending
 			f.rescheduleComplete(completeTimer)

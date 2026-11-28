@@ -35,6 +35,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	eth "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -414,10 +415,16 @@ func (dl *downloadTester) Rollback(hashes []common.Hash) {
 
 // newPeer registers a new block download source into the downloader.
 func (dl *downloadTester) newPeer(id string, version uint, chain *testChain) error {
+	return dl.newPeerWithSink(id, version, chain, false)
+}
+
+// newPeerWithSink registers a peer that either uses the legacy delivery path
+// or answers xdc/166 requests through their sink.
+func (dl *downloadTester) newPeerWithSink(id string, version uint, chain *testChain, sink bool) error {
 	dl.lock.Lock()
 	defer dl.lock.Unlock()
 
-	peer := &downloadTesterPeer{dl: dl, id: id, chain: chain}
+	peer := &downloadTesterPeer{dl: dl, id: id, chain: chain, sink: sink}
 	dl.peers[id] = peer
 	return dl.downloader.RegisterPeer(id, version, peer)
 }
@@ -467,6 +474,9 @@ type downloadTesterPeer struct {
 	// before the fake peer serves it, letting tests assert which heights the
 	// downloader actually probes.
 	requestHook func(origin uint64, amount int, skip int, reverse bool)
+	// sink makes the peer answer through the xdc/166 request sink instead of
+	// the legacy Deliver* path.
+	sink bool
 }
 
 // Head constructs a function to retrieve a peer's current head hash
@@ -476,23 +486,34 @@ func (dlp *downloadTesterPeer) Head() (common.Hash, *big.Int) {
 	return b.Hash(), dlp.chain.td(b.Hash())
 }
 
+// replyHeaders routes a header response through the xdc/166 sink or the legacy
+// delivery path, depending on the tester peer mode.
+func (dlp *downloadTesterPeer) replyHeaders(result []*types.Header, sink chan *eth.Response) (*eth.Request, error) {
+	if dlp.sink {
+		packet := eth.BlockHeadersPacket(result)
+		go func() {
+			sink <- &eth.Response{Res: &packet, Done: make(chan error, 1)}
+		}()
+		return &eth.Request{}, nil
+	}
+	go dlp.dl.downloader.DeliverHeaders(dlp.id, result)
+	return nil, eth.ErrLegacyRequest
+}
+
 // RequestHeadersByHash constructs a GetBlockHeaders function based on a hashed
 // origin; associated with a particular peer in the download tester. The returned
 // function can be used to retrieve batches of headers from the particular peer.
-func (dlp *downloadTesterPeer) RequestHeadersByHash(origin common.Hash, amount int, skip int, reverse bool) error {
+func (dlp *downloadTesterPeer) RequestHeadersByHash(origin common.Hash, amount int, skip int, reverse bool, sink chan *eth.Response) (*eth.Request, error) {
 	if reverse {
 		panic("reverse header requests not supported")
 	}
-
-	result := dlp.chain.headersByHash(origin, amount, skip)
-	go dlp.dl.downloader.DeliverHeaders(dlp.id, result)
-	return nil
+	return dlp.replyHeaders(dlp.chain.headersByHash(origin, amount, skip), sink)
 }
 
 // RequestHeadersByNumber constructs a GetBlockHeaders function based on a numbered
 // origin; associated with a particular peer in the download tester. The returned
 // function can be used to retrieve batches of headers from the particular peer.
-func (dlp *downloadTesterPeer) RequestHeadersByNumber(origin uint64, amount int, skip int, reverse bool) error {
+func (dlp *downloadTesterPeer) RequestHeadersByNumber(origin uint64, amount int, skip int, reverse bool, sink chan *eth.Response) (*eth.Request, error) {
 	if reverse {
 		panic("reverse header requests not supported")
 	}
@@ -501,32 +522,48 @@ func (dlp *downloadTesterPeer) RequestHeadersByNumber(origin uint64, amount int,
 	}
 
 	result := dlp.chain.headersByNumber(origin, amount, skip)
-	go dlp.dl.downloader.DeliverHeaders(dlp.id, result)
-	return nil
+	return dlp.replyHeaders(result, sink)
 }
 
 // RequestBodies constructs a getBlockBodies method associated with a particular
 // peer in the download tester. The returned function can be used to retrieve
 // batches of block bodies from the particularly requested peer.
-func (dlp *downloadTesterPeer) RequestBodies(hashes []common.Hash) error {
+func (dlp *downloadTesterPeer) RequestBodies(hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
 	txs, uncles := dlp.chain.bodies(hashes)
+	if dlp.sink {
+		packet := eth.BlockBodiesPacket(make([]*eth.BlockBody, len(txs)))
+		for i := range txs {
+			packet[i] = &eth.BlockBody{Transactions: txs[i], Uncles: uncles[i]}
+		}
+		go func() {
+			sink <- &eth.Response{Res: &packet, Done: make(chan error, 1)}
+		}()
+		return &eth.Request{}, nil
+	}
 	go dlp.dl.downloader.DeliverBodies(dlp.id, txs, uncles)
-	return nil
+	return nil, eth.ErrLegacyRequest
 }
 
 // RequestReceipts constructs a getReceipts method associated with a particular
 // peer in the download tester. The returned function can be used to retrieve
 // batches of block receipts from the particularly requested peer.
-func (dlp *downloadTesterPeer) RequestReceipts(hashes []common.Hash) error {
+func (dlp *downloadTesterPeer) RequestReceipts(hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
 	receipts := dlp.chain.receipts(hashes)
+	if dlp.sink {
+		packet := eth.ReceiptsPacket(receipts)
+		go func() {
+			sink <- &eth.Response{Res: &packet, Done: make(chan error, 1)}
+		}()
+		return &eth.Request{}, nil
+	}
 	go dlp.dl.downloader.DeliverReceipts(dlp.id, receipts)
-	return nil
+	return nil, eth.ErrLegacyRequest
 }
 
 // RequestNodeData constructs a getNodeData method associated with a particular
 // peer in the download tester. The returned function can be used to retrieve
 // batches of node state data from the particularly requested peer.
-func (dlp *downloadTesterPeer) RequestNodeData(hashes []common.Hash) error {
+func (dlp *downloadTesterPeer) RequestNodeData(hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
 	dlp.dl.lock.RLock()
 	defer dlp.dl.lock.RUnlock()
 
@@ -538,8 +575,15 @@ func (dlp *downloadTesterPeer) RequestNodeData(hashes []common.Hash) error {
 			}
 		}
 	}
+	if dlp.sink {
+		packet := eth.NodeDataPacket(results)
+		go func() {
+			sink <- &eth.Response{Res: &packet, Done: make(chan error, 1)}
+		}()
+		return &eth.Request{}, nil
+	}
 	go dlp.dl.downloader.DeliverNodeData(dlp.id, results)
-	return nil
+	return nil, eth.ErrLegacyRequest
 }
 
 // assertOwnChain checks if the local chain contains the correct number of items
@@ -630,6 +674,43 @@ func testCanonicalSynchronisation(t *testing.T, protocol uint, mode SyncMode) {
 	// Synchronise with the peer and make sure all relevant data was retrieved
 	if err := tester.sync("peer", nil, mode); err != nil {
 		t.Fatalf("failed to synchronise blocks: %v", err)
+	}
+	assertOwnChain(t, tester, chain.len())
+}
+
+// TestCanonicalSynchronisation166SinkFull exercises the xdc/166 request sink
+// bridge end to end: the tester peer answers every request through its sink
+// and the downloader must still import the canonical chain.
+func TestCanonicalSynchronisation166SinkFull(t *testing.T) {
+	t.Parallel()
+
+	tester := newTester()
+	defer tester.terminate()
+
+	chain := testChainBase.shorten(blockCacheMaxItems - 15)
+	if err := tester.newPeerWithSink("peer", xdc166, chain, true); err != nil {
+		t.Fatalf("failed to register sink peer: %v", err)
+	}
+	if err := tester.sync("peer", nil, FullSync); err != nil {
+		t.Fatalf("failed to synchronise blocks through the sink: %v", err)
+	}
+	assertOwnChain(t, tester, chain.len())
+}
+
+// TestCanonicalSynchronisation166SinkFast covers the state-data request sink
+// on the fast-sync path.
+func TestCanonicalSynchronisation166SinkFast(t *testing.T) {
+	t.Parallel()
+
+	tester := newTester()
+	defer tester.terminate()
+
+	chain := testChainBase.shorten(blockCacheMaxItems - 15)
+	if err := tester.newPeerWithSink("peer", xdc166, chain, true); err != nil {
+		t.Fatalf("failed to register sink peer: %v", err)
+	}
+	if err := tester.sync("peer", nil, FastSync); err != nil {
+		t.Fatalf("failed to fast-synchronise blocks through the sink: %v", err)
 	}
 	assertOwnChain(t, tester, chain.len())
 }
@@ -2629,20 +2710,20 @@ type floodingTestPeer struct {
 }
 
 func (ftp *floodingTestPeer) Head() (common.Hash, *big.Int) { return ftp.peer.Head() }
-func (ftp *floodingTestPeer) RequestHeadersByHash(hash common.Hash, count int, skip int, reverse bool) error {
-	return ftp.peer.RequestHeadersByHash(hash, count, skip, reverse)
+func (ftp *floodingTestPeer) RequestHeadersByHash(hash common.Hash, count int, skip int, reverse bool, sink chan *eth.Response) (*eth.Request, error) {
+	return ftp.peer.RequestHeadersByHash(hash, count, skip, reverse, sink)
 }
-func (ftp *floodingTestPeer) RequestBodies(hashes []common.Hash) error {
-	return ftp.peer.RequestBodies(hashes)
+func (ftp *floodingTestPeer) RequestBodies(hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+	return ftp.peer.RequestBodies(hashes, sink)
 }
-func (ftp *floodingTestPeer) RequestReceipts(hashes []common.Hash) error {
-	return ftp.peer.RequestReceipts(hashes)
+func (ftp *floodingTestPeer) RequestReceipts(hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+	return ftp.peer.RequestReceipts(hashes, sink)
 }
-func (ftp *floodingTestPeer) RequestNodeData(hashes []common.Hash) error {
-	return ftp.peer.RequestNodeData(hashes)
+func (ftp *floodingTestPeer) RequestNodeData(hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+	return ftp.peer.RequestNodeData(hashes, sink)
 }
 
-func (ftp *floodingTestPeer) RequestHeadersByNumber(from uint64, count, skip int, reverse bool) error {
+func (ftp *floodingTestPeer) RequestHeadersByNumber(from uint64, count, skip int, reverse bool, sink chan *eth.Response) (*eth.Request, error) {
 	deliveriesDone := make(chan struct{}, 500)
 	for i := 0; i < cap(deliveriesDone)-1; i++ {
 		peer := fmt.Sprintf("fake-peer%d", i)
@@ -2662,7 +2743,7 @@ func (ftp *floodingTestPeer) RequestHeadersByNumber(from uint64, count, skip int
 				// Start delivering the requested headers
 				// after one of the flooding responses has arrived.
 				go func() {
-					ftp.peer.RequestHeadersByNumber(from, count, skip, reverse)
+					_, _ = ftp.peer.RequestHeadersByNumber(from, count, skip, reverse, sink)
 					deliveriesDone <- struct{}{}
 				}()
 				launched = true
@@ -2671,7 +2752,7 @@ func (ftp *floodingTestPeer) RequestHeadersByNumber(from uint64, count, skip int
 			panic("blocked")
 		}
 	}
-	return nil
+	return nil, eth.ErrLegacyRequest
 }
 
 // TestRemoteHeaderRequestSpan tests the header request span calculated from

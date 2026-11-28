@@ -379,13 +379,42 @@ func (d *Downloader) Synchronising() bool {
 func (d *Downloader) RegisterPeer(id string, version uint, peer Peer) error {
 	logger := log.New("peer", shortPeerID(id))
 	logger.Trace("Registering sync peer")
-	if err := d.peers.Register(newPeerConnection(id, version, peer, logger)); err != nil {
+	if err := d.peers.Register(newPeerConnection(id, version, peer, logger, d.deliverPack, d.cancelSignal)); err != nil {
 		logger.Error("Failed to register sync peer", "err", err)
 		return err
 	}
 	d.qosReduceConfidence()
 
 	return nil
+}
+
+// deliverPack routes a xdc/166 response packet back into the same channel the
+// node layer uses for legacy replies, preserving the delivery meters and the
+// cancellation/backpressure behaviour of Downloader.deliver. The cancel channel
+// is the one captured when the request was issued, so a reply cannot leak into
+// a later sync's shared delivery channel.
+func (d *Downloader) deliverPack(packet dataPack, cancel <-chan struct{}) error {
+	switch pack := packet.(type) {
+	case *headerPack:
+		return d.deliverWithCancel(pack.peerId, d.headerCh, pack, headerInMeter, headerDropMeter, cancel)
+	case *bodyPack:
+		return d.deliverWithCancel(pack.peerId, d.bodyCh, pack, bodyInMeter, bodyDropMeter, cancel)
+	case *receiptPack:
+		return d.deliverWithCancel(pack.peerId, d.receiptCh, pack, receiptInMeter, receiptDropMeter, cancel)
+	case *statePack:
+		return d.deliverWithCancel(pack.peerId, d.stateCh, pack, stateInMeter, stateDropMeter, cancel)
+	default:
+		return fmt.Errorf("unknown data pack %T", packet)
+	}
+}
+
+// cancelSignal exposes the current sync cancellation channel to request
+// consumers. It can be nil between syncs, which disables the select case.
+func (d *Downloader) cancelSignal() <-chan struct{} {
+	d.cancelLock.RLock()
+	defer d.cancelLock.RUnlock()
+
+	return d.cancelCh
 }
 
 // RegisterLightPeer injects a light client peer, wrapping it so it appears as a regular peer.
@@ -718,7 +747,7 @@ func (d *Downloader) Terminate() {
 // the total time a pending synchronisation would take.
 func (d *Downloader) fetchHeight(p *peerConnection, hash common.Hash) (*types.Header, error) {
 	// Request the advertised remote head block and wait for the response
-	go p.peer.RequestHeadersByHash(hash, 1, 0, false)
+	p.requestHeadersByHash(hash, 1, 0, false)
 
 	ttl := d.requestTTL()
 	timeout := time.After(ttl)
@@ -859,7 +888,7 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 	from, spanMax := calculateRequestSpan(remoteHeight, localHeight)
 
 	p.log.Trace("Span searching for common ancestor", "count", spanSampleCount, "from", from, "skip", spanSampleSkip)
-	go p.peer.RequestHeadersByNumber(uint64(from), spanSampleCount, spanSampleSkip, false)
+	p.requestHeadersByNumber(uint64(from), spanSampleCount, spanSampleSkip, false)
 
 	// Wait for the remote response to the head fetch
 	number, hash := uint64(0), common.Hash{}
@@ -970,7 +999,7 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 		ttl := d.requestTTL()
 		timeout := time.After(ttl)
 
-		go p.peer.RequestHeadersByNumber(check, 1, 0, false)
+		p.requestHeadersByNumber(check, 1, 0, false)
 
 		// Wait until a reply arrives to this request
 		for arrived := false; !arrived; {
@@ -1058,10 +1087,10 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, pivot uint64) 
 
 		if skeleton {
 			p.log.Trace("Fetching skeleton headers", "count", MaxHeaderFetch, "from", from)
-			go p.peer.RequestHeadersByNumber(from+uint64(MaxHeaderFetch)-1, MaxSkeletonSize, MaxHeaderFetch-1, false)
+			p.requestHeadersByNumber(from+uint64(MaxHeaderFetch)-1, MaxSkeletonSize, MaxHeaderFetch-1, false)
 		} else {
 			p.log.Trace("Fetching full headers", "count", MaxHeaderFetch, "from", from)
-			go p.peer.RequestHeadersByNumber(from, MaxHeaderFetch, 0, false)
+			p.requestHeadersByNumber(from, MaxHeaderFetch, 0, false)
 		}
 	}
 	// Start pulling the header chain skeleton until all is done
@@ -2323,6 +2352,18 @@ func (d *Downloader) DeliverNodeData(id string, data [][]byte) (err error) {
 
 // deliver injects a new batch of data received from a remote node.
 func (d *Downloader) deliver(id string, destCh chan dataPack, packet dataPack, inMeter, dropMeter *metrics.Meter) (err error) {
+	d.cancelLock.RLock()
+	cancel := d.cancelCh
+	d.cancelLock.RUnlock()
+
+	return d.deliverWithCancel(id, destCh, packet, inMeter, dropMeter, cancel)
+}
+
+// deliverWithCancel injects a packet into destCh, aborting if the sync that
+// issued the request was cancelled while queuing. The cancel channel is passed
+// in so a xdc/166 reply is judged against the sync that issued it, not against
+// whatever sync happens to be running when the reply arrives.
+func (d *Downloader) deliverWithCancel(id string, destCh chan dataPack, packet dataPack, inMeter, dropMeter *metrics.Meter, cancel <-chan struct{}) (err error) {
 	// Update the delivery metrics for both good and failed deliveries
 	inMeter.Mark(int64(packet.Items()))
 	defer func() {
@@ -2330,12 +2371,16 @@ func (d *Downloader) deliver(id string, destCh chan dataPack, packet dataPack, i
 			dropMeter.Mark(int64(packet.Items()))
 		}
 	}()
-	// Deliver or abort if the sync is canceled while queuing
-	d.cancelLock.RLock()
-	cancel := d.cancelCh
-	d.cancelLock.RUnlock()
+	// Deliver or abort if the sync is canceled while queuing. Check the
+	// cancellation first: a closed channel and a free slot are both ready for
+	// select, and a reply from a cancelled sync must never be delivered.
 	if cancel == nil {
 		return errNoSyncActive
+	}
+	select {
+	case <-cancel:
+		return errNoSyncActive
+	default:
 	}
 	select {
 	case destCh <- packet:

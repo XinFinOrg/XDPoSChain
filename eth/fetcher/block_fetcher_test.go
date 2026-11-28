@@ -36,6 +36,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	eth "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
@@ -255,7 +256,7 @@ func (f *fetcherTester) makeHeaderFetcher(peer string, blocks map[common.Hash]*t
 		closure[hash] = block
 	}
 	// Create a function that return a header from the closure
-	return func(hash common.Hash) error {
+	return func(hash common.Hash, sink chan *eth.Response) (*eth.Request, error) {
 		// Gather the blocks to return
 		headers := make([]*types.Header, 0, 1)
 		if block, ok := closure[hash]; ok {
@@ -264,7 +265,49 @@ func (f *fetcherTester) makeHeaderFetcher(peer string, blocks map[common.Hash]*t
 		// Return on a new thread
 		go f.fetcher.FilterHeaders(peer, headers, time.Now().Add(drift))
 
-		return nil
+		return nil, eth.ErrLegacyRequest
+	}
+}
+
+// makeSinkHeaderFetcher retrieves a header fetcher that answers through the
+// xdc/166 request sink instead of calling FilterHeaders directly.
+func (f *fetcherTester) makeSinkHeaderFetcher(blocks map[common.Hash]*types.Block, done chan<- error) headerRequesterFn {
+	return func(hash common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+		headers := make(eth.BlockHeadersPacket, 0, 1)
+		if block, ok := blocks[hash]; ok {
+			headers = append(headers, block.Header())
+		}
+		ack := make(chan error, 1)
+		go func() {
+			sink <- &eth.Response{
+				Res:  &headers,
+				Done: ack,
+			}
+		}()
+		go func() { done <- <-ack }()
+		return &eth.Request{}, nil
+	}
+}
+
+// makeSinkBodyFetcher retrieves a body fetcher that answers through the
+// xdc/166 request sink instead of calling FilterBodies directly.
+func (f *fetcherTester) makeSinkBodyFetcher(blocks map[common.Hash]*types.Block, done chan<- error) bodyRequesterFn {
+	return func(hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+		bodies := make(eth.BlockBodiesPacket, 0, len(hashes))
+		for _, hash := range hashes {
+			if block, ok := blocks[hash]; ok {
+				bodies = append(bodies, &eth.BlockBody{Transactions: block.Transactions(), Uncles: block.Uncles()})
+			}
+		}
+		ack := make(chan error, 1)
+		go func() {
+			sink <- &eth.Response{
+				Res:  &bodies,
+				Done: ack,
+			}
+		}()
+		go func() { done <- <-ack }()
+		return &eth.Request{}, nil
 	}
 }
 
@@ -275,7 +318,7 @@ func (f *fetcherTester) makeBodyFetcher(peer string, blocks map[common.Hash]*typ
 		closure[hash] = block
 	}
 	// Create a function that returns blocks from the closure
-	return func(hashes []common.Hash) error {
+	return func(hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
 		// Gather the block bodies to return
 		transactions := make([][]*types.Transaction, 0, len(hashes))
 		uncles := make([][]*types.Header, 0, len(hashes))
@@ -289,7 +332,7 @@ func (f *fetcherTester) makeBodyFetcher(peer string, blocks map[common.Hash]*typ
 		// Return on a new thread
 		go f.fetcher.FilterBodies(peer, transactions, uncles, time.Now().Add(drift))
 
-		return nil
+		return nil, eth.ErrLegacyRequest
 	}
 }
 
@@ -599,6 +642,147 @@ func testSequentialAnnouncements(t *testing.T, protocol int) {
 	verifyProposeBlockHandlerCalled(t, handleProposedBlockChan)
 }
 
+// TestAnnouncedBlockFetchedThroughSink checks the xdc/166 announcement path:
+// the header and body requests consume their own response sinks, acknowledge
+// Done, and feed the fetcher through FilterHeaders/FilterBodies.
+func TestAnnouncedBlockFetchedThroughSink(t *testing.T) {
+	hashes, blocks := makeChain(1, 0, genesis)
+
+	tester := newTester()
+	headerDone := make(chan error, 1)
+	bodyDone := make(chan error, 1)
+	headerFetcher := tester.makeSinkHeaderFetcher(blocks, headerDone)
+	bodyFetcher := tester.makeSinkBodyFetcher(blocks, bodyDone)
+
+	imported := make(chan *types.Block)
+	budget := tester.watchImports(imported)
+
+	tester.fetcher.Notify("valid", hashes[0], 1, time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher)
+	budget.verifyImportEvent(t, imported, true)
+	verifyImportDone(t, imported)
+
+	select {
+	case err := <-headerDone:
+		if err != nil {
+			t.Fatalf("header sink rejected: %v", err)
+		}
+	case <-time.After(fetchWait):
+		t.Fatal("header response was not acknowledged on Done")
+	}
+	select {
+	case err := <-bodyDone:
+		if err != nil {
+			t.Fatalf("body sink rejected: %v", err)
+		}
+	case <-time.After(fetchWait):
+		t.Fatal("body response was not acknowledged on Done")
+	}
+}
+
+// TestFilterHeadersIgnoresResponseDuration checks that the header filter uses
+// the receive time, not the round trip added to it: a large response duration
+// must not stamp the imported block with a time in the future.
+func TestFilterHeadersIgnoresResponseDuration(t *testing.T) {
+	hashes, blocks := makeChain(2, 0, genesis)
+
+	// Start from a tester whose head is block 1, so the empty block 2 can be
+	// imported as soon as its header arrives. makeChain returns its hashes in
+	// reverse order: hashes[0] is the newest block.
+	tester := newIdleTester()
+	tester.hashes = append(tester.hashes, hashes[1])
+	tester.blocks[hashes[1]] = blocks[hashes[1]]
+	tester.fetcher.Start()
+	t.Cleanup(tester.fetcher.Stop)
+
+	headerFetcher := func(hash common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+		headers := eth.BlockHeadersPacket{blocks[hash].Header()}
+		go func() {
+			sink <- &eth.Response{Res: &headers, Time: 30 * time.Second, Done: make(chan error, 1)}
+		}()
+		return &eth.Request{}, nil
+	}
+	bodyFetcher := func(hashes []common.Hash, sink chan *eth.Response) (*eth.Request, error) {
+		return &eth.Request{}, nil
+	}
+	imported := make(chan *types.Block)
+	tester.watchImports(imported)
+	if err := tester.fetcher.Notify("valid", hashes[0], 2, time.Now().Add(-arriveTimeout), headerFetcher, bodyFetcher); err != nil {
+		t.Fatalf("failed to notify: %v", err)
+	}
+	select {
+	case block := <-imported:
+		if block.ReceivedAt.After(time.Now().Add(time.Second)) {
+			t.Fatalf("block receive time %v is in the future", block.ReceivedAt)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("block was not imported")
+	}
+}
+
+// TestWaitResponseDropsSilentPeer checks that a peer which advertises a block
+// and then does not serve the requested header is dropped instead of leaving
+// the sink waiter (and its dispatcher entry) blocked forever.
+func TestWaitResponseDropsSilentPeer(t *testing.T) {
+	old := fetchResponseTimeout
+	fetchResponseTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { fetchResponseTimeout = old })
+
+	tester := newIdleTester()
+
+	type verdict struct {
+		res *eth.Response
+		ok  bool
+	}
+	verdictCh := make(chan verdict, 1)
+	go func() {
+		res, ok := tester.fetcher.waitResponse("silent", &eth.Request{}, make(chan *eth.Response))
+		verdictCh <- verdict{res, ok}
+	}()
+	var got verdict
+	select {
+	case got = <-verdictCh:
+	case <-time.After(2 * time.Second):
+		t.Fatal("waiter did not return after the response timeout")
+	}
+	if got.ok || got.res != nil {
+		t.Fatalf("silent peer: have (%v, %v), want (nil, false)", got.res, got.ok)
+	}
+	tester.lock.RLock()
+	dropped := tester.drops["silent"]
+	tester.lock.RUnlock()
+	if !dropped {
+		t.Fatal("silent peer was not dropped")
+	}
+}
+
+// TestWaitResponseStopsOnQuit checks that shutting the fetcher down releases a
+// sink waiter through quit, not through the timeout path that drops the peer.
+func TestWaitResponseStopsOnQuit(t *testing.T) {
+	old := fetchResponseTimeout
+	fetchResponseTimeout = 5 * time.Second
+	t.Cleanup(func() { fetchResponseTimeout = old })
+
+	tester := newTester()
+	tester.fetcher.Stop()
+
+	done := make(chan struct{})
+	go func() {
+		tester.fetcher.waitResponse("peer", &eth.Request{}, make(chan *eth.Response))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Stop did not release the sink waiter")
+	}
+	tester.lock.RLock()
+	dropped := tester.drops["peer"]
+	tester.lock.RUnlock()
+	if dropped {
+		t.Fatal("Stop released the waiter through the timeout path")
+	}
+}
+
 // Tests that if blocks are announced by multiple peers (or even the same buggy
 // peer), they will only get downloaded at most once.
 func TestConcurrentAnnouncements62(t *testing.T) { testConcurrentAnnouncements(t, 62) }
@@ -618,13 +802,13 @@ func testConcurrentAnnouncements(t *testing.T, protocol int) {
 	secondBodyFetcher := tester.makeBodyFetcher("second", blocks, 0)
 
 	counter := uint32(0)
-	firstHeaderWrapper := func(hash common.Hash) error {
+	firstHeaderWrapper := func(hash common.Hash, sink chan *eth.Response) (*eth.Request, error) {
 		atomic.AddUint32(&counter, 1)
-		return firstHeaderFetcher(hash)
+		return firstHeaderFetcher(hash, sink)
 	}
-	secondHeaderWrapper := func(hash common.Hash) error {
+	secondHeaderWrapper := func(hash common.Hash, sink chan *eth.Response) (*eth.Request, error) {
 		atomic.AddUint32(&counter, 1)
-		return secondHeaderFetcher(hash)
+		return secondHeaderFetcher(hash, sink)
 	}
 	// Iteratively announce blocks until all are imported.
 	imported := make(chan *types.Block)
@@ -691,15 +875,15 @@ func testPendingDeduplication(t *testing.T, protocol int) {
 
 	delay := 50 * time.Millisecond
 	counter := uint32(0)
-	headerWrapper := func(hash common.Hash) error {
+	headerWrapper := func(hash common.Hash, sink chan *eth.Response) (*eth.Request, error) {
 		atomic.AddUint32(&counter, 1)
 
 		// Simulate a long running fetch
 		go func() {
 			time.Sleep(delay)
-			headerFetcher(hash)
+			headerFetcher(hash, sink)
 		}()
-		return nil
+		return nil, eth.ErrLegacyRequest
 	}
 	// Announce the same block many times until it's fetched (wait for any pending ops)
 	for tester.getBlock(hashes[0]) == nil {

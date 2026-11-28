@@ -353,6 +353,18 @@ func (p BlockBodiesPacket) sanityCheck() error {
 	return nil
 }
 
+// Unpack splits the bodies into transaction and uncle sets.
+func (p *BlockBodiesPacket) Unpack() ([][]*types.Transaction, [][]*types.Header) {
+	var (
+		txset    = make([][]*types.Transaction, len(*p))
+		uncleset = make([][]*types.Header, len(*p))
+	)
+	for i, body := range *p {
+		txset[i], uncleset[i] = body.Transactions, body.Uncles
+	}
+	return txset, uncleset
+}
+
 // BlockBodiesPacket166 is the network packet for block content distribution over
 // xdc/166.
 type BlockBodiesPacket166 struct {
