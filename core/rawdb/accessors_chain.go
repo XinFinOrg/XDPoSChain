@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"math/big"
 	"slices"
 	"time"
@@ -67,14 +68,60 @@ func DeleteCanonicalHash(db ethdb.KeyValueWriter, number uint64) {
 }
 
 // DeleteCanonicalHashesAbove removes every canonical-hash assignment whose block
-// number is strictly greater than head. DeleteDanglingHashes reaches assignments
-// only through their header keys, so it cannot see one whose header is already
-// gone; this scans the canonical-hash keyspace instead, contiguous or not.
-func DeleteCanonicalHashesAbove(db ethdb.KeyValueStore, head uint64) error {
+// number is strictly greater than head, and reports how many it removed and the
+// highest assignment it dropped. DeleteDanglingHashes reaches assignments only
+// through their header keys, so it cannot see one whose header is already gone;
+// this scans the canonical-hash keyspace instead, contiguous or not.
+//
+// The walk stops at the first key whose leading number byte is non-zero: keys
+// sort by the big-endian number, so every assignment for a block number below
+// 2^56 (all leading bytes zero) precedes such a key. Only a database with a
+// block number that large could hide an assignment behind one, and 2^56 blocks
+// is unreachable. The stop matters because legacy hash-scheme trie nodes are
+// keyed by their bare hash: about one in 256 of them shares the "h" prefix and
+// sorts past the start number, so without the stop every writable open would
+// read that slice of the state.
+//
+// The transaction lookups of the removed blocks are left alone: a lookup is
+// resolved through the canonical assignment at its height, so with the
+// assignment gone it answers nil, and a range that is re-imported later finds
+// its lookups in place instead of waiting for its transactions to be delivered
+// a second time.
+//
+// Every dropped assignment is recorded at its own height together with the hash
+// it named, in the same batch as the deletion: a crash between two batches
+// cannot leave a dropped assignment on disk without its record. The record is
+// what the header import matches a known replayed header against; height and
+// total difficulty cannot tell a dropped canonical header from a known side
+// header, and comparing the hash leaves out the ancestry walk (and the memory it
+// would need) that a single highest-assignment record would require.
+//
+// The highest dropped height is reported as well and persisted as the sweep's
+// bound, taking the maximum of prev and the dropped heights: nothing above it
+// was dropped, so the import has nothing to look up above it, and a sweep that
+// dropped fewer heights than a pending bound keeps the higher one, because those
+// records are still pending.
+func DeleteCanonicalHashesAbove(db ethdb.KeyValueStore, head uint64, prev uint64) (uint64, uint64, error) {
+	return deleteCanonicalHashesAbove(db, head, prev, true)
+}
+
+// PurgeCanonicalHashesAbove removes every canonical-hash assignment above head
+// without recording the dropped heights. ResetWithGenesisBlock follows it with a
+// full purge of the records and the bound, so recording the dropped assignments
+// would only write the whole canonical index down to delete it again.
+func PurgeCanonicalHashesAbove(db ethdb.KeyValueStore, head uint64) error {
+	_, _, err := deleteCanonicalHashesAbove(db, head, 0, false)
+	return err
+}
+
+// deleteCanonicalHashesAbove is the sweep behind DeleteCanonicalHashesAbove and
+// PurgeCanonicalHashesAbove; record selects whether the dropped assignments are
+// written to the recovery records.
+func deleteCanonicalHashesAbove(db ethdb.KeyValueStore, head uint64, prev uint64, record bool) (uint64, uint64, error) {
 	// head == max would wrap the start back to zero, scanning from the beginning
 	start := head + 1
 	if start == 0 {
-		return nil
+		return 0, prev, nil
 	}
 	// canonical-hash key = headerPrefix + num (8 bytes) + headerHashSuffix
 	keyLen := len(headerPrefix) + 8 + len(headerHashSuffix)
@@ -83,17 +130,144 @@ func DeleteCanonicalHashesAbove(db ethdb.KeyValueStore, head uint64) error {
 	it := db.NewIterator(headerPrefix, encodeBlockNumber(start))
 	defer it.Release()
 
+	bound := prev
+	var removed uint64
 	for it.Next() {
 		key := it.Key()
 		// Headers and total-difficulty entries share the prefix but differ in length
 		if len(key) != keyLen {
+			// Past this key every canonical assignment is out of reach (see the
+			// function comment), so there is nothing left to remove.
+			if len(key) > len(headerPrefix) && key[len(headerPrefix)] != 0 {
+				break
+			}
 			continue
 		}
 		number := binary.BigEndian.Uint64(key[len(headerPrefix) : len(headerPrefix)+8])
 		if number <= head {
 			continue
 		}
+		hash := common.BytesToHash(it.Value())
 		DeleteCanonicalHash(batch, number)
+		if record {
+			if err := WriteSweptCanonicalHash(batch, number, hash); err != nil {
+				return removed, bound, err
+			}
+		}
+		removed++
+		if number > bound {
+			bound = number
+		}
+		if batch.ValueSize() >= ethdb.IdealBatchSize {
+			if record {
+				if err := WriteSweptCanonicalBound(batch, bound); err != nil {
+					return removed, bound, err
+				}
+			}
+			if err := batch.Write(); err != nil {
+				return removed, bound, err
+			}
+			batch.Reset()
+		}
+	}
+	if err := it.Error(); err != nil {
+		return removed, bound, err
+	}
+	if record && removed > 0 {
+		if err := WriteSweptCanonicalBound(batch, bound); err != nil {
+			return removed, bound, err
+		}
+	}
+	return removed, bound, batch.Write()
+}
+
+// WriteSweptCanonicalHash records the canonical assignment the startup sweep
+// dropped at the given height, so a known header replayed later can be matched
+// against it exactly.
+func WriteSweptCanonicalHash(db ethdb.KeyValueWriter, number uint64, hash common.Hash) error {
+	return db.Put(sweptCanonicalKey(number), hash.Bytes())
+}
+
+// ReadSweptCanonicalHash retrieves the assignment the startup sweep dropped at
+// the given height. The second return value reports whether a record exists; a
+// read failure is returned instead of being reported as absence, because it
+// would otherwise retire a restore point that is still pending.
+func ReadSweptCanonicalHash(db ethdb.KeyValueReader, number uint64) (common.Hash, bool, error) {
+	data, err := readOptionalBlob(db, sweptCanonicalKey(number))
+	if err != nil {
+		if errors.Is(err, ErrMetadataNotFound) {
+			return common.Hash{}, false, nil
+		}
+		return common.Hash{}, false, err
+	}
+	if len(data) != common.HashLength {
+		return common.Hash{}, false, fmt.Errorf("invalid swept canonical hash length %d at #%d", len(data), number)
+	}
+	return common.BytesToHash(data), true, nil
+}
+
+// ReadSweptCanonicalBound retrieves the highest height the startup sweep has
+// dropped a canonical assignment at, or zero when no sweep is pending.
+func ReadSweptCanonicalBound(db ethdb.KeyValueReader) (uint64, error) {
+	data, err := readOptionalBlob(db, sweptCanonicalBoundKey)
+	if err != nil {
+		if errors.Is(err, ErrMetadataNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	if len(data) != 8 {
+		return 0, fmt.Errorf("invalid swept canonical bound length %d", len(data))
+	}
+	return binary.BigEndian.Uint64(data), nil
+}
+
+// WriteSweptCanonicalBound stores the highest height the startup sweep has
+// dropped a canonical assignment at, so a restart before the header replay can
+// resume the restore.
+func WriteSweptCanonicalBound(db ethdb.KeyValueWriter, bound uint64) error {
+	data := make([]byte, 8)
+	binary.BigEndian.PutUint64(data, bound)
+	return db.Put(sweptCanonicalBoundKey, data)
+}
+
+// PruneSweptCanonicalHashes removes the assignment records at or below head: the
+// header import has passed every one of those heights, so their records can no
+// longer take part in a restore.
+func PruneSweptCanonicalHashes(db ethdb.KeyValueStore, head uint64) error {
+	return deleteSweptCanonicalHashes(db, head, false)
+}
+
+// DeleteSweptCanonicalHashes removes every assignment record and the bound, so a
+// later restart does not search for a restore that is already complete.
+func DeleteSweptCanonicalHashes(db ethdb.KeyValueStore) error {
+	if err := deleteSweptCanonicalHashes(db, 0, true); err != nil {
+		return err
+	}
+	return db.Delete(sweptCanonicalBoundKey)
+}
+
+// deleteSweptCanonicalHashes is the keyspace walk behind PruneSweptCanonicalHashes
+// and DeleteSweptCanonicalHashes; all select whether the walk covers only the
+// records at or below head.
+func deleteSweptCanonicalHashes(db ethdb.KeyValueStore, head uint64, all bool) error {
+	keyLen := len(sweptCanonicalPrefix) + 8
+	batch := db.NewBatch()
+	it := db.NewIterator(sweptCanonicalPrefix, nil)
+	defer it.Release()
+
+	for it.Next() {
+		key := it.Key()
+		if len(key) != keyLen {
+			continue
+		}
+		number := binary.BigEndian.Uint64(key[len(sweptCanonicalPrefix):])
+		if !all && number > head {
+			break
+		}
+		if err := batch.Delete(common.CopyBytes(key)); err != nil {
+			return err
+		}
 		if batch.ValueSize() >= ethdb.IdealBatchSize {
 			if err := batch.Write(); err != nil {
 				return err
