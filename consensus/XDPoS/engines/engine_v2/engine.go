@@ -892,10 +892,11 @@ func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ChainReader, blockHeader
 	}
 
 	// Re-check at two points: x.lock serializes this handler, not InsertChain,
-	// so a reorg can land in between. The first check protects processQC, whose
-	// first step advances highestQuorumCert before its own existence check; that
-	// check cannot tell a reorged-away fork from the canonical block, because the
-	// fork stays in the database.
+	// so a reorg can land in between. processQC resolves the QC block before it
+	// writes local QC state, but that lookup cannot tell a reorged-away fork
+	// from the canonical block, because the fork stays in the database. This
+	// check is what keeps a reorged block out of processQC and the vote path
+	// (#2750).
 	ok, reason, canonicalHash := consensus.ShouldHandleProposedBlock(chain, blockHeader)
 	if !ok {
 		skippedProposedBlock.Inc(1)
@@ -1084,17 +1085,22 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 // Update local QC variables including highestQC & lockQuorumCert, as well as commit the blocks that satisfy the algorithm requirements
 func (x *XDPoS_v2) processQC(blockChainReader consensus.ChainReader, incomingQuorumCert *types.QuorumCert) error {
 	log.Trace("[processQC][Before]", "HighQC", x.highestQuorumCert)
-	// 1. Update HighestQC
-	if incomingQuorumCert.ProposedBlockInfo.Round > x.highestQuorumCert.ProposedBlockInfo.Round {
-		log.Debug("[processQC] update x.highestQuorumCert", "blockNum", incomingQuorumCert.ProposedBlockInfo.Number, "round", incomingQuorumCert.ProposedBlockInfo.Round, "hash", incomingQuorumCert.ProposedBlockInfo.Hash)
-		x.highestQuorumCert = incomingQuorumCert
-	}
-	// 2. Get QC from header and update lockQuorumCert(lockQuorumCert is the parent of highestQC)
+	// Resolve the proposed block before mutating local QC state: a QC for a
+	// block this node does not have must leave highestQuorumCert alone. Only the
+	// existence check moves ahead of the writes: decoding the proposed block's
+	// extra and commitBlocks below can still fail after them and do not roll
+	// back (#2750).
 	proposedBlockHeader := blockChainReader.GetHeaderByHash(incomingQuorumCert.ProposedBlockInfo.Hash)
 	if proposedBlockHeader == nil {
 		log.Error("[processQC] Block not found using the QC", "quorumCert.ProposedBlockInfo.Hash", incomingQuorumCert.ProposedBlockInfo.Hash, "incomingQuorumCert.ProposedBlockInfo.Number", incomingQuorumCert.ProposedBlockInfo.Number)
 		return fmt.Errorf("block not found, number: %v, hash: %v", incomingQuorumCert.ProposedBlockInfo.Number, incomingQuorumCert.ProposedBlockInfo.Hash)
 	}
+	// 1. Update HighestQC
+	if incomingQuorumCert.ProposedBlockInfo.Round > x.highestQuorumCert.ProposedBlockInfo.Round {
+		log.Debug("[processQC] update x.highestQuorumCert", "blockNum", incomingQuorumCert.ProposedBlockInfo.Number, "round", incomingQuorumCert.ProposedBlockInfo.Round, "hash", incomingQuorumCert.ProposedBlockInfo.Hash)
+		x.highestQuorumCert = incomingQuorumCert
+	}
+	// 2. Update lockQuorumCert from the header's embedded QC(lockQuorumCert is the parent of highestQC)
 	if proposedBlockHeader.Number.Cmp(x.config.V2.SwitchBlock) > 0 {
 		// Extra field contain parent information
 		proposedBlockQuorumCert, round, _, err := x.getExtraFields(proposedBlockHeader)

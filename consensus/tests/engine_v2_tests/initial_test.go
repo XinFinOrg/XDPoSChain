@@ -120,6 +120,50 @@ func TestInitialOtherV2Block(t *testing.T) {
 	assert.Equal(t, uint64(450), snap.Number)
 }
 
+// TestInitialLeavesStateUntouchedWhenProposedBlockIsMissing pins that a
+// bootstrap QC for a block this node does not have leaves the engine
+// uninitialised. The old order advanced highestQuorumCert anyway, so the next
+// Initial call took the "already initialized" path and returned nil.
+func TestInitialLeavesStateUntouchedWhenProposedBlockIsMissing(t *testing.T) {
+	t.Parallel()
+	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 900, params.TestXDPoSMockChainConfig, nil)
+	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
+
+	quorumCert := &types.QuorumCert{
+		ProposedBlockInfo: &types.BlockInfo{
+			Hash:   common.HexToHash("0xdeadbeef"),
+			Number: big.NewInt(910),
+			Round:  types.Round(10),
+		},
+		GapNumber: 450,
+	}
+	extra := types.ExtraFields_v2{Round: 11, QuorumCert: quorumCert}
+	extraBytes, err := extra.EncodeToBytes()
+	assert.Nil(t, err)
+
+	header := &types.Header{
+		Root:       common.HexToHash("35999dded35e8db12de7e6c1471eb9670c162eec616ecebbaf4fddd4676fb930"),
+		Number:     big.NewInt(911),
+		ParentHash: currentBlock.Hash(),
+		Coinbase:   common.HexToAddress("0x111000000000000000000000000000000123"),
+	}
+	header.Extra = extraBytes
+
+	assert.Error(t, adaptor.EngineV2.Initial(blockchain, header))
+	// The retry must fail the same way instead of short-circuiting on the stale
+	// highestQuorumCert the first call used to leave behind.
+	assert.Error(t, adaptor.EngineV2.Initial(blockchain, header))
+
+	round, lockQC, highestQC, _, votedRound, commit := adaptor.EngineV2.GetPropertiesFaker()
+	assert.Equal(t, types.Round(0), round)
+	assert.Nil(t, lockQC)
+	assert.Equal(t, common.Hash{}, highestQC.ProposedBlockInfo.Hash)
+	assert.Equal(t, types.Round(0), highestQC.ProposedBlockInfo.Round)
+	assert.Equal(t, big.NewInt(0), highestQC.ProposedBlockInfo.Number)
+	assert.Equal(t, types.Round(0), votedRound)
+	assert.Nil(t, commit)
+}
+
 // TestSnapshotShouldAlreadyBeCreatedByGapRefresh tests snapshot should already be created
 // by the gap block refresh, which writes it together with the head markers.
 func TestSnapshotShouldAlreadyBeCreatedByGapRefresh(t *testing.T) {
