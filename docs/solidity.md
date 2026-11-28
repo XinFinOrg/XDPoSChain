@@ -9,7 +9,7 @@ Scheduled network activation block numbers (TBD means no activation block is sch
 | Network |   Cancun |   Prague |   Osaka | Amsterdam |
 | :------ | -------: | -------: | ------: | --------: |
 | mainnet | 98802000 |      TBD |     TBD |       TBD |
-| testnet | 71551800 | 87633000 |     TBD |       TBD |
+| testnet | 71551800 | 84333000 |     TBD |       TBD |
 | devnet  |    25000 |    50000 | 1218600 |       TBD |
 
 Recommended compiler settings:
@@ -79,7 +79,7 @@ Read the floor from the node with `eth_gasPrice` instead of hardcoding it.
 
 ### blobhash()
 
-XDPoSChain has no blob transactions (transaction type `0x03`) and no blob fields in the block header, so `blobhash(i)` always returns 0. That is the out-of-bounds value defined by EIP-4844, so `require(blobhash(i) != 0)` reverts as expected. The KZG point evaluation precompile (`0x0a`) is not implemented. On the networks that run the Prague precompile set (devnet from block 50000 until 1218600, localnet from the genesis block) its address is registered and every call to it fails, consuming the gas of the frame. Both the Prague and the Osaka set carry the stub, so the address keeps failing on devnet after the switch to the Osaka set at block 1218600; that set adds `0x0100` (`P256VERIFY`) and re-prices the `0x05` modexp under EIP-7823/EIP-7883, and it drops nothing the Prague set registers. Mainnet and Apothem, where Prague is not active yet (Apothem has it scheduled at 87633000) and Osaka is unset, do not register the address at all, so a call to it is handled as a call to an empty account: it succeeds and returns empty output.
+XDPoSChain has no blob transactions (transaction type `0x03`) and no blob fields in the block header, so `blobhash(i)` always returns 0. That is the out-of-bounds value defined by EIP-4844, so `require(blobhash(i) != 0)` reverts as expected. The KZG point evaluation precompile (`0x0a`) is not implemented. On the networks that run the Prague precompile set (devnet from block 50000 until 1218600, testnet from block 84333000, localnet from the genesis block) its address is registered and every call to it fails, consuming the gas of the frame. Both the Prague and the Osaka set carry the stub, so the address keeps failing on devnet after the switch to the Osaka set at block 1218600; that set adds `0x0100` (`P256VERIFY`) and re-prices the `0x05` modexp under EIP-7823/EIP-7883, and it drops nothing the Prague set registers. Mainnet, where Prague and Osaka are both unscheduled, does not register the address at all, so a call to it is handled as a call to an empty account: it succeeds and returns empty output.
 
 ### block.blobbasefee
 
