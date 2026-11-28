@@ -387,7 +387,7 @@ Already-migrated same-hash custom database on a built-in genesis hash or chain I
 
 Operational summary:
 
-- For ordinary built-in Mainnet, Testnet, and Devnet databases, upgrade is a direct binary replacement plus the matching runtime flag.
+- For ordinary built-in Mainnet, Testnet, and Devnet databases, upgrade is a direct binary replacement plus the matching runtime flag, provided the bundled fork schedule did not change between the two binaries. When it did, the stored built-in config differs from the bundled one: the default `exit` mismatch policy stops at startup; see the chain-config mismatch policy section above.
 - For same-hash custom databases that reuse a built-in identity surface, compatibility depends on whether the directory has already been migrated to the explicit override-marker schema.
 - The one-way compatibility boundary is the first successful writable migration that persists `chainConfigOverride`.
 
@@ -620,6 +620,15 @@ Use this procedure when the chain is already running and you want to add a new f
 - If the proposed config change would alter the genesis hash, treat it as a different chain and use a fresh data directory instead of trying to mutate the existing one in place.
 - If a new fork point is no longer entirely in the future, compatibility checks may return a `ConfigCompatError` and require a rewind or another migration workflow instead of an in-place update.
 
+## Testnet Fork Schedule
+
+The built-in testnet entry in `genesis/testnet.json` and `params/config_networks.go` carries the schedule the live Apothem network runs:
+
+- Prague: `84333000`, not the `87633000` an older binary schedules. The network activated it, including the Multicall3 preinstall that writes state at the activation block.
+- TIPProportionalReward: `84733000`, around 2026-10-30 at the observed block time.
+
+Prague is already behind the head the network had reached on 2026-10-27 (`84606378`), and TIPProportionalReward followed around 2026-10-30 at the observed block time, so a testnet node built from a binary that predates this schedule stops at startup: its stored chain config differs from the bundled one and the default `exit` mismatch policy refuses to start; see the chain-config mismatch policy section above. A node that already runs the schedule is unaffected and keeps restarting on its existing data directory.
+
 ## Reward Forks: TIPFixedReward and TIPProportionalReward
 
 - `tipUpgradeRewardBlock` is renamed to `tipFixedRewardBlock`. The legacy key is still accepted when a genesis file or a stored chain config is read, so testnet keeps its activation at `83600000` with no migration. A config that carries both keys with different values is rejected.
@@ -627,7 +636,8 @@ Use this procedure when the chain is already running and you want to add a new f
 - `tipProportionalRewardBlock` pays each masternode, protector and observer `perNodeReward × min(sign, signSlots) / signSlots`; the unearned share is not minted. It does not depend on `tipFixedRewardBlock`, and when both are active it takes precedence.
 - Activation boundary: the reward model is chosen at the paying checkpoint, while the rewarded epoch is two epochs earlier. The first checkpoint at or after the activation height therefore pays an epoch that lies entirely before activation under the new model. With devnet's activation at `50000` and an epoch of 900, the first affected checkpoint is `50400`, paying epoch `[48601, 49499]`. TIPFixedReward behaves the same way.
 - Devnet: `tipFixedRewardBlock` is unset and `tipProportionalRewardBlock` is `50000`. That changes the rules of a fork that existing devnet databases have already passed, so the built-in devnet direct restart described in the compatibility matrix above does not apply to this change. Opening an existing devnet database fails with `provided genesis config conflicts with built-in chain config`; start devnet nodes from a fresh data directory.
-- Mainnet, testnet and localnet leave `tipProportionalRewardBlock` unset.
+- Testnet: `tipProportionalRewardBlock` is `84733000` (around 2026-10-30). The network has already passed it, so the first paying checkpoint is `84733200` (`94148 × 900`), which pays the epoch before activation under the new model, exactly as the activation-boundary bullet above describes. Nodes that already run this schedule restart on their existing data directory; nodes whose stored chain config predates it stop at startup under the default `exit` policy — see "Testnet Fork Schedule" above.
+- Mainnet and localnet leave `tipProportionalRewardBlock` unset.
 
 ## Prague / EIP-2935
 

@@ -804,7 +804,7 @@ func TestCallVariantGasColdAccessTracerReason(t *testing.T) {
 			wantCost uint64
 		}{
 			// Cancun is the newest fork the mainnet schedules and runs the
-			// EIP-2929 wrapper; apothem schedules Prague at 87633000 and the
+			// EIP-2929 wrapper; apothem schedules Prague at 84333000 and the
 			// devnet at 50000, where the EIP-7702 wrapper takes over.
 			{"Cancun (EIP-2929 wrapper)", func(c *params.ChainConfig) {
 				c.PragueBlock = nil
