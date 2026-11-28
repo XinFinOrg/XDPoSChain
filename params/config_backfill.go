@@ -33,6 +33,7 @@ import (
 	"math"
 	"math/big"
 	"strings"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -203,6 +204,11 @@ var chainConfigForkOrderSpecialCaseRules = func() []chainConfigForkOrderSpecialC
 				return before != nil && after != nil && after.Sign() > 0
 			},
 		},
+		{
+			before:         "TIPFixedRewardBlock",
+			after:          "TIPProportionalRewardBlock",
+			shouldValidate: func(before, after *big.Int) bool { return before != nil && after != nil },
+		},
 	}
 	rules := make([]chainConfigForkOrderSpecialCaseRule, 0, len(ruleDefs))
 	for _, ruleDef := range ruleDefs {
@@ -319,6 +325,7 @@ var chainConfigCompatibilityInsertionDefs = []struct {
 }{
 	{after: "ShanghaiBlock", name: "Gas50xBlock"},
 	{after: "ShanghaiBlock", name: "Gas2500xBlock"},
+	{after: "TIPFixedRewardBlock", name: "TIPProportionalRewardBlock"},
 }
 
 var chainConfigCompatibilityFields = func() []chainConfigBigIntField {
@@ -750,11 +757,36 @@ func validateV2ExpTimeoutConfig(cfg *V2Config, fieldPath string) error {
 	if cfg == nil {
 		return nil
 	}
+	// timeout_period is a sibling of expTimeoutConfig, so errors about the
+	// period alone name the V2Config path instead of the timeout object.
+	cfgPath := strings.TrimSuffix(fieldPath, ".ExpTimeoutConfig")
+	if cfg.TimeoutPeriod <= 0 {
+		return fmt.Errorf("%s: timeout_period (%ds) must be positive", cfgPath, cfg.TimeoutPeriod)
+	}
+	// At maxExponent zero the exponent is always zero and math.Pow returns 1
+	// for every base, so base only matters once it can be applied. A legacy
+	// custom network that omits expTimeoutConfig carries base 0 and exponent 0.
+	if cfg.ExpTimeoutConfig.MaxExponent > 0 && cfg.ExpTimeoutConfig.Base < 1 {
+		return fmt.Errorf("%s: base (%f) must be at least 1 when max_exponent is %d", fieldPath, cfg.ExpTimeoutConfig.Base, cfg.ExpTimeoutConfig.MaxExponent)
+	}
 	if cfg.ExpTimeoutConfig.MaxExponent >= 32 {
 		return fmt.Errorf("%s: max_exponent (%d) >= max_exponent_upperbound (%d)", fieldPath, cfg.ExpTimeoutConfig.MaxExponent, 32)
 	}
-	if math.Pow(cfg.ExpTimeoutConfig.Base, float64(cfg.ExpTimeoutConfig.MaxExponent)) >= float64(math.MaxUint32) {
+	power := math.Pow(cfg.ExpTimeoutConfig.Base, float64(cfg.ExpTimeoutConfig.MaxExponent))
+	if power >= float64(math.MaxUint32) {
 		return fmt.Errorf("%s: base^max_exponent (%f^%d) should be less than 2^32", fieldPath, cfg.ExpTimeoutConfig.Base, cfg.ExpTimeoutConfig.MaxExponent)
+	}
+	// The engine converts the period with time.Duration(TimeoutPeriod) * time.Second
+	// and common/countdown then multiplies it by base^exp. Both steps must fit in a
+	// time.Duration: a saturated timeout is math.MaxInt64 (~292 years), so the timer
+	// never fires and the pacemaker silently stops. Reject such a config at startup.
+	const maxTimeoutSeconds = math.MaxInt64 / int64(time.Second)
+	if int64(cfg.TimeoutPeriod) > maxTimeoutSeconds {
+		return fmt.Errorf("%s: timeout_period (%ds) exceeds the time.Duration range", cfgPath, cfg.TimeoutPeriod)
+	}
+	ns := int64(cfg.TimeoutPeriod) * int64(time.Second)
+	if multiplier := int64(power); multiplier > 0 && ns > math.MaxInt64/multiplier {
+		return fmt.Errorf("%s: timeout_period (%ds) * base^max_exponent (%f^%d) exceeds the time.Duration range", fieldPath, cfg.TimeoutPeriod, cfg.ExpTimeoutConfig.Base, cfg.ExpTimeoutConfig.MaxExponent)
 	}
 	return nil
 }
@@ -1171,7 +1203,7 @@ func (c *ChainConfig) backfillForkSequenceTrioFrom(src *ChainConfig) *ChainConfi
 	for _, field := range candidates {
 		field.set(c, common.CloneBigInt(anchor))
 	}
-	if err := c.checkConfigForkOrder(false); err != nil {
+	if err := c.checkConfigForkOrder(false, false); err != nil {
 		for _, field := range candidates {
 			field.set(c, nil)
 		}

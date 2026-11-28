@@ -442,10 +442,6 @@ var generatedChainConfigForkOrderFieldDefs = []struct {
 		name:     "TIPEpochHalvingBlock",
 		optional: alwaysOptionalChainConfigForkOrderField,
 	},
-	{
-		name:     "TIPProportionalRewardBlock",
-		optional: alwaysOptionalChainConfigForkOrderField,
-	},
 }
 
 var generatedChainConfigXDCSystemContractFields = []chainConfigAddressField{

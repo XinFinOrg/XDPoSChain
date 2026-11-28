@@ -17,6 +17,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core"
+	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
@@ -53,7 +54,21 @@ func NewChain(dir string) (*Chain, error) {
 	if err != nil {
 		return nil, err
 	}
-	gblock := gen.ToBlock()
+	// A naive ToBlock produces a different hash: the setup path normalizes the
+	// XDC-specific header fields the node stores, and Status/Genesis
+	// comparisons must match it byte for byte
+	db := rawdb.NewMemoryDatabase()
+	config, genesisHash, compatErr, err := core.SetupGenesisBlockWithOverride(db, &gen, false)
+	if err != nil {
+		return nil, err
+	}
+	if compatErr != nil {
+		return nil, fmt.Errorf("chain config compat: %v", compatErr)
+	}
+	gblock := rawdb.ReadBlock(db, genesisHash, 0)
+	if gblock == nil {
+		return nil, fmt.Errorf("setup path did not persist genesis block %x", genesisHash)
+	}
 
 	blocks, err := blocksFromFile(filepath.Join(dir, "chain.rlp"), gblock)
 	if err != nil {
@@ -84,7 +99,7 @@ func NewChain(dir string) (*Chain, error) {
 		blocks:  blocks,
 		state:   stateDump,
 		senders: accounts,
-		config:  gen.Config,
+		config:  config,
 		txInfo:  info,
 	}, nil
 }
@@ -135,11 +150,26 @@ func (c *Chain) IncNonce(addr common.Address, amt uint64) {
 	c.senders[addr].Nonce += amt
 }
 
-// Balance returns the account balance from head-state dump.
+// Balance returns the account balance from the head-state dump, falling back
+// to the genesis allocation for accounts the dump cannot resolve.
+//
+// The dump only carries the accounts whose preimages the datadir resolved, so
+// genesis-funded accounts that never transacted drop out of it entirely. Such
+// an account cannot have changed since genesis (any touch would have recorded
+// a preimage), so its head balance is still the genesis allocation. Destroyed
+// accounts also drop out of the dump; the fixture carries no self-destructs,
+// so the fallback does not distinguish them.
 func (c *Chain) Balance(addr common.Address) *big.Int {
 	bal := new(big.Int)
 	if acc, ok := c.state[addr]; ok {
-		bal, _ = bal.SetString(acc.Balance, 10)
+		if parsed, ok := new(big.Int).SetString(acc.Balance, 10); ok {
+			return parsed
+		}
+		// A malformed balance leaves the dump entry unusable; treat it like an
+		// account the dump cannot resolve and fall through to the genesis alloc.
+	}
+	if acc, ok := c.genesis.Alloc[addr]; ok && acc.Balance != nil {
+		bal.Set(acc.Balance)
 	}
 	return bal
 }

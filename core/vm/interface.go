@@ -57,6 +57,10 @@ type StateDB interface {
 	GetTransientState(addr common.Address, key common.Hash) common.Hash
 	SetTransientState(addr common.Address, key, value common.Hash)
 
+	// SelfDestruct is the pre-EIP-6780 self-destruct: it always burns the
+	// balance and carries no fork rules, so it does not implement EIP-8246.
+	// The Amsterdam instruction set is built on Cancun and reaches
+	// SelfDestruct6780 instead.
 	SelfDestruct(common.Address) *big.Int
 	HasSelfDestructed(common.Address) bool
 
@@ -72,7 +76,11 @@ type StateDB interface {
 	// transaction, in which case it will be destructed.
 	// This method returns the prior balance, along with a boolean which is
 	// true iff the object was indeed destructed.
-	SelfDestruct6780(common.Address) (*big.Int, bool)
+	//
+	// preserveBalance selects the EIP-8246 (Amsterdam) removal: the balance of
+	// the destructed contract is kept and the account is left in place as a
+	// balance-only account at transaction finalisation.
+	SelfDestruct6780(common.Address, bool) (*big.Int, bool)
 
 	// Exist reports whether the given account exists in state.
 	// Notably this also returns true for self-destructed accounts within the current transaction.

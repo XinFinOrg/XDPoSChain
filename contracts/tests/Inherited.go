@@ -1,5 +1,5 @@
-// Code generated - DO NOT EDIT.
-// This file is a generated binding and any manual changes will be lost.
+// Hand-written wrapper around the generated binding in ./contract.
+// Only contract/Inherited.go is generated; this file is maintained by hand.
 
 package tests
 

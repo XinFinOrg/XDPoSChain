@@ -51,6 +51,68 @@ func TestExpDuration(t *testing.T) {
 	assert.Equal(t, duration, result)
 }
 
+// TestExpDurationRoundDiff pins the exponent at literal round differences
+// instead of re-deriving it from the implementation formula. A round
+// difference of 257 or more whose low 8 bits fall in [1, maxExponent] makes
+// the uint8-truncated exponent too small (e.g. 513); 256 sits exactly on the
+// wrap point, where uint8(256)-1 wraps to 255 and the old formula happens to
+// be correct, so it is kept as a control.
+func TestExpDurationRoundDiff(t *testing.T) {
+	const duration = time.Second
+	base := float64(2.0)
+	tests := []struct {
+		name        string
+		maxExponent uint8
+		diff        uint64
+		want        time.Duration
+	}{
+		{"maxExponent=0 diff=1", 0, 1, duration},
+		{"maxExponent=0 diff=256", 0, 256, duration},
+		{"maxExponent=0 diff=513", 0, 513, duration},
+		{"maxExponent=3 diff=1", 3, 1, duration},
+		{"maxExponent=3 diff=2", 3, 2, 2 * duration},
+		{"maxExponent=3 diff=4 saturates", 3, 4, 8 * duration},
+		{"maxExponent=3 diff=5 saturates", 3, 5, 8 * duration},
+		{"maxExponent=3 diff=256 saturates", 3, 256, 8 * duration},
+		{"maxExponent=3 diff=257 saturates", 3, 257, 8 * duration},
+		{"maxExponent=3 diff=258 saturates", 3, 258, 8 * duration},
+		{"maxExponent=3 diff=259 saturates", 3, 259, 8 * duration},
+		{"maxExponent=3 diff=513 saturates", 3, 513, 8 * duration},
+		{"maxExponent=31 diff=1", 31, 1, duration},
+		{"maxExponent=31 diff=32 saturates", 31, 32, duration * (1 << 31)},
+		{"maxExponent=31 diff=256 saturates", 31, 256, duration * (1 << 31)},
+		{"maxExponent=31 diff=257 saturates", 31, 257, duration * (1 << 31)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			helper, err := NewExpTimeoutDuration(duration, base, test.maxExponent)
+			assert.NoError(t, err)
+			got := helper.GetTimeoutDuration(types.Round(test.diff), types.Round(0))
+			assert.Equal(t, test.want, got)
+		})
+	}
+}
+
+// TestExpDurationOverflowSaturates checks that a timeout outside the int64 range
+// saturates at the maximum duration instead of wrapping around to a negative
+// (or arbitrarily small) one.
+func TestExpDurationOverflowSaturates(t *testing.T) {
+	helper, err := NewExpTimeoutDuration(59*time.Second, float64(2.0), 31)
+	assert.NoError(t, err)
+	// 59s * 2^27 fits in a time.Duration (about 251 years), 59s * 2^28 overflows.
+	assert.Equal(t, 59*time.Second*(1<<27), helper.GetTimeoutDuration(types.Round(28), types.Round(0)))
+	assert.Equal(t, time.Duration(math.MaxInt64), helper.GetTimeoutDuration(types.Round(29), types.Round(0)))
+	assert.Equal(t, time.Duration(math.MaxInt64), helper.GetTimeoutDuration(types.Round(31), types.Round(0)))
+	assert.Equal(t, time.Duration(math.MaxInt64), helper.GetTimeoutDuration(types.Round(256), types.Round(0)))
+	assert.Equal(t, time.Duration(math.MaxInt64), helper.GetTimeoutDuration(types.Round(257), types.Round(0)))
+	assert.Equal(t, time.Duration(math.MaxInt64), helper.GetTimeoutDuration(types.Round(513), types.Round(0)))
+	// The guard must be a strict inequality: at the exact boundary the product
+	// is MaxInt64-1 and still fits, so it must not saturate.
+	exact, err := NewExpTimeoutDuration(9223372036854775806/3, float64(3.0), 1)
+	assert.NoError(t, err)
+	assert.Equal(t, time.Duration(9223372036854775806), exact.GetTimeoutDuration(types.Round(2), types.Round(0)))
+}
+
 func TestInvalidParameter(t *testing.T) {
 	base := float64(2.0)
 	max_exponent := uint8(32)
@@ -130,6 +192,50 @@ func TestExpTimeoutDurationConcurrentSetParams(t *testing.T) {
 	wg.Wait()
 }
 
+// TestExpParamsLowerBounds pins the lower bounds of the exponential-timeout
+// parameters: a non-positive duration reaches time.NewTimer as an immediately
+// firing timer, and a base below one truncates the multiplier to zero once an
+// exponent can occur.
+func TestExpParamsLowerBounds(t *testing.T) {
+	rejected := []struct {
+		name        string
+		duration    time.Duration
+		base        float64
+		maxExponent uint8
+	}{
+		{"zero duration", 0, 1, 0},
+		{"negative duration", -time.Second, 1, 0},
+		{"zero base with exponent", time.Second, 0, 1},
+		{"fractional base with exponent", time.Second, 0.5, 2},
+		{"negative base with exponent", time.Second, -2, 1},
+	}
+	for _, tc := range rejected {
+		t.Run(tc.name, func(t *testing.T) {
+			helper, err := NewExpTimeoutDuration(tc.duration, tc.base, tc.maxExponent)
+			assert.Error(t, err)
+			assert.Nil(t, helper)
+		})
+	}
+	// At maxExponent zero the exponent is always zero and math.Pow returns 1
+	// for every base, so base never reaches the multiplier.
+	accepted := []struct {
+		name string
+		base float64
+	}{
+		{"zero base at zero exponent", 0},
+		{"fractional base at zero exponent", 0.5},
+		{"negative base at zero exponent", -2},
+		{"base one", 1},
+	}
+	for _, tc := range accepted {
+		t.Run(tc.name, func(t *testing.T) {
+			helper, err := NewExpTimeoutDuration(time.Second, tc.base, 0)
+			assert.NoError(t, err)
+			assert.NotNil(t, helper)
+		})
+	}
+}
+
 // TestSetParamsRejectedKeepsTimeout pins that a rejected set leaves the
 // previous parameters untouched.
 func TestSetParamsRejectedKeepsTimeout(t *testing.T) {
@@ -141,6 +247,9 @@ func TestSetParamsRejectedKeepsTimeout(t *testing.T) {
 	}{
 		{"max exponent out of range", 9 * time.Second, 3, maxExponentUpperbound},
 		{"base power overflow", 9 * time.Second, 3, 21},
+		{"zero duration", 0, 2, 1},
+		{"negative duration", -time.Second, 2, 1},
+		{"base below one", 9 * time.Second, 0.5, 2},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

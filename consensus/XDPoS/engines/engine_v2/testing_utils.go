@@ -5,6 +5,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
 /*
@@ -26,6 +27,15 @@ func (x *XDPoS_v2) ProcessQCFaker(chain consensus.ChainReader, qc *types.QuorumC
 	x.lock.Lock()
 	defer x.lock.Unlock()
 	return x.processQC(chain, qc)
+}
+
+// GetCurrentConfigFaker returns the v2 config the engine applies. The engine
+// holds its own copy, so this is not the chain reader's Config().
+func (x *XDPoS_v2) GetCurrentConfigFaker() *params.V2Config {
+	if x.config == nil || x.config.V2 == nil {
+		return nil
+	}
+	return x.config.V2.GetCurrentConfig()
 }
 
 // Utils for test to check currentRound value

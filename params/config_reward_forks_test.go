@@ -62,8 +62,9 @@ func TestChainConfigLegacyTIPFixedRewardKeyRoundTrip(t *testing.T) {
 }
 
 // TestTIPProportionalRewardForkOrder checks that the proportional reward fork can
-// be scheduled without TIPFixedReward, and that it is still ordered after every
-// fork that precedes it when both are set.
+// be scheduled without TIPFixedReward, that its block is not constrained by the
+// linear fork order (it may sit after Prague), and that it is still ordered
+// after TIPFixedReward when both are set.
 func TestTIPProportionalRewardForkOrder(t *testing.T) {
 	mainnet := XDCMainnetChainConfig.Clone()
 	require.Nil(t, mainnet.TIPFixedRewardBlock)

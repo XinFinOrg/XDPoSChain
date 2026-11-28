@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -215,12 +216,12 @@ func TestCheckXDPoSSchedule(t *testing.T) {
 		wantMsg string // substring the refusal must carry, empty when the schedule is accepted
 	}{
 		{name: "missing config", cfg: nil, wantErr: true, wantMsg: "missing XDPoS config"},
-		{name: "unset epoch", cfg: &params.XDPoSConfig{Epoch: 0, Gap: 0}, wantErr: true, wantMsg: "epoch must be greater than 0"},
-		{name: "epoch of one with a zero gap", cfg: &params.XDPoSConfig{Epoch: 1, Gap: 0}, wantErr: true, wantMsg: "epoch must be at least 2"},
-		{name: "epoch of one with a positive gap", cfg: &params.XDPoSConfig{Epoch: 1, Gap: 1}, wantErr: true, wantMsg: "epoch must be at least 2"},
-		{name: "zero gap", cfg: &params.XDPoSConfig{Epoch: 900, Gap: 0}, wantErr: true, wantMsg: "1 <= gap < 900"},
-		{name: "gap equal to the epoch", cfg: &params.XDPoSConfig{Epoch: 900, Gap: 900}, wantErr: true, wantMsg: "1 <= gap < 900"},
-		{name: "gap beyond the epoch", cfg: &params.XDPoSConfig{Epoch: 900, Gap: 901}, wantErr: true, wantMsg: "1 <= gap < 900"},
+		{name: "unset epoch", cfg: &params.XDPoSConfig{Epoch: 0, Gap: 0}, wantErr: true, wantMsg: "XDPoS.Epoch is unset, so no gap block fits"},
+		{name: "epoch of one with a zero gap", cfg: &params.XDPoSConfig{Epoch: 1, Gap: 0}, wantErr: true, wantMsg: "XDPoS.Epoch 1 leaves no gap block"},
+		{name: "epoch of one with a positive gap", cfg: &params.XDPoSConfig{Epoch: 1, Gap: 1}, wantErr: true, wantMsg: "XDPoS.Epoch 1 leaves no gap block"},
+		{name: "zero gap", cfg: &params.XDPoSConfig{Epoch: 900, Gap: 0}, wantErr: true, wantMsg: "XDPoS.Gap 0 designates no gap block inside XDPoS.Epoch 900"},
+		{name: "gap equal to the epoch", cfg: &params.XDPoSConfig{Epoch: 900, Gap: 900}, wantErr: true, wantMsg: "XDPoS.Gap 900 puts the gap trigger on the epoch switch block"},
+		{name: "gap beyond the epoch", cfg: &params.XDPoSConfig{Epoch: 900, Gap: 901}, wantErr: true, wantMsg: "XDPoS.Gap 901 designates no gap block inside XDPoS.Epoch 900"},
 		{name: "epoch above the int64 range is still a uint64 schedule", cfg: &params.XDPoSConfig{Epoch: math.MaxUint64, Gap: 450}},
 		{name: "default schedule", cfg: &params.XDPoSConfig{Epoch: 900, Gap: 450}},
 		{name: "smallest usable schedule", cfg: &params.XDPoSConfig{Epoch: 2, Gap: 1}},
@@ -238,6 +239,19 @@ func TestCheckXDPoSSchedule(t *testing.T) {
 				t.Errorf("checkXDPoSSchedule = %v, want it to mention %q", err, tt.wantMsg)
 			}
 		})
+	}
+}
+
+// TestCheckXDPoSScheduleReturnsTheParamsError pins that the gap refusal is the
+// params error itself rather than a wizard rewrite of it.
+func TestCheckXDPoSScheduleReturnsTheParamsError(t *testing.T) {
+	cfg := &params.XDPoSConfig{Epoch: 900, Gap: 900}
+	err := checkXDPoSSchedule(cfg)
+	if !errors.Is(err, params.ErrInvalidEpochGap) {
+		t.Errorf("checkXDPoSSchedule = %v, want params.ErrInvalidEpochGap", err)
+	}
+	if want := cfg.CheckSchedule().Error(); err == nil || err.Error() != want {
+		t.Errorf("checkXDPoSSchedule = %v, want the params message %q verbatim", err, want)
 	}
 }
 
@@ -305,15 +319,17 @@ func TestInteractiveGapDefaultReachesGenesis(t *testing.T) {
 	}
 }
 
-// scheduleAnswers is one line per prompt, in order; a blank gap line takes the default.
-func scheduleAnswers(epoch, gap string) string {
+// scheduleAnswers is one line per prompt, in order; a blank gap line takes the
+// default and a blank switch block line keeps the template's.
+func scheduleAnswers(epoch, gap, switchBlock string) string {
 	return "3\n" + // consensus engine: XDPoS
-		"\n\n\n\n\n" + // block time, v2 switch block, timeout, sync threshold, cert threshold
+		"\n\n\n\n" + // block time, v2 timeout, sync threshold, cert threshold
 		"a4477b9b3dcfffb71db9e2aba579975ac756dade\n" + // masternodes owner
 		"7e7d7b438abd152af3753bdc01512d2208305397\n" + // first masternode
 		"\n" + // end of the masternode list
 		epoch + "\n" + // epoch
 		gap + "\n" + // gap, blank takes the default
+		switchBlock + "\n" + // v2 switch block, asked after the epoch it has to divide
 		"\n\n" + // staking threshold, reward yield
 		"\n" + // foundation wallet
 		"a4477b9b3dcfffb71db9e2aba579975ac756dade\n" + // foundation multisig signer
@@ -327,18 +343,49 @@ func scheduleAnswers(epoch, gap string) string {
 }
 
 // interactiveAnswers answers every prompt with epoch 100 and an empty gap answer.
-var interactiveAnswers = scheduleAnswers("100", "")
+var interactiveAnswers = scheduleAnswers("100", "", "")
+
+// runInteractiveGenesisChild answers makeGenesis from the variables the parent set
+// and reports whether it did. Every test that drives the interactive wizard starts
+// with it, because a refusal ends in log.Crit and takes the test binary with it.
+func runInteractiveGenesisChild() bool {
+	outPath := os.Getenv("PUPPETH_SCHEDULE_OUT")
+	if outPath == "" {
+		return false
+	}
+	w := &wizard{
+		network: "xdc-test",
+		in: bufio.NewReader(strings.NewReader(scheduleAnswers(
+			os.Getenv("PUPPETH_SCHEDULE_EPOCH"),
+			os.Getenv("PUPPETH_SCHEDULE_GAP"),
+			os.Getenv("PUPPETH_SCHEDULE_SWITCH_BLOCK"),
+		))),
+	}
+	w.conf.path = outPath
+	w.makeGenesis()
+	return true
+}
+
+// runInteractiveGenesis drives makeGenesis in a child process and returns the path
+// it was told to write, the combined output, and the child's exit error.
+func runInteractiveGenesis(t *testing.T, run, epoch, gap, switchBlock string) (string, []byte, error) {
+	t.Helper()
+	outPath := filepath.Join(t.TempDir(), "genesis.json")
+	cmd := exec.Command(os.Args[0], "-test.run=^"+run+"$")
+	cmd.Env = append(os.Environ(),
+		"PUPPETH_SCHEDULE_OUT="+outPath,
+		"PUPPETH_SCHEDULE_EPOCH="+epoch,
+		"PUPPETH_SCHEDULE_GAP="+gap,
+		"PUPPETH_SCHEDULE_SWITCH_BLOCK="+switchBlock,
+	)
+	out, err := cmd.CombinedOutput()
+	return outPath, out, err
+}
 
 // TestInteractiveScheduleValidation pins how the answers are judged where they are read:
 // an epoch below 2, a negative gap, a zero gap (default) and a gap outside the epoch.
 func TestInteractiveScheduleValidation(t *testing.T) {
-	if outPath := os.Getenv("PUPPETH_SCHEDULE_OUT"); outPath != "" {
-		w := &wizard{
-			network: "xdc-test",
-			in:      bufio.NewReader(strings.NewReader(scheduleAnswers(os.Getenv("PUPPETH_SCHEDULE_EPOCH"), os.Getenv("PUPPETH_SCHEDULE_GAP")))),
-		}
-		w.conf.path = outPath
-		w.makeGenesis()
+	if runInteractiveGenesisChild() {
 		return
 	}
 	tests := []struct {
@@ -353,19 +400,12 @@ func TestInteractiveScheduleValidation(t *testing.T) {
 		{name: "epoch of one", epoch: "1", wantMsg: "Epoch must be at least 2 so that a gap block exists inside it"},
 		{name: "zero gap falls back to the default", epoch: "100", gap: "0", wantGap: 50},
 		{name: "negative gap", epoch: "100", gap: "-1", wantMsg: "Gap must not be negative"},
-		{name: "gap equal to the epoch", epoch: "100", gap: "100", wantMsg: "epoch must be greater than gap"},
-		{name: "gap beyond the epoch", epoch: "100", gap: "200", wantMsg: "epoch must be greater than gap"},
+		{name: "gap equal to the epoch", epoch: "100", gap: "100", wantMsg: "XDPoS.Gap 100 puts the gap trigger on the epoch switch block"},
+		{name: "gap beyond the epoch", epoch: "100", gap: "200", wantMsg: "XDPoS.Gap 200 designates no gap block inside XDPoS.Epoch 100"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			outPath := filepath.Join(t.TempDir(), "genesis.json")
-			cmd := exec.Command(os.Args[0], "-test.run=^TestInteractiveScheduleValidation$")
-			cmd.Env = append(os.Environ(),
-				"PUPPETH_SCHEDULE_OUT="+outPath,
-				"PUPPETH_SCHEDULE_EPOCH="+tt.epoch,
-				"PUPPETH_SCHEDULE_GAP="+tt.gap,
-			)
-			out, err := cmd.CombinedOutput()
+			outPath, out, err := runInteractiveGenesis(t, "TestInteractiveScheduleValidation", tt.epoch, tt.gap, "")
 			if tt.wantMsg != "" {
 				if err == nil {
 					t.Fatalf("interactive makeGenesis accepted epoch %q gap %q; output:\n%s", tt.epoch, tt.gap, out)
@@ -407,8 +447,9 @@ func TestInteractiveScheduleValidation(t *testing.T) {
 }
 
 // TestMakeGenesisRefusesUnusableSchedule: epoch 100 leaves the template gap outside the
-// epoch, so the run must refuse before writing and say the file cannot set gap. An epoch
-// below 2 is refused for its own reason, without that hint.
+// epoch, so the run must refuse before writing and say the template's gap is the one that
+// does not fit. An epoch below 2 is refused by the same bound, whose own tier still names
+// the epoch as the field to correct.
 func TestMakeGenesisRefusesUnusableSchedule(t *testing.T) {
 	if path := os.Getenv("PUPPETH_UNUSABLE_INPUT"); path != "" {
 		w := &wizard{
@@ -429,15 +470,15 @@ func TestMakeGenesisRefusesUnusableSchedule(t *testing.T) {
 		{
 			name:     "gap outside the epoch",
 			epoch:    "100",
-			wantMsgs: []string{"Unusable XDPoS schedule", "the input file cannot set gap"},
+			wantMsgs: []string{"Unusable XDPoS schedule", "the template supplies Gap 450"},
 			// Nothing may be derived from the pair before it is judged.
 			notWants: []string{"Calculated Total Masternode rewards"},
 		},
 		{
 			name:     "epoch below two",
 			epoch:    "1",
-			wantMsgs: []string{"Unusable XDPoS schedule", "epoch must be at least 2"},
-			notWants: []string{"the input file cannot set gap", "Calculated Total Masternode rewards"},
+			wantMsgs: []string{"Unusable XDPoS schedule", "XDPoS.Epoch 1 leaves no gap block", "the template supplies Gap 450"},
+			notWants: []string{"Calculated Total Masternode rewards"},
 		},
 	}
 	for _, tt := range tests {
@@ -697,5 +738,163 @@ period: 2
 	}
 	if !funded {
 		t.Errorf("owner %s is not funded, so Masternodes_Owner did not reach the field", owner)
+	}
+}
+
+// TestMakeGenesisRefusesUnalignedSwitchBlock: the switch block is judged where the answer
+// is given, before any genesis contract is deployed and before anything is stored, so an
+// interactive run cannot write a genesis the init path would refuse.
+func TestMakeGenesisRefusesUnalignedSwitchBlock(t *testing.T) {
+	if runInteractiveGenesisChild() {
+		return
+	}
+	outPath, out, err := runInteractiveGenesis(t, "TestMakeGenesisRefusesUnalignedSwitchBlock", "100", "", "150")
+	if err == nil {
+		t.Fatalf("makeGenesis stored a switch block unaligned to the epoch; output:\n%s", out)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("child exited with %v, want exit status 1; output:\n%s", err, out)
+	}
+	for _, want := range []string{"Unusable XDPoS v2 switch block", "not aligned to XDPoS.Epoch 100"} {
+		if !strings.Contains(string(out), want) {
+			t.Errorf("child output does not report %q:\n%s", want, out)
+		}
+	}
+	if _, statErr := os.Stat(outPath); statErr == nil {
+		t.Error("refused run still wrote the genesis output file")
+	}
+}
+
+// TestMakeGenesisRefusesNegativeSwitchBlock pins the diagnostic for a switch block
+// below zero: XDPoS.V2.SwitchEpoch is a uint64, and alignment keeps a block and its
+// absolute value equally divisible, so the sign has to be refused where it can be
+// named rather than surface as an epoch that does not fit.
+func TestMakeGenesisRefusesNegativeSwitchBlock(t *testing.T) {
+	if runInteractiveGenesisChild() {
+		return
+	}
+	outPath, out, err := runInteractiveGenesis(t, "TestMakeGenesisRefusesNegativeSwitchBlock", "100", "", "-1")
+	if err == nil {
+		t.Fatalf("makeGenesis stored a negative switch block; output:\n%s", out)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+		t.Fatalf("child exited with %v, want exit status 1; output:\n%s", err, out)
+	}
+	if want := "v2 switch block must not be negative"; !strings.Contains(string(out), want) {
+		t.Errorf("child output does not report %q:\n%s", want, out)
+	}
+	if _, statErr := os.Stat(outPath); statErr == nil {
+		t.Error("refused run still wrote the genesis output file")
+	}
+}
+
+// TestMakeGenesisDerivesSwitchEpoch pins the pairing the wizard stores: the switch
+// epoch is derived from the final switch block, so a block the operator typed and the
+// template's epoch number cannot end up describing different schedules.
+func TestMakeGenesisDerivesSwitchEpoch(t *testing.T) {
+	if runInteractiveGenesisChild() {
+		return
+	}
+	for _, tt := range []struct {
+		name        string
+		epoch       string
+		switchBlock string
+		wantBlock   string
+		wantEpoch   uint64
+	}{
+		{name: "template switch block", epoch: "100", switchBlock: "", wantBlock: "0", wantEpoch: 0},
+		{name: "typed switch block", epoch: "100", switchBlock: "300", wantBlock: "300", wantEpoch: 3},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			outPath, out, err := runInteractiveGenesis(t, "TestMakeGenesisDerivesSwitchEpoch", tt.epoch, "", tt.switchBlock)
+			if err != nil {
+				t.Fatalf("interactive makeGenesis exited with %v; output:\n%s", err, out)
+			}
+			blob, err := os.ReadFile(outPath)
+			if err != nil {
+				t.Fatalf("interactive run wrote no genesis: %v; output:\n%s", err, out)
+			}
+			var disk struct {
+				Config struct {
+					XDPoS struct {
+						V2 struct {
+							SwitchBlock *big.Int `json:"switchBlock"`
+							SwitchEpoch uint64   `json:"switchEpoch"`
+						} `json:"v2"`
+					} `json:"XDPoS"`
+				} `json:"config"`
+			}
+			if err := json.Unmarshal(blob, &disk); err != nil {
+				t.Fatalf("failed to decode the generated genesis: %v", err)
+			}
+			v2 := disk.Config.XDPoS.V2
+			if v2.SwitchBlock == nil || v2.SwitchBlock.String() != tt.wantBlock {
+				t.Errorf("XDPoS.V2.SwitchBlock = %v, want %s", v2.SwitchBlock, tt.wantBlock)
+			}
+			if v2.SwitchEpoch != tt.wantEpoch {
+				t.Errorf("XDPoS.V2.SwitchEpoch = %d, want %d derived from the switch block", v2.SwitchEpoch, tt.wantEpoch)
+			}
+		})
+	}
+}
+
+// TestFinalizeGenesisConfig pins the gate the wizard runs on the genesis it is
+// about to write, and the pairing it stores with it. The prompt checks run
+// earlier, so the shapes here arrive only through this gate: CheckConfigForkOrder
+// refuses a required field that is missing and a switch block whose quotient no
+// uint64 can hold, checkNegativeSwitchBlock refuses the sign, and the pairing is
+// re-derived on the way out.
+func TestFinalizeGenesisConfig(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		mutate  func(*params.ChainConfig)
+		wantErr string // substring the refusal must carry, empty when accepted
+	}{
+		{name: "localnet template", mutate: func(*params.ChainConfig) {}},
+		{
+			name:    "missing v2 section",
+			mutate:  func(c *params.ChainConfig) { c.XDPoS.V2 = nil },
+			wantErr: "XDPoS.V2",
+		},
+		{
+			name: "negative switch block",
+			mutate: func(c *params.ChainConfig) {
+				c.XDPoS.V2.SwitchBlock = big.NewInt(-1)
+			},
+			wantErr: "must not be negative",
+		},
+		{
+			name: "switch epoch above the uint64 range",
+			mutate: func(c *params.ChainConfig) {
+				c.XDPoS.Epoch = 2
+				c.XDPoS.Gap = 1
+				c.XDPoS.V2.SwitchBlock = new(big.Int).Lsh(big.NewInt(1), 65)
+			},
+			// Refused by CheckConfigForkOrder's alignment check, which this gate
+			// runs before it derives anything.
+			wantErr: "invalid chain config: wrong fork switch order",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := params.LocalnetChainConfig.Clone()
+			test.mutate(cfg)
+
+			err := finalizeGenesisConfig(cfg)
+			if test.wantErr == "" {
+				if err != nil {
+					t.Fatalf("finalizeGenesisConfig = %v, want no error", err)
+				}
+				want := new(big.Int).Div(cfg.XDPoS.V2.SwitchBlock, new(big.Int).SetUint64(cfg.XDPoS.Epoch))
+				if cfg.XDPoS.V2.SwitchEpoch != want.Uint64() {
+					t.Errorf("V2.SwitchEpoch = %d, want %d derived from the switch block", cfg.XDPoS.V2.SwitchEpoch, want.Uint64())
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+				t.Fatalf("finalizeGenesisConfig = %v, want an error carrying %q", err, test.wantErr)
+			}
+		})
 	}
 }

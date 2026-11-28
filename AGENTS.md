@@ -14,7 +14,7 @@ Before every commit, run **all** of the following checks and ensure they pass:
 Before committing, always run `gofmt` and `goimports` on all modified files:
 
 ```sh
-gofmt -w <modified files>
+gofmt -s -w <modified files>
 goimports -w <modified files>
 ```
 
@@ -43,6 +43,8 @@ Before committing, run the full test suite to ensure all tests pass:
 ```sh
 make test
 ```
+
+CI runs the full suite under the race detector (the `race` job); `make race-test-full` mirrors it, and `make race-test` is the short variant.
 
 ### 4. Tidy
 

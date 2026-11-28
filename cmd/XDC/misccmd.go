@@ -22,8 +22,8 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/XinFinOrg/XDPoSChain/eth"
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/internal/version"
 	"github.com/urfave/cli/v2"
 )
@@ -58,7 +58,7 @@ func printVersion(ctx *cli.Context) error {
 		fmt.Println("Git Commit Date:", git.Date)
 	}
 	fmt.Println("Architecture:", runtime.GOARCH)
-	fmt.Println("Protocol Versions:", eth.ProtocolVersions)
+	fmt.Println("Protocol Versions:", ethproto.ProtocolVersions)
 	fmt.Println("Network Id:", ethconfig.Defaults.NetworkId)
 	fmt.Println("Go Version:", runtime.Version())
 	fmt.Println("Operating System:", runtime.GOOS)

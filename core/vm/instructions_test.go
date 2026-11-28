@@ -576,7 +576,7 @@ func TestOpTstore(t *testing.T) {
 		mem          = NewMemory()
 		caller       = common.Address{}
 		to           = common.Address{1}
-		contract     = NewContract(caller, to, new(uint256.Int), 0, nil)
+		contract     = NewContract(caller, to, new(uint256.Int), GasBudget{}, nil)
 		scopeContext = ScopeContext{mem, stack, contract}
 		value        = common.Hex2Bytes("abcdef00000000000000abba000000000deaf000000c0de00100000000133700")
 	)
@@ -970,7 +970,7 @@ func TestOpMCopy(t *testing.T) {
 		if dynamicCost, err := gasMcopy(evm, nil, stack, mem, memorySize); err != nil {
 			t.Error(err)
 		} else {
-			haveGas = GasFastestStep + dynamicCost
+			haveGas = GasFastestStep + dynamicCost.RegularGas
 		}
 		// Expand mem
 		if memorySize > 0 {
@@ -1026,6 +1026,33 @@ func TestOpCLZ(t *testing.T) {
 		if got := result.Uint64(); got != tc.want {
 			t.Fatalf("clz(%q) = %d; want %d", tc.inputHex, got, tc.want)
 		}
+	}
+}
+
+// TestOpSlotNum pins the SLOTNUM opcode (EIP-7843): it pushes the slot number
+// carried by the block context and costs the EIP's fixed 2 gas.
+func TestOpSlotNum(t *testing.T) {
+	evm := NewEVM(BlockContext{SlotNum: 42}, nil, nil, params.TestChainConfig, Config{})
+	stack := newstack()
+	pc := uint64(0)
+
+	opSlotNum(&pc, evm, &ScopeContext{Stack: stack})
+	if stack.len() != 1 {
+		t.Fatalf("stack length = %d; want 1", stack.len())
+	}
+	result := stack.pop()
+	if got := result.Uint64(); got != 42 {
+		t.Fatalf("SLOTNUM = %d; want 42", got)
+	}
+	op := amsterdamInstructionSet[SLOTNUM]
+	if op.constantGas != GasQuickStep {
+		t.Errorf("constantGas = %d; want %d", op.constantGas, GasQuickStep)
+	}
+	if op.minStack != 0 {
+		t.Errorf("minStack = %d; want 0", op.minStack)
+	}
+	if want := int(params.StackLimit) - 1; op.maxStack != want {
+		t.Errorf("maxStack = %d; want %d", op.maxStack, want)
 	}
 }
 

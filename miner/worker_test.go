@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
@@ -359,6 +360,101 @@ func TestWorkerCommitTransactionsSkipsInvalidSpecialApplyTx(t *testing.T) {
 	}
 }
 
+// TestWorkerPacksSubLegacyBaseTxAfterAmsterdam checks that the packing loop does
+// not stop at the flat 21,000 once EIP-2780 lowers the minimal transaction gas to
+// 12,000: with 15,000 gas left in the block, a 15,000-gas call is still packed.
+func TestWorkerPacksSubLegacyBaseTxAfterAmsterdam(t *testing.T) {
+	key, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatalf("failed to create test key: %v", err)
+	}
+	from := crypto.PubkeyToAddress(key.PublicKey)
+	chainConfig := &params.ChainConfig{
+		ChainID:             big.NewInt(1338),
+		HomesteadBlock:      new(big.Int),
+		EIP150Block:         new(big.Int),
+		EIP155Block:         new(big.Int),
+		EIP158Block:         new(big.Int),
+		ByzantiumBlock:      new(big.Int),
+		ConstantinopleBlock: new(big.Int),
+		PetersburgBlock:     new(big.Int),
+		IstanbulBlock:       new(big.Int),
+		BerlinBlock:         new(big.Int),
+		LondonBlock:         new(big.Int),
+		EIP1559Block:        new(big.Int),
+		MergeBlock:          new(big.Int),
+		ShanghaiBlock:       new(big.Int),
+		CancunBlock:         new(big.Int),
+		PragueBlock:         new(big.Int),
+		OsakaBlock:          new(big.Int),
+		AmsterdamBlock:      new(big.Int),
+		Ethash:              new(params.EthashConfig),
+	}
+	genesis := &core.Genesis{
+		Config:     chainConfig,
+		Alloc:      types.GenesisAlloc{from: {Balance: big.NewInt(params.Ether)}},
+		Difficulty: big.NewInt(1),
+		GasLimit:   params.XDCGenesisGasLimit,
+	}
+	engine := ethash.NewFaker()
+	chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer chain.Stop()
+
+	parent := chain.GetBlockByNumber(0)
+	if parent == nil {
+		t.Fatal("expected genesis block")
+	}
+	// Room for one 21,000-gas transfer and one 15,000-gas call.
+	header := &types.Header{
+		ParentHash: parent.Hash(),
+		Difficulty: big.NewInt(1),
+		Number:     big.NewInt(1),
+		Time:       parent.Time() + 1,
+		GasLimit:   36_000,
+		BaseFee:    new(big.Int),
+	}
+	worker := &worker{
+		config:      &Config{GasCeil: params.XDCGenesisGasLimit, GasPrice: big.NewInt(1)},
+		chainConfig: chainConfig,
+		engine:      engine,
+		chain:       chain,
+	}
+	if err := worker.makeCurrent(parent, header); err != nil {
+		t.Fatalf("failed to create current work: %v", err)
+	}
+
+	signer := types.LatestSigner(chainConfig)
+	transfer, err := types.SignTx(types.NewTransaction(0, common.HexToAddress("0x00000000000000000000000000000000000000aa"), big.NewInt(1),
+		params.TxBaseCost2780+params.ColdAccountAccessAmsterdam+params.TxValueCost2780, big.NewInt(1), nil), signer, key)
+	if err != nil {
+		t.Fatalf("failed to sign transfer: %v", err)
+	}
+	call, err := types.SignTx(types.NewTransaction(1, common.HexToAddress("0x00000000000000000000000000000000000000bb"), new(big.Int),
+		params.TxBaseCost2780+params.ColdAccountAccessAmsterdam, big.NewInt(1), nil), signer, key)
+	if err != nil {
+		t.Fatalf("failed to sign call: %v", err)
+	}
+
+	lazy := func(tx *types.Transaction) *txpool.LazyTransaction {
+		fee := uint256.NewInt(1)
+		return &txpool.LazyTransaction{Hash: tx.Hash(), Tx: tx, Time: time.Now(), GasFeeCap: fee, GasTipCap: fee, Gas: tx.Gas()}
+	}
+	txs, specialTxs := newTransactionsByPriceAndNonce(worker.current.signer, map[common.Address][]*txpool.LazyTransaction{
+		from: {lazy(transfer), lazy(call)},
+	}, nil, header.BaseFee)
+
+	worker.current.commitTransactions(new(event.TypeMux), map[common.Address]*big.Int{}, txs, specialTxs, chain, &event.Feed{})
+	if worker.current.tcount != 2 {
+		t.Fatalf("packed %d transactions, want 2: 15,000 gas left must still fit a 15,000-gas call", worker.current.tcount)
+	}
+	if len(worker.current.txs) != 2 {
+		t.Fatalf("committed %d transactions, want 2", len(worker.current.txs))
+	}
+}
+
 // TestWorkerCheckPreCommitXDPoSMismatch tests worker check pre commit xd po s mismatch.
 func TestWorkerCheckPreCommitXDPoSMismatch(t *testing.T) {
 	config := &params.ChainConfig{
@@ -381,9 +477,9 @@ func TestWorkerCheckPreCommitXDPoSMismatch(t *testing.T) {
 			MaxMasternodesV2:     1, // required to avoid missing fork switch error
 			V2: &params.V2{
 				SwitchBlock:   big.NewInt(0),
-				CurrentConfig: &params.V2Config{MinePeriod: 2},
+				CurrentConfig: &params.V2Config{MinePeriod: 2, TimeoutPeriod: 10, ExpTimeoutConfig: params.ExpTimeoutConfig{Base: 1}},
 				AllConfigs: map[uint64]*params.V2Config{
-					0: {MinePeriod: 2},
+					0: {MinePeriod: 2, TimeoutPeriod: 10, ExpTimeoutConfig: params.ExpTimeoutConfig{Base: 1}},
 				},
 			},
 		},
@@ -659,6 +755,103 @@ func mustSignLegacyTx(t *testing.T, key *ecdsa.PrivateKey, signer types.Signer, 
 		t.Fatalf("failed to sign legacy tx: %v", err)
 	}
 	return signed
+}
+
+// TestWorkerCheckPreCommitReproposesAfterRoundAdvances covers the timeout recovery
+// path: a round that collects no quorum cert leaves the quorum block as the parent,
+// so the worker has to build another block on it once the engine moves to a later
+// round. The parent memory must still hold the line within a single round.
+func TestWorkerCheckPreCommitReproposesAfterRoundAdvances(t *testing.T) {
+	config := params.TestXDPoSMockChainConfig
+	extraData := make([]byte, 0, utils.ExtraVanity+common.AddressLength+utils.ExtraSeal)
+	extraData = append(extraData, make([]byte, utils.ExtraVanity)...)
+	extraData = append(extraData, common.HexToAddress("0x0000000000000000000000000000000000000001").Bytes()...)
+	extraData = append(extraData, make([]byte, utils.ExtraSeal)...)
+	genesis := &core.Genesis{
+		Config:     config,
+		GasLimit:   params.XDCGenesisGasLimit,
+		Difficulty: big.NewInt(1),
+		Alloc:      types.GenesisAlloc{},
+		ExtraData:  extraData,
+	}
+	db := rawdb.NewMemoryDatabase()
+	if _, err := genesis.Commit(db); err != nil {
+		t.Fatalf("failed to commit genesis: %v", err)
+	}
+	engine := XDPoS.NewFaker(db, nil)
+	if engine == nil {
+		t.Fatal("failed to create the XDPoS faker engine")
+	}
+	chain, err := core.NewBlockChain(db, nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	defer chain.Stop()
+
+	parent := chain.GetBlockByNumber(0)
+	if parent == nil {
+		t.Fatal("expected genesis block")
+	}
+
+	const builtRound = types.Round(5)
+	engine.EngineV2.SetNewRoundFaker(chain, builtRound, false)
+	worker := &worker{
+		chainConfig:           config,
+		engine:                engine,
+		chain:                 chain,
+		announceTxs:           true,
+		lastParentBlockCommit: parent.Hash().Hex(),
+		lastParentBlockRound:  builtRound,
+	}
+
+	if _, shouldReturn := worker.checkPreCommitWithLock(); !shouldReturn {
+		t.Fatal("expected the worker to skip a parent it already committed for in the current round")
+	}
+
+	engine.EngineV2.SetNewRoundFaker(chain, builtRound+1, false)
+	gotParent, shouldReturn := worker.checkPreCommitWithLock()
+	if shouldReturn {
+		t.Fatal("expected the worker to build again on the same parent once the round advanced")
+	}
+	if gotParent.Hash() != parent.Hash() {
+		t.Fatalf("expected parent %s, got %s", parent.Hash(), gotParent.Hash())
+	}
+
+	worker.lastParentBlockCommit = common.HexToHash("0xdead").Hex()
+	if _, shouldReturn := worker.checkPreCommitWithLock(); shouldReturn {
+		t.Fatal("expected the worker to build on a parent it has not committed for")
+	}
+}
+
+// TestCommittedRoundFromHeader verifies the round recorded for a committed work
+// comes from the header the block carries, and that headers without a v2 extra
+// field (XDPoS v1 or non-XDPoS) report round 0.
+func TestCommittedRoundFromHeader(t *testing.T) {
+	v2Extra, err := (&types.ExtraFields_v2{
+		Round: 42,
+		QuorumCert: &types.QuorumCert{
+			ProposedBlockInfo: &types.BlockInfo{Hash: common.HexToHash("0xbeef"), Round: 41, Number: big.NewInt(7)},
+			Signatures:        []types.Signature{},
+			GapNumber:         0,
+		},
+	}).EncodeToBytes()
+	if err != nil {
+		t.Fatalf("failed to encode v2 extra: %v", err)
+	}
+	if round := committedRound(&types.Header{Extra: v2Extra}); round != 42 {
+		t.Fatalf("expected round 42 from a v2 header, got %d", round)
+	}
+
+	v1Extra := make([]byte, 0, utils.ExtraVanity+common.AddressLength+utils.ExtraSeal)
+	v1Extra = append(v1Extra, make([]byte, utils.ExtraVanity)...)
+	v1Extra = append(v1Extra, common.Address{}.Bytes()...)
+	v1Extra = append(v1Extra, make([]byte, utils.ExtraSeal)...)
+	if round := committedRound(&types.Header{Extra: v1Extra}); round != 0 {
+		t.Fatalf("expected round 0 from a v1 header, got %d", round)
+	}
+	if round := committedRound(&types.Header{}); round != 0 {
+		t.Fatalf("expected round 0 from a header without extra data, got %d", round)
+	}
 }
 
 func mustSignDynamicBoundaryTx(t *testing.T, key *ecdsa.PrivateKey, signer types.Signer, chainID *big.Int, nonce uint64, baseFee *big.Int, to common.Address) *types.Transaction {

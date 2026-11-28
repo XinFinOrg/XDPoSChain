@@ -22,9 +22,11 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
@@ -1413,25 +1415,23 @@ func TestReorgDeliversRemovedLogsSynchronously(t *testing.T) {
 		b.AddTx(tx)
 	}
 	canonical, _ := GenerateChain(gspec.Config, blockchain.Genesis(), engine, genDb, 4, emit)
-	fork, _ := GenerateChain(gspec.Config, blockchain.Genesis(), engine, genDb, 4, func(i int, b *BlockGen) {
+	// The fork is longer so fork choice adopts it without a manual reorg call.
+	fork, _ := GenerateChain(gspec.Config, blockchain.Genesis(), engine, genDb, 5, func(i int, b *BlockGen) {
 		b.SetCoinbase(common.Address{0: 0x02})
 		emit(i, b)
 	})
 	if _, err := blockchain.InsertChain(canonical); err != nil {
 		t.Fatalf("failed to insert canonical chain: %v", err)
 	}
-	if _, err := blockchain.InsertChain(fork); err != nil {
-		t.Fatalf("failed to insert the fork: %v", err)
-	}
-	if head, want := blockchain.CurrentBlock(), canonical[len(canonical)-1]; head.Hash() != want.Hash() {
-		t.Fatalf("head moved onto the fork, want it kept as a side chain: have %x, want %x", head.Hash(), want.Hash())
-	}
 
 	// The subscriber stalls before receiving: a synchronous send has to wait
 	// for it, a spawned one would let reorg return first.
 	removed := make(chan RemovedLogsEvent)
+	hold := make(chan RemovedLogsEvent)
 	sub := blockchain.SubscribeRemovedLogsEvent(removed)
 	defer sub.Unsubscribe()
+	holdSub := blockchain.SubscribeRemovedLogsEvent(hold)
+	defer holdSub.Unsubscribe()
 
 	// The stall also budgets catching a spawned send: reorg hands the removals
 	// over early with ~20ms of work left under -race, so a second outlasts it.
@@ -1439,24 +1439,32 @@ func TestReorgDeliversRemovedLogsSynchronously(t *testing.T) {
 		subscriberDelay = time.Second
 		deliveryTimeout = 5 * time.Second
 	)
+	type delivery struct {
+		logs int
+		head common.Hash
+	}
 	var (
 		armed = make(chan struct{})
 		// Buffered so the delivery cannot block: the checks below may t.Fatalf
 		// and leave this goroutine behind.
-		got = make(chan int, 1)
+		got = make(chan delivery, 1)
 	)
 	go func() {
 		time.Sleep(subscriberDelay)
 		close(armed)
 		select {
 		case ev := <-removed:
-			got <- len(ev.Logs)
+			head := blockchain.CurrentBlock().Hash()
+			// The send is still blocked on hold here (it has no receiver until this
+			// read returns), so an early publication cannot move the head before it.
+			<-hold
+			got <- delivery{len(ev.Logs), head}
 		case <-time.After(deliveryTimeout):
 		}
 	}()
 
-	if err := blockchain.reorg(blockchain.CurrentBlock(), fork[len(fork)-1].Header()); err != nil {
-		t.Fatalf("failed to reorg: %v", err)
+	if _, err := blockchain.InsertChain(fork); err != nil {
+		t.Fatalf("failed to insert the longer fork: %v", err)
 	}
 	// The send completes on the unbuffered handoff: a reorg that is back before
 	// the subscriber armed never waited for it.
@@ -1468,9 +1476,14 @@ func TestReorgDeliversRemovedLogsSynchronously(t *testing.T) {
 	// reorg returned means the handoff is done and got is buffered, so this
 	// timeout only guards a starved goroutine.
 	select {
-	case n := <-got:
-		if want := len(canonical); n != want {
-			t.Fatalf("removed logs mismatch: have %d, want %d", n, want)
+	case o := <-got:
+		if want := len(canonical); o.logs != want {
+			t.Fatalf("removed logs mismatch: have %d, want %d", o.logs, want)
+		}
+		// The send must follow the head write: a subscriber that reads the chain on
+		// the removal must see the adopted head, not the one the log came from.
+		if want := fork[len(fork)-1].Hash(); o.head != want {
+			t.Fatalf("removed logs observed at head %x, want the adopted head %x", o.head, want)
 		}
 	case <-time.After(deliveryTimeout):
 		t.Fatalf("reorg returned but the removed logs never reached the subscriber")
@@ -1621,6 +1634,8 @@ func testInsertNonceError(t *testing.T, full bool) {
 // Tests that fast importing a block chain produces the same chain data as the
 // classical full block processing.
 func TestFastVsFullChains(t *testing.T) {
+	t.Parallel()
+
 	// Configure and generate a sample block chain
 	var (
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
@@ -1706,6 +1721,8 @@ func TestFastVsFullChains(t *testing.T) {
 // Tests that various import methods move the chain head pointers to the correct
 // positions.
 func TestLightVsFastVsFullChainHeads(t *testing.T) {
+	t.Parallel()
+
 	// Configure and generate a sample block chain
 	var (
 		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
@@ -2223,8 +2240,8 @@ func TestEIP161AccountRemoval(t *testing.T) {
 	}
 }
 
-// setXinFinForksToFuture moves XDC-specific forks behind a common future block
-// for tests that need pre-fork execution rules.
+// setXinFinForksToFuture moves every fork behind a common future block for
+// tests that need pre-fork execution rules.
 func setXinFinForksToFuture(cfg *params.ChainConfig, future *big.Int) {
 	set := func() *big.Int { return new(big.Int).Set(future) }
 	cfg.TIPSigningBlock = set()
@@ -2250,6 +2267,7 @@ func setXinFinForksToFuture(cfg *params.ChainConfig, future *big.Int) {
 	cfg.CancunBlock = set()
 	cfg.PragueBlock = set()
 	cfg.OsakaBlock = set()
+	cfg.AmsterdamBlock = set()
 	cfg.DynamicGasLimitBlock = set()
 	cfg.TIPFixedRewardBlock = set()
 	cfg.TIPUpgradePenaltyBlock = set()
@@ -2309,6 +2327,8 @@ func TestBlockchainHeaderchainReorgConsistency(t *testing.T) {
 // Tests that importing small side forks doesn't leave junk in the trie database
 // cache (which would eventually cause memory issues).
 func TestTrieForkGC(t *testing.T) {
+	t.Parallel()
+
 	// Generate a canonical chain to act as the main dataset
 	engine := ethash.NewFaker()
 	genesis := &Genesis{
@@ -2355,6 +2375,8 @@ func TestTrieForkGC(t *testing.T) {
 // Tests that doing large reorgs works even if the state associated with the
 // forking point is not available any more.
 func TestLargeReorgTrieGC(t *testing.T) {
+	t.Parallel()
+
 	// Generate the original common chain segment and the two competing forks
 	engine := ethash.NewFaker()
 	genesis := &Genesis{
@@ -2886,7 +2908,8 @@ func TestEIP3651(t *testing.T) {
 
 	// 1+2: Ensure EIP-1559 access lists are accounted for via gas usage.
 	innerGas := vm.GasQuickStep*2 + params.ColdSloadCostEIP2929*2
-	expectedGas := params.TxGas + 5*vm.GasFastestStep + vm.GasQuickStep + 100 + innerGas // 100 because 0xaaaa is in access list
+	// The zero-value call pays the EIP-2780 base instead of the flat 21,000.
+	expectedGas := params.TxBaseCost2780 + params.ColdAccountAccessAmsterdam + 5*vm.GasFastestStep + vm.GasQuickStep + 100 + innerGas // 100 because 0xaaaa is in access list
 	if block.GasUsed() != expectedGas {
 		t.Fatalf("incorrect amount of gas spent: expected %d, got %d", expectedGas, block.GasUsed())
 	}
@@ -3107,6 +3130,8 @@ func TestInsertSidechainReportsMissingLocalTd(t *testing.T) {
 // competitor whose parent total difficulty this node cannot read is not a bad block, it
 // just cannot be weighed, and the arithmetic used to dereference the missing value.
 func TestGetResultBlockReportsMissingTd(t *testing.T) {
+	t.Parallel()
+
 	chain, blocks, engine, genDb := newMissingTdChain(t, 2*TriesInMemory, 2*TriesInMemory)
 
 	// Forking on a block whose state is already pruned makes ValidateBody report the
@@ -3121,7 +3146,7 @@ func TestGetResultBlockReportsMissingTd(t *testing.T) {
 	// copy has to go as well.
 	dropTd(t, chain, lastPruned)
 
-	if _, _, _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, ErrLocalInsertCondition) {
+	if _, _, _, err := chain.getResultBlock(fork[0], false, false); !errors.Is(err, ErrLocalInsertCondition) {
 		t.Fatalf("unexpected error: have %v want %v", err, ErrLocalInsertCondition)
 	}
 }
@@ -3131,6 +3156,8 @@ func TestGetResultBlockReportsMissingTd(t *testing.T) {
 // this node cannot read, and the comparison against it used to dereference the missing
 // value.
 func TestGetResultBlockReportsMissingLocalTd(t *testing.T) {
+	t.Parallel()
+
 	chain, blocks, engine, genDb := newMissingTdChain(t, 2*TriesInMemory, 2*TriesInMemory)
 
 	// Forking on a block whose state is already pruned makes ValidateBody report the
@@ -3145,7 +3172,7 @@ func TestGetResultBlockReportsMissingLocalTd(t *testing.T) {
 	// to go as well. The competitor's parent stays readable.
 	dropTd(t, chain, blocks[2*TriesInMemory-1])
 
-	if _, _, _, err := chain.getResultBlock(fork[0], false); !errors.Is(err, ErrLocalInsertCondition) {
+	if _, _, _, err := chain.getResultBlock(fork[0], false, false); !errors.Is(err, ErrLocalInsertCondition) {
 		t.Fatalf("unexpected error: have %v want %v", err, ErrLocalInsertCondition)
 	}
 }
@@ -3186,7 +3213,7 @@ func TestGetResultBlockRebuildNeedsTheChainMutex(t *testing.T) {
 	chain.chainmu.MustLock()
 	done := make(chan error, 1)
 	go func() {
-		_, _, _, err := chain.getResultBlock(competitor[0], false)
+		_, _, _, err := chain.getResultBlock(competitor[0], false, false)
 		done <- err
 	}()
 	select {
@@ -3285,6 +3312,128 @@ func newPreparedBlockChain(t *testing.T, total int, gen func(int, *BlockGen)) (*
 	return chain, blocks
 }
 
+// countingProcessor counts executions: a calculation entry is gone once the calculation
+// returns, so only the count tells a reuse from a re-run.
+type countingProcessor struct {
+	Processor
+	calls atomic.Int32
+}
+
+func (p *countingProcessor) ProcessBlockNoValidator(block *CalculatedBlock, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, balanceFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
+	p.calls.Add(1)
+	return p.Processor.ProcessBlockNoValidator(block, statedb, tradingState, cfg, balanceFee)
+}
+
+func countExecutions(bc *BlockChain) *countingProcessor {
+	counter := &countingProcessor{Processor: bc.processor}
+	bc.processor = counter
+	return counter
+}
+
+type blockingProcessor struct {
+	Processor
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (p *blockingProcessor) ProcessBlockNoValidator(block *CalculatedBlock, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, balanceFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
+	close(p.entered)
+	<-p.release
+	return p.Processor.ProcessBlockNoValidator(block, statedb, tradingState, cfg, balanceFee)
+}
+
+// TestAFinishedCalculationKeepsTheEntryOfANewerOne pins the ownership the removal is keyed
+// on: a returning calculation drops only its own entry, not one a newer calculation stored
+// under the same key. Dropping that one would leave PrepareBlock nothing to skip on and the
+// insertion nothing to stop.
+func TestAFinishedCalculationKeepsTheEntryOfANewerOne(t *testing.T) {
+	chain, blocks := newPreparedBlockChain(t, 6, nil)
+	target := blocks[0]
+	key := target.HashNoValidator()
+
+	blocker := &blockingProcessor{Processor: chain.processor, entered: make(chan struct{}), release: make(chan struct{})}
+	chain.processor = blocker
+
+	done := make(chan error, 1)
+	go func() {
+		_, _, _, err := chain.getResultBlock(target, false, false)
+		done <- err
+	}()
+	select {
+	case <-blocker.entered:
+	case err := <-done:
+		t.Fatalf("the calculation returned before it reached the processor: %v", err)
+	}
+
+	// The in-flight calculation's entry is not marked done.
+	inflight, ok := chain.calculatingBlock.Get(key)
+	if !ok || inflight.done.Load() {
+		t.Fatal("the entry in the cache is not the one of the calculation in flight")
+	}
+
+	newer := &CalculatedBlock{block: target}
+	chain.calculatingBlock.Add(key, newer)
+
+	close(blocker.release)
+	if err := <-done; err != nil {
+		t.Fatalf("the first calculation failed: %v", err)
+	}
+	if !inflight.done.Load() {
+		t.Fatal("a returned calculation is not marked done")
+	}
+	got, ok := chain.calculatingBlock.Peek(key)
+	if !ok || got != newer {
+		t.Fatal("a finished calculation dropped the entry of a newer one")
+	}
+}
+
+type failingProcessor struct {
+	Processor
+	err error
+}
+
+func (p *failingProcessor) ProcessBlockNoValidator(block *CalculatedBlock, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, balanceFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
+	return nil, nil, 0, p.err
+}
+
+// TestPrepareBlockRetriesAfterAFailedExecution covers failures raised inside the execution,
+// where TestPrepareBlockRetriesAfterAFailedCalculation covers the exit before it: neither
+// the abort an insertion raises nor a plain error leaves an entry behind, and the next
+// proposal prepares the block instead of answering it as a success.
+func TestPrepareBlockRetriesAfterAFailedExecution(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"aborted by the insertion", ErrStopPreparingBlock},
+		{"failed in the execution", errors.New("the execution failed")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			chain, blocks := newPreparedBlockChain(t, 6, nil)
+			target := blocks[0]
+			key := target.HashNoValidator()
+
+			failing := &failingProcessor{Processor: chain.processor, err: tc.err}
+			chain.processor = failing
+			// Only the caches matter here, not the error PrepareBlock answers.
+			_ = chain.PrepareBlock(target)
+			chain.processor = failing.Processor
+			if chain.calculatingBlock.Contains(key) {
+				t.Fatal("a failed calculation left its entry behind")
+			}
+			if chain.resultProcess.Contains(key) {
+				t.Fatal("a failed calculation stored a result")
+			}
+			if err := chain.PrepareBlock(target); err != nil {
+				t.Fatalf("second prepare: %v", err)
+			}
+			if !chain.resultProcess.Contains(key) {
+				t.Fatal("the block was not prepared on the second proposal")
+			}
+		})
+	}
+}
+
 // TestPrepareBlockStoresItsResultUnderTheLookupKey pins the key a prepared result is stored
 // under. XDPoS signs a header with a validator signature that takes no part in its execution,
 // so a prepared result belongs to the header alone: getResultBlock looks it up by
@@ -3301,19 +3450,18 @@ func TestPrepareBlockStoresItsResultUnderTheLookupKey(t *testing.T) {
 	if !chain.resultProcess.Contains(target.HashNoValidator()) {
 		t.Fatal("the prepared result is not stored under the key its look-ups use")
 	}
-	// getResultBlock is the look-up insertBlock performs: a reused result is returned
-	// without being computed, so the block is not recorded as being calculated. The
-	// preparation above did record it, hence the reset - nothing else purges that cache.
-	chain.calculatingBlock.Purge()
-	result, _, _, err := chain.getResultBlock(target, true)
+	// getResultBlock is the look-up insertBlock performs, and a reused result is returned
+	// without being computed. Count executions: a calculation entry is gone either way.
+	counter := countExecutions(chain)
+	result, _, _, err := chain.getResultBlock(target, true, false)
 	if err != nil {
 		t.Fatalf("failed to look the prepared result up: %v", err)
 	}
 	if result == nil {
 		t.Fatal("the prepared result was not returned")
 	}
-	if chain.calculatingBlock.Contains(target.HashNoValidator()) {
-		t.Fatal("the prepared result was not reused: the block was calculated a second time")
+	if n := counter.calls.Load(); n != 0 {
+		t.Fatalf("the prepared result was not reused: the block was calculated %d time(s)", n)
 	}
 }
 
@@ -3335,6 +3483,121 @@ func TestPrepareBlockSkipsABlockBeingCalculated(t *testing.T) {
 	got, ok := chain.calculatingBlock.Peek(target.HashNoValidator())
 	if !ok || got != preset {
 		t.Fatal("a block that is already being calculated was prepared again")
+	}
+}
+
+// TestPrepareBlockDropsTheCalculationEntry pins the lifetime of the entry a preparation
+// records: it goes away with the calculation, success included. Nothing else would drop it,
+// and a leftover entry would answer the probe in PrepareBlock for a finished block.
+func TestPrepareBlockDropsTheCalculationEntry(t *testing.T) {
+	chain, blocks := newPreparedBlockChain(t, 6, nil)
+	target := blocks[0]
+
+	if err := chain.PrepareBlock(target); err != nil {
+		t.Fatalf("failed to prepare the block: %v", err)
+	}
+	if chain.calculatingBlock.Contains(target.HashNoValidator()) {
+		t.Fatal("a finished calculation is still recorded as being calculated")
+	}
+}
+
+// TestPrepareBlockPublishesTheResultBeforeTheEntryRetires pins the handoff: the result is in
+// resultProcess while the entry saying the block is being calculated still stands, and the
+// entry goes afterwards. The hook holds the handoff open so an overlapping preparation lands
+// inside it instead of finding neither entry and executing the block again.
+func TestPrepareBlockPublishesTheResultBeforeTheEntryRetires(t *testing.T) {
+	chain, blocks := newPreparedBlockChain(t, 6, nil)
+	target := blocks[0]
+	key := target.HashNoValidator()
+	counter := countExecutions(chain)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	chain.testHookBeforeCalculationRetire = func() {
+		close(entered)
+		<-release
+	}
+	done := make(chan error, 1)
+	go func() { done <- chain.PrepareBlock(target) }()
+
+	select {
+	case <-entered:
+		// Clear the hook so a later calculation does not close the channel again.
+		chain.testHookBeforeCalculationRetire = nil
+	case err := <-done:
+		t.Fatalf("the preparation returned before it reached the handoff: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the preparation never reached the handoff")
+	}
+	// The entry still stands, so the result must already be published.
+	if !chain.resultProcess.Contains(key) {
+		t.Fatal("the result is not published while the calculation entry still stands")
+	}
+	if err := chain.PrepareBlock(target); err != nil {
+		t.Fatalf("overlapping preparation: %v", err)
+	}
+	if got := counter.calls.Load(); got != 1 {
+		t.Fatalf("the block was executed %d time(s) while the handoff was held", got)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("the preparation failed: %v", err)
+	}
+	if got := counter.calls.Load(); got != 1 {
+		t.Fatalf("the block was executed %d time(s)", got)
+	}
+	if !chain.resultProcess.Contains(key) {
+		t.Fatal("the prepared result is not cached")
+	}
+	if chain.calculatingBlock.Contains(key) {
+		t.Fatal("the calculation entry outlived the calculation")
+	}
+}
+
+// TestPrepareBlockRetriesAfterAFailedCalculation covers the failure a leftover entry used to
+// hide: it leaves no entry behind, so the next proposal prepares the block again.
+func TestPrepareBlockRetriesAfterAFailedCalculation(t *testing.T) {
+	chain, blocks := newPreparedBlockChain(t, 6, nil)
+	target := blocks[0]
+	key := target.HashNoValidator()
+
+	// Interrupt after getResultBlock records its entry, the failure that used to leak one.
+	chain.InterruptInsert(true)
+	err := chain.PrepareBlock(target)
+	chain.InterruptInsert(false)
+	if !errors.Is(err, ErrInsertionInterrupted) {
+		t.Fatalf("first prepare: have %v, want %v", err, ErrInsertionInterrupted)
+	}
+	if chain.calculatingBlock.Contains(key) {
+		t.Fatal("a failed calculation left its entry behind")
+	}
+	if chain.resultProcess.Contains(key) {
+		t.Fatal("a failed calculation stored a result")
+	}
+	if err := chain.PrepareBlock(target); err != nil {
+		t.Fatalf("second prepare: %v", err)
+	}
+	if !chain.resultProcess.Contains(key) {
+		t.Fatal("the block was not prepared on the second proposal")
+	}
+}
+
+// TestPrepareBlockIgnoresAFinishedCalculation covers the mark: an entry whose calculation has
+// returned is not in flight, even when the probe still finds it in the cache.
+func TestPrepareBlockIgnoresAFinishedCalculation(t *testing.T) {
+	chain, blocks := newPreparedBlockChain(t, 6, nil)
+	target := blocks[0]
+	key := target.HashNoValidator()
+
+	finished := &CalculatedBlock{block: target}
+	finished.done.Store(true)
+	chain.calculatingBlock.Add(key, finished)
+
+	if err := chain.PrepareBlock(target); err != nil {
+		t.Fatalf("failed to prepare the block: %v", err)
+	}
+	if !chain.resultProcess.Contains(key) {
+		t.Fatal("a finished calculation answered the probe: the block was not prepared")
 	}
 }
 
@@ -3384,16 +3647,15 @@ func TestAReusedResultIsStampedWithTheBlockItIsInsertedUnder(t *testing.T) {
 	prepared.receipts[0].Logs = append(prepared.receipts[0].Logs, preparedLog)
 	prepared.logs = append(prepared.logs, preparedLog)
 
-	// getResultBlock is the look-up insertBlock performs: a reused result is returned
-	// without being computed, so the block is not recorded as being calculated. The
-	// preparation above did record it, hence the reset - nothing else purges that cache.
-	chain.calculatingBlock.Purge()
-	result, _, _, err := chain.getResultBlock(target, true)
+	// getResultBlock is the look-up insertBlock performs, and a reused result is returned
+	// without being computed. Count executions: a calculation entry is gone either way.
+	counter := countExecutions(chain)
+	result, _, _, err := chain.getResultBlock(target, true, false)
 	if err != nil {
 		t.Fatalf("failed to look the prepared result up: %v", err)
 	}
-	if chain.calculatingBlock.Contains(target.HashNoValidator()) {
-		t.Fatal("the prepared result was not reused: the block was calculated a second time")
+	if n := counter.calls.Load(); n != 0 {
+		t.Fatalf("the prepared result was not reused: the block was calculated %d time(s)", n)
 	}
 	for _, receipt := range result.receipts {
 		if receipt.BlockHash != target.Hash() {
@@ -3471,7 +3733,7 @@ func TestConcurrentReusesOfAPreparedResultCarryTheirOwnHash(t *testing.T) {
 		go func(i int, twin *types.Block) {
 			defer wg.Done()
 
-			result, _, _, err := chain.getResultBlock(twin, true)
+			result, _, _, err := chain.getResultBlock(twin, true, false)
 			if err != nil {
 				t.Errorf("failed to look the prepared result up: %v", err)
 				return
@@ -3541,7 +3803,7 @@ func TestInsertionStopsTheCalculationItFindsInFlight(t *testing.T) {
 	// verifiedM2 is what an insertion passes and a preparation does not, and it is the only
 	// argument that arms the mark. The result cache has to miss for the look-up to be reached
 	// at all: nothing has prepared a result in this chain.
-	result, _, _, err := chain.getResultBlock(target, true)
+	result, _, _, err := chain.getResultBlock(target, true, false)
 	if !inflight.stop.Load() {
 		t.Fatal("the insertion did not stop the calculation it found in flight")
 	}

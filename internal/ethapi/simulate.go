@@ -17,6 +17,7 @@
 package ethapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -105,6 +106,15 @@ type simulator struct {
 	fullTx         bool
 }
 
+// requestSpan is the request level view the owner guard judges an override against: the
+// first Prague-active and the first Amsterdam-active block, when the request holds one,
+// and the last block. The last block is always set.
+type requestSpan struct {
+	firstPrague    *big.Int
+	firstAmsterdam *big.Int
+	lastBlock      *big.Int
+}
+
 // execute runs the simulation of a series of blocks.
 func (sim *simulator) execute(ctx context.Context, blocks []simBlock) ([]map[string]interface{}, error) {
 	if err := ctx.Err(); err != nil {
@@ -133,6 +143,22 @@ func (sim *simulator) execute(ctx context.Context, blocks []simBlock) ([]map[str
 	if err != nil {
 		return nil, err
 	}
+	// Every block of the request runs on one state, so an override planted on an earlier
+	// block is still in effect when a later block runs its block level hooks. The guard
+	// needs the request level view of that: the first Prague-active block, whose changes
+	// the request cannot undo, the first Amsterdam-active block, and the last block.
+	span := requestSpan{lastBlock: new(big.Int).Set(headers[len(headers)-1].Number)}
+	for _, header := range headers {
+		if span.firstPrague == nil && sim.chainConfig.IsPrague(header.Number) {
+			span.firstPrague = new(big.Int).Set(header.Number)
+		}
+		if span.firstAmsterdam == nil && sim.chainConfig.IsAmsterdam(header.Number) {
+			span.firstAmsterdam = new(big.Int).Set(header.Number)
+		}
+		if span.firstPrague != nil && span.firstAmsterdam != nil {
+			break
+		}
+	}
 	var (
 		results = make([]map[string]interface{}, len(blocks))
 		parent  = sim.base
@@ -140,7 +166,7 @@ func (sim *simulator) execute(ctx context.Context, blocks []simBlock) ([]map[str
 		td = sim.b.GetTd(ctx, sim.base.Hash())
 	)
 	for bi, block := range blocks {
-		result, callResults, err := sim.processBlock(ctx, &block, headers[bi], parent, headers[:bi], timeout)
+		result, callResults, err := sim.processBlock(ctx, &block, headers[bi], parent, headers[:bi], span, timeout)
 		if err != nil {
 			return nil, err
 		}
@@ -154,7 +180,7 @@ func (sim *simulator) execute(ctx context.Context, blocks []simBlock) ([]map[str
 	return results, nil
 }
 
-func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header, parent *types.Header, headers []*types.Header, timeout time.Duration) (*types.Block, []simCallResult, error) {
+func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header, parent *types.Header, headers []*types.Header, span requestSpan, timeout time.Duration) (*types.Block, []simCallResult, error) {
 	// Set header fields that depend only on parent block.
 	// Parent hash is needed for evm.GetHashFn to work.
 	header.ParentHash = parent.Hash()
@@ -172,20 +198,24 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	}
 	blockContext := core.NewEVMBlockContext(header, sim.newSimulatedChainContext(ctx, headers), nil)
 	precompiles := sim.activePrecompiles(header)
-	if err := rejectOwnedAccountOverrides(sim.chainConfig, sim.state, precompiles, header, block.StateOverrides); err != nil {
+	if err := rejectOwnedAccountOverrides(sim.chainConfig, sim.state, precompiles, header, span, block.StateOverrides); err != nil {
 		return nil, nil, err
 	}
 	// State overrides are applied prior to execution of a block
 	if err := block.StateOverrides.Apply(sim.state, precompiles); err != nil {
 		return nil, nil, err
 	}
+	// Post-Amsterdam the protocol emits an EIP-7708 transfer log for every
+	// ether transfer, so synthesizing them would report each transfer twice.
+	traceTransfers := sim.traceTransfers && !sim.chainConfig.IsAmsterdam(header.Number)
+
 	var (
 		gasUsed     uint64
 		txes        = make([]*types.Transaction, len(block.Calls))
 		callResults = make([]simCallResult, len(block.Calls))
 		receipts    = make([]*types.Receipt, len(block.Calls))
 		// Block hash will be repaired after execution.
-		tracer   = newTracer(sim.traceTransfers, blockContext.BlockNumber.Uint64(), common.Hash{}, common.Hash{}, 0)
+		tracer   = newTracer(traceTransfers, blockContext.BlockNumber.Uint64(), common.Hash{}, common.Hash{}, 0)
 		vmConfig = &vm.Config{
 			NoBaseFee: !sim.validate,
 			Tracer:    tracer.Hooks(),
@@ -200,6 +230,9 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 	// move them to another address.
 	if precompiles != nil {
 		evm.SetPrecompiles(precompiles)
+	}
+	if err := rejectForeignFactoryCode(sim.chainConfig, sim.state, header.Number); err != nil {
+		return nil, nil, err
 	}
 	// Block level state changes, applied the way block processing does.
 	core.ApplyBlockLevelHooks(header.ParentHash, evm)
@@ -257,53 +290,177 @@ func ownedOverrideError(address common.Address, field, clause string) error {
 	return &invalidParamsError{message: fmt.Sprintf("state override of %v sets %s, %s", address, field, clause)}
 }
 
-// rejectOwnedAccountOverrides refuses an override of a field a block level state change
-// writes at the simulated block, which would silently undo it or trip the consensus panic.
-// A Prague block owns Multicall3 and the history contract (nonce, parent hash write), the
-// TIPSigning activation block the block signers account. Fields the block does not write
+// crossBlockOverrideError names the block of the request that writes the field: the change
+// runs at another block than the one the override landed on, which the caller cannot see.
+func crossBlockOverrideError(address common.Address, field string, writer *big.Int) error {
+	return &invalidParamsError{message: fmt.Sprintf("state override of %v sets %s; block %v of the request writes it", address, field, writer)}
+}
+
+// crossBlockRemovalError names the block of the request that removes the account, which
+// drops an override the request planted on an earlier block.
+func crossBlockRemovalError(address common.Address, field string, activation *big.Int) error {
+	return &invalidParamsError{message: fmt.Sprintf("state override of %v sets %s; the block that activates TIPSigning at %v removes the account with it", address, field, activation)}
+}
+
+// pragueHookOwner returns the block whose Prague block level hooks the guard has to check:
+// the simulated block when Prague is active there, otherwise the first Prague-active block
+// of the request, whose changes carry into the simulated one. It returns nil when the
+// request holds no Prague-active block.
+func pragueHookOwner(config *params.ChainConfig, number, firstPrague *big.Int) *big.Int {
+	if config.IsPrague(number) {
+		return number
+	}
+	// firstPrague comes from a Prague-active header, so only its order needs checking.
+	if firstPrague != nil && number.Cmp(firstPrague) < 0 {
+		return firstPrague
+	}
+	return nil
+}
+
+// amsterdamHookOwner returns the block whose Amsterdam block level hooks the guard has to
+// check: the simulated block when Amsterdam is active there, otherwise the first
+// Amsterdam-active block of the request, whose changes carry into the simulated one. It
+// returns nil when the request holds no Amsterdam-active block.
+func amsterdamHookOwner(config *params.ChainConfig, number, firstAmsterdam *big.Int) *big.Int {
+	if config.IsAmsterdam(number) {
+		return number
+	}
+	// firstAmsterdam comes from an Amsterdam-active header, so only its order needs checking.
+	if firstAmsterdam != nil && number.Cmp(firstAmsterdam) < 0 {
+		return firstAmsterdam
+	}
+	return nil
+}
+
+// rejectOwnedAccountOverrides refuses an override of a field a block level hook writes,
+// which would silently undo it or trip the consensus panic. A Prague block owns
+// Multicall3 and the history contract (nonce, parent hash write), an Amsterdam block the
+// EIP-7997 factory install, the TIPSigning activation block the block signers account.
+// The request runs every block on one state, so the change of a later block owns its
+// fields as well: the guard judges the simulated block against the block the change runs
+// at, and names that block when it is not the simulated one. Fields a block does not write
 // stay overridable, except a precompile move onto the history contract, which drops the
 // write; a move from an account the EVM does not serve as a precompile cannot shadow it,
-// and override.Apply rejects that move itself. The guard sees the simulated block alone;
-// code an earlier block planted is #2855.
-func rejectOwnedAccountOverrides(config *params.ChainConfig, statedb *state.StateDB, precompiles vm.PrecompiledContracts, header *types.Header, overrides *override.StateOverride) error {
+// and override.Apply rejects that move itself.
+func rejectOwnedAccountOverrides(config *params.ChainConfig, statedb *state.StateDB, precompiles vm.PrecompiledContracts, header *types.Header, span requestSpan, overrides *override.StateOverride) error {
 	if overrides == nil {
 		return nil
 	}
-	number := header.Number
+	if err := rejectPragueOwnedOverrides(config, statedb, precompiles, header.Number, span, overrides); err != nil {
+		return err
+	}
+	if err := rejectAmsterdamOwnedOverrides(config, statedb, header.Number, span, overrides); err != nil {
+		return err
+	}
+	return rejectTIPSigningRemovalOverrides(config, header.Number, span, overrides)
+}
 
-	if config.IsPrague(number) {
-		if account, ok := (*overrides)[params.Multicall3Address]; ok {
-			if account.Code != nil {
-				return ownedOverrideError(params.Multicall3Address, "code", "which the Prague Multicall3 install owns")
+// rejectAmsterdamOwnedOverrides refuses an override of a field the Amsterdam block level
+// hooks write at the owning block amsterdamHookOwner returns: the EIP-7997 factory install
+// owns the code and, on an account without code, a zero nonce. A precompile move onto the
+// account and every other field stay overridable, as the install does not touch them.
+func rejectAmsterdamOwnedOverrides(config *params.ChainConfig, statedb *state.StateDB, number *big.Int, span requestSpan, overrides *override.StateOverride) error {
+	owner := amsterdamHookOwner(config, number, span.firstAmsterdam)
+	if owner == nil {
+		return nil
+	}
+	atBlock := owner.Cmp(number) == 0
+	refuse := func(addr common.Address, field, clause string) error {
+		if atBlock {
+			return ownedOverrideError(addr, field, clause)
+		}
+		return crossBlockOverrideError(addr, field, owner)
+	}
+	if account, ok := (*overrides)[params.DeterministicFactoryAddress]; ok {
+		// Refused whatever the bytes are: canonical code would keep the nonce the chain's
+		// account does not carry, anything else trips the hook's mismatch panic, and empty
+		// code would be undone by the install.
+		if account.Code != nil {
+			return refuse(params.DeterministicFactoryAddress, "code", "which the Amsterdam EIP-7997 factory install owns")
+		}
+		// The install raises a zero nonce to 1 on an account without code, so only a
+		// zero override is undone.
+		if account.Nonce != nil && len(statedb.GetCode(params.DeterministicFactoryAddress)) == 0 && *account.Nonce == 0 {
+			return refuse(params.DeterministicFactoryAddress, "the nonce", "which the Amsterdam EIP-7997 factory install owns")
+		}
+	}
+	return nil
+}
+
+// rejectForeignFactoryCode refuses code at the factory address other than the canonical
+// runtime code once Amsterdam is active: the install panics on it, and a request can put
+// such code there without an override by creating a contract at the keyless address the
+// factory was deployed from, so the panic would escape as an RPC crash.
+func rejectForeignFactoryCode(config *params.ChainConfig, statedb *state.StateDB, number *big.Int) error {
+	if !config.IsAmsterdam(number) {
+		return nil
+	}
+	code := statedb.GetCode(params.DeterministicFactoryAddress)
+	if len(code) == 0 || bytes.Equal(code, params.DeterministicFactoryCode) {
+		return nil
+	}
+	return &invalidParamsError{message: fmt.Sprintf("code at %v differs from the canonical EIP-7997 factory runtime code, which the Amsterdam install requires", params.DeterministicFactoryAddress)}
+}
+
+// rejectPragueOwnedOverrides refuses an override of a field the Prague block level hooks
+// write at the owning block pragueHookOwner returns: the Multicall3 and history installs
+// own code and a raised nonce, the parent hash write owns the ring positions the request
+// fills, and a precompile move onto the history contract drops that write.
+func rejectPragueOwnedOverrides(config *params.ChainConfig, statedb *state.StateDB, precompiles vm.PrecompiledContracts, number *big.Int, span requestSpan, overrides *override.StateOverride) error {
+	owner := pragueHookOwner(config, number, span.firstPrague)
+	if owner == nil {
+		return nil
+	}
+	atBlock := owner.Cmp(number) == 0
+	// The change at the simulated block needs no block number in the wording; one that
+	// runs at another block of the request does, since the caller cannot see it.
+	refuse := func(addr common.Address, field, clause string) error {
+		if atBlock {
+			return ownedOverrideError(addr, field, clause)
+		}
+		return crossBlockOverrideError(addr, field, owner)
+	}
+	if account, ok := (*overrides)[params.Multicall3Address]; ok {
+		if account.Code != nil {
+			return refuse(params.Multicall3Address, "code", "which the Prague Multicall3 install owns")
+		}
+		if account.Nonce != nil && len(statedb.GetCode(params.Multicall3Address)) == 0 {
+			return refuse(params.Multicall3Address, "the nonce", "which the Prague Multicall3 install owns")
+		}
+	}
+	if account, ok := (*overrides)[params.HistoryStorageAddress]; ok {
+		// Refused whatever the bytes are: canonical code would skip the backfill.
+		if account.Code != nil {
+			return refuse(params.HistoryStorageAddress, "code", "which the Prague EIP-2935 history install owns")
+		}
+		// Only a zero nonce is raised, so a nonzero one survives.
+		if account.Nonce != nil && len(statedb.GetCode(params.HistoryStorageAddress)) == 0 && *account.Nonce == 0 {
+			return refuse(params.HistoryStorageAddress, "the nonce", "which the Prague EIP-2935 history install owns")
+		}
+		// A replacement wipes every slot, the written one included.
+		if account.State != nil {
+			return refuse(params.HistoryStorageAddress, "a state replacement", "which the Prague EIP-2935 history write owns")
+		}
+		// The owning block writes one ring position, and so does every block of the
+		// request after it: the request shares one state, so their writes replace
+		// whatever the override leaves in the same position.
+		for _, slot := range slices.SortedFunc(maps.Keys(account.StateDiff), common.Hash.Cmp) {
+			field := fmt.Sprintf("storage slot %v", slot)
+			if atBlock && historyStorageSlotIsWritten(config, statedb, number, slot) {
+				return refuse(params.HistoryStorageAddress, field, "which the Prague EIP-2935 history write owns")
 			}
-			if account.Nonce != nil && len(statedb.GetCode(params.Multicall3Address)) == 0 {
-				return ownedOverrideError(params.Multicall3Address, "the nonce", "which the Prague Multicall3 install owns")
+			if writer := historyRingOwner(slot, owner, span.lastBlock); writer != nil {
+				return crossBlockOverrideError(params.HistoryStorageAddress, field, writer)
 			}
 		}
-		if account, ok := (*overrides)[params.HistoryStorageAddress]; ok {
-			// Refused whatever the bytes are: canonical code would skip the backfill.
-			if account.Code != nil {
-				return ownedOverrideError(params.HistoryStorageAddress, "code", "which the Prague EIP-2935 history install owns")
-			}
-			// Only a zero nonce is raised, so a nonzero one survives.
-			if account.Nonce != nil && len(statedb.GetCode(params.HistoryStorageAddress)) == 0 && *account.Nonce == 0 {
-				return ownedOverrideError(params.HistoryStorageAddress, "the nonce", "which the Prague EIP-2935 history install owns")
-			}
-			// A replacement wipes every slot, the written one included.
-			if account.State != nil {
-				return ownedOverrideError(params.HistoryStorageAddress, "a state replacement", "which the Prague EIP-2935 history write owns")
-			}
-			for _, slot := range slices.SortedFunc(maps.Keys(account.StateDiff), common.Hash.Cmp) {
-				if historyStorageSlotIsWritten(config, statedb, number, slot) {
-					return ownedOverrideError(params.HistoryStorageAddress, fmt.Sprintf("storage slot %v", slot), "which the Prague EIP-2935 history write owns")
-				}
-			}
-		}
-		// A move onto the history contract shadows it, so the parent hash write is dropped.
-		// The destination decides, not the named account, hence the address-ordered scan.
-		// Only a source the EVM serves as a precompile can shadow the contract; for any
-		// other one override.Apply rejects the move itself, before it runs. A move onto
-		// Multicall3 stays allowed: the install is a state write.
+	}
+	// A move onto the history contract shadows it, so the parent hash write is dropped.
+	// The destination decides, not the named account, hence the address-ordered scan.
+	// Only a source the EVM serves as a precompile can shadow the contract; for any
+	// other one override.Apply rejects the move itself, before it runs. A move onto
+	// Multicall3 stays allowed: the install is a state write. Each block carries its own
+	// precompile set, so a move at an earlier block shadows nothing at the owning one.
+	if atBlock {
 		for _, source := range slices.SortedFunc(maps.Keys(*overrides), common.Address.Cmp) {
 			dest := (*overrides)[source].MovePrecompileTo
 			if dest == nil || *dest != params.HistoryStorageAddress {
@@ -315,23 +472,44 @@ func rejectOwnedAccountOverrides(config *params.ChainConfig, statedb *state.Stat
 			return ownedOverrideError(source, fmt.Sprintf("a precompile move onto %v", *dest), "whose account the Prague EIP-2935 history write owns")
 		}
 	}
+	return nil
+}
 
-	// The TIPSigning activation block removes the block signers account.
-	if number.Sign() > 0 && config.TIPSigningBlock != nil && config.TIPSigningBlock.Cmp(number) == 0 {
+// rejectTIPSigningRemovalOverrides refuses an override of the block signers account: the
+// TIPSigning activation block removes it, at that block running the change, and on an
+// earlier block of the request dropping the override into which the shared state carries it.
+func rejectTIPSigningRemovalOverrides(config *params.ChainConfig, number *big.Int, span requestSpan, overrides *override.StateOverride) error {
+	if activation := config.TIPSigningBlock; activation != nil && activation.Sign() > 0 {
 		if account, ok := (*overrides)[common.BlockSignersBinary]; ok {
-			for _, field := range []struct {
-				name string
-				set  bool
-			}{
-				{"the nonce", account.Nonce != nil},
-				{"code", account.Code != nil},
-				{"the balance", account.Balance != nil},
-				// An empty map sets no field, and the account is removed either way.
-				{"storage", len(account.State) > 0},
-				{"a storage diff", len(account.StateDiff) > 0},
-			} {
-				if field.set {
-					return ownedOverrideError(common.BlockSignersBinary, field.name, "which the block that activates TIPSigning removes with the account")
+			atActivation := activation.Cmp(number) == 0
+			crossBlock := number.Cmp(activation) < 0 && activation.Cmp(span.lastBlock) <= 0
+			if atActivation || crossBlock {
+				// An empty map sets no field at the activation block, where the same block
+				// removes the account, while on an earlier block it still clears the storage
+				// the calls run with until the activation block.
+				storageSet := len(account.State) > 0
+				if crossBlock {
+					storageSet = account.State != nil
+				}
+				refuse := func(field, clause string) error {
+					if atActivation {
+						return ownedOverrideError(common.BlockSignersBinary, field, clause)
+					}
+					return crossBlockRemovalError(common.BlockSignersBinary, field, activation)
+				}
+				for _, field := range []struct {
+					name string
+					set  bool
+				}{
+					{"the nonce", account.Nonce != nil},
+					{"code", account.Code != nil},
+					{"the balance", account.Balance != nil},
+					{"storage", storageSet},
+					{"a storage diff", len(account.StateDiff) > 0},
+				} {
+					if field.set {
+						return refuse(field.name, "which the block that activates TIPSigning removes with the account")
+					}
 				}
 			}
 		}
@@ -339,28 +517,32 @@ func rejectOwnedAccountOverrides(config *params.ChainConfig, statedb *state.Stat
 	return nil
 }
 
+// historyParentRing returns the ring position the parent hash of the given block occupies.
+func historyParentRing(number uint64) uint64 {
+	return (number - 1) % params.HistoryServeWindow
+}
+
 // historyStorageSlotIsWritten reports whether slot is one ProcessParentBlockHash writes at
 // blockNumber: the parent hash slot, plus the deploy and backfill slots. Skipped slots count.
+// It reports false below Prague, where ProcessParentBlockHash is a no-op.
 func historyStorageSlotIsWritten(config *params.ChainConfig, statedb *state.StateDB, blockNumber *big.Int, slot common.Hash) bool {
 	if blockNumber.Sign() == 0 {
 		return false
 	}
-	// The ring position sits in the low bytes, as core.historyStorageKey builds it.
-	for i := range common.HashLength - 8 {
-		if slot[i] != 0 {
-			return false
-		}
+	// The no-op check comes before the window arithmetic: below Prague the fork clamp would
+	// push start past end, and the window size would underflow into a huge value.
+	if !config.IsPrague(blockNumber) {
+		return false
 	}
-	ring := binary.BigEndian.Uint64(slot[common.HashLength-8:])
-	// The contract wraps the ring at the serve window.
-	if ring >= params.HistoryServeWindow {
+	ring, ok := historyRingPosition(slot)
+	if !ok {
 		return false
 	}
 
 	// The parent hash lands in the ring position of the block below.
 	number := blockNumber.Uint64()
 	end := number - 1
-	if ring == end%params.HistoryServeWindow {
+	if ring == historyParentRing(number) {
 		return true
 	}
 	// The deploy and backfill run only while the contract has no code.
@@ -388,6 +570,38 @@ func historyStorageSlotIsWritten(config *params.ChainConfig, statedb *state.Stat
 	return ring >= startRing || ring <= endRing
 }
 
+// historyRingPosition returns the ring position the slot names, and false for any other key.
+func historyRingPosition(slot common.Hash) (uint64, bool) {
+	// The ring position sits in the low bytes, as core.historyStorageKey builds it.
+	for i := range common.HashLength - 8 {
+		if slot[i] != 0 {
+			return 0, false
+		}
+	}
+	ring := binary.BigEndian.Uint64(slot[common.HashLength-8:])
+	// The contract wraps the ring at the serve window.
+	return ring, ring < params.HistoryServeWindow
+}
+
+// historyRingOwner returns the first block in [from, lastBlock] whose parent hash write lands in
+// the ring position the slot names, or nil when the slot names no ring position or no block
+// of the range writes it. from is a block of the request, so the scan never reaches block
+// zero, which has no parent hash to write. The scan stays short, since a request holds at most
+// maxSimulateBlocks blocks, and reads no state: before the deploy the contract has no code,
+// so a probe of the snapshot would mis-place the activation block's backfill.
+func historyRingOwner(slot common.Hash, from, lastBlock *big.Int) *big.Int {
+	ring, ok := historyRingPosition(slot)
+	if !ok {
+		return nil
+	}
+	for number := new(big.Int).Set(from); number.Cmp(lastBlock) <= 0; number.Add(number, common.Big1) {
+		if historyParentRing(number.Uint64()) == ring {
+			return new(big.Int).Set(number)
+		}
+	}
+	return nil
+}
+
 // repairLogs updates the block hash in the logs present in the result of
 // a simulated block. This is needed as during execution when logs are collected
 // the block hash is not known.
@@ -409,7 +623,9 @@ func (sim *simulator) sanitizeCall(call *TransactionArgs, state vm.StateDB, head
 		remaining := blockContext.GasLimit - *gasUsed
 		call.Gas = (*hexutil.Uint64)(&remaining)
 	}
-	if *gasUsed+uint64(*call.Gas) > blockContext.GasLimit {
+	// Compare with a subtraction: adding gasUsed and call.Gas would wrap for a
+	// call gas near MaxUint64 and let the call through.
+	if *gasUsed > blockContext.GasLimit || uint64(*call.Gas) > blockContext.GasLimit-*gasUsed {
 		return &blockGasLimitReachedError{fmt.Sprintf("block gas limit reached: %d >= %d", *gasUsed, blockContext.GasLimit)}
 	}
 	// A set-code transaction needs the EIP-1559 fee fields, so gasPrice cannot be

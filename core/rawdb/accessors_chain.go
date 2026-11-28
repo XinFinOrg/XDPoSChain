@@ -66,6 +66,47 @@ func DeleteCanonicalHash(db ethdb.KeyValueWriter, number uint64) {
 	}
 }
 
+// DeleteCanonicalHashesAbove removes every canonical-hash assignment whose block
+// number is strictly greater than head. DeleteDanglingHashes reaches assignments
+// only through their header keys, so it cannot see one whose header is already
+// gone; this scans the canonical-hash keyspace instead, contiguous or not.
+func DeleteCanonicalHashesAbove(db ethdb.KeyValueStore, head uint64) error {
+	// head == max would wrap the start back to zero, scanning from the beginning
+	start := head + 1
+	if start == 0 {
+		return nil
+	}
+	// canonical-hash key = headerPrefix + num (8 bytes) + headerHashSuffix
+	keyLen := len(headerPrefix) + 8 + len(headerHashSuffix)
+
+	batch := db.NewBatch()
+	it := db.NewIterator(headerPrefix, encodeBlockNumber(start))
+	defer it.Release()
+
+	for it.Next() {
+		key := it.Key()
+		// Headers and total-difficulty entries share the prefix but differ in length
+		if len(key) != keyLen {
+			continue
+		}
+		number := binary.BigEndian.Uint64(key[len(headerPrefix) : len(headerPrefix)+8])
+		if number <= head {
+			continue
+		}
+		DeleteCanonicalHash(batch, number)
+		if batch.ValueSize() >= ethdb.IdealBatchSize {
+			if err := batch.Write(); err != nil {
+				return err
+			}
+			batch.Reset()
+		}
+	}
+	if err := it.Error(); err != nil {
+		return err
+	}
+	return batch.Write()
+}
+
 // ReadAllHashes retrieves all the hashes assigned to blocks at a certain height,
 // both canonical and reorged forks included.
 //
@@ -95,8 +136,11 @@ func ReadAllHashes(db ethdb.Iteratee, number uint64) []common.Hash {
 // duplicated with a cross-reference on both sides.
 const sweepReportInterval = 30 * time.Second
 
-// DeleteDanglingHashes removes every header, total-difficulty and canonical-hash
-// entry whose block number is strictly greater than head. It walks the header
+// DeleteDanglingHashes removes every header and total-difficulty entry whose block
+// number is strictly greater than head, together with the canonical-hash entry of
+// every height that still holds a header key. An assignment whose header keys are
+// already gone survives this sweep; ResetWithGenesisBlock follows it with
+// DeleteCanonicalHashesAbove, a plain rewind leaves it behind. It walks the header
 // keyspace directly (rather than scanning contiguous heights), so orphaned
 // side-fork segments left above the chain head by an aborted sync are wiped even
 // when their heights are not contiguous (i.e. separated by gaps). For each
@@ -774,15 +818,6 @@ func WriteBlock(db ethdb.KeyValueWriter, block *types.Block) {
 func DeleteBlock(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
 	DeleteReceipts(db, hash, number)
 	DeleteHeader(db, hash, number)
-	DeleteBody(db, hash, number)
-	DeleteTd(db, hash, number)
-}
-
-// deleteBlockWithoutNumber removes all block data associated with a hash, except
-// the hash to number mapping.
-func deleteBlockWithoutNumber(db ethdb.KeyValueWriter, hash common.Hash, number uint64) {
-	DeleteReceipts(db, hash, number)
-	deleteHeaderWithoutNumber(db, hash, number)
 	DeleteBody(db, hash, number)
 	DeleteTd(db, hash, number)
 }

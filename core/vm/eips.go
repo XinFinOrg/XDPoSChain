@@ -39,6 +39,7 @@ var activators = map[int]func(*JumpTable){
 	7702: enable7702,
 	7939: enable7939,
 	8024: enable8024,
+	7843: enable7843,
 }
 
 // EnableEIP enables the given EIP on the config.
@@ -315,6 +316,28 @@ func enable7939(jt *JumpTable) {
 		constantGas: GasFastStep,
 		minStack:    minStack(1, 1),
 		maxStack:    maxStack(1, 1),
+	}
+}
+
+// opSlotNum implements the SLOTNUM opcode (EIP-7843)
+func opSlotNum(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	scope.Stack.push(new(uint256.Int).SetUint64(evm.Context.SlotNum))
+	return nil, nil
+}
+
+// enable7843 enables EIP-7843 (SLOTNUM opcode). The slot number is not carried
+// in a header field here: a slot is a block on this chain, so the block context
+// derives the value from the block number (docs/adr/0006-define-slot-number-as-block-number.md).
+//
+// The activator is also reachable through Config.ExtraEips, which installs the
+// opcode before the fork; a block context that does not set SlotNum reports
+// zero there.
+func enable7843(jt *JumpTable) {
+	jt[SLOTNUM] = &operation{
+		execute:     opSlotNum,
+		constantGas: GasQuickStep,
+		minStack:    minStack(0, 1),
+		maxStack:    maxStack(0, 1),
 	}
 }
 

@@ -232,3 +232,42 @@ func TestCommitFastSyncDataKeepsPeerOnStoppedChain(t *testing.T) {
 		t.Fatalf("the local condition must keep its cause: have %v want %v", err, core.ErrChainStopped)
 	}
 }
+
+// TestSyncBatchLocalInsertErrKeepPeer covers the header-only import of fast and light sync:
+// InsertHeaderChain reports local conditions too, and the peer that served the headers must not
+// be dropped through errInvalidChain for them.
+func TestSyncBatchLocalInsertErrKeepPeer(t *testing.T) {
+	t.Parallel()
+	for _, mode := range []SyncMode{LightSync, FastSync} {
+		t.Run(mode.String(), func(t *testing.T) {
+			tester := newTester()
+			defer tester.terminate()
+
+			chain := testChainBase.shorten(blockCacheMaxItems - 15)
+			if err := tester.newPeer("peer", xdc164, chain); err != nil {
+				t.Fatalf("failed to register peer: %v", err)
+			}
+			tester.insertHeaderChainHook = func([]*types.Header) error {
+				return consensus.ErrMissingPenaltyBlock
+			}
+
+			head := chain.headBlock()
+			err := tester.downloader.Synchronise("peer", head.Hash(), chain.td(head.Hash()), mode)
+			if err == nil {
+				t.Fatal("expected the local header insertion error to be reported")
+			}
+			if errors.Is(err, errInvalidChain) {
+				t.Fatalf("a local header insertion failure must not be an invalid chain: %v", err)
+			}
+			if !errors.Is(err, errLocalInsertFailure) {
+				t.Fatalf("unexpected error: have %v want %v", err, errLocalInsertFailure)
+			}
+			if !errors.Is(err, consensus.ErrMissingPenaltyBlock) {
+				t.Fatalf("the local condition must keep its cause: have %v want %v", err, consensus.ErrMissingPenaltyBlock)
+			}
+			if _, ok := tester.peers["peer"]; !ok {
+				t.Fatal("peer should be kept on a local header insertion failure")
+			}
+		})
+	}
+}

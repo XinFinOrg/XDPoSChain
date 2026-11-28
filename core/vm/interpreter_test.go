@@ -39,7 +39,7 @@ var loopInterruptTests = []string{
 func TestLoopInterrupt(t *testing.T) {
 	address := common.BytesToAddress([]byte("contract"))
 	vmctx := BlockContext{
-		Transfer: func(StateDB, common.Address, common.Address, *uint256.Int) {},
+		Transfer: func(StateDB, common.Address, common.Address, *uint256.Int, *params.Rules) {},
 	}
 
 	for i, tt := range loopInterruptTests {
@@ -54,7 +54,7 @@ func TestLoopInterrupt(t *testing.T) {
 		timeout := make(chan bool)
 
 		go func(evm *EVM) {
-			_, _, err := evm.Call(common.Address{}, address, nil, math.MaxUint64, new(uint256.Int))
+			_, _, err := evm.Call(common.Address{}, address, nil, NewGasBudget(math.MaxUint64), new(uint256.Int))
 			errChannel <- err
 		}(evm)
 
@@ -84,7 +84,7 @@ func BenchmarkInterpreter(b *testing.B) {
 		value             = uint256.NewInt(0)
 		stack             = newstack()
 		mem               = NewMemory()
-		contract          = NewContract(common.Address{}, common.Address{}, value, startGas, nil)
+		contract          = NewContract(common.Address{}, common.Address{}, value, NewGasBudget(startGas), nil)
 	)
 	stack.push(uint256.NewInt(123))
 	stack.push(uint256.NewInt(123))

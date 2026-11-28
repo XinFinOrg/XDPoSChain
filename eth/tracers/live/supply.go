@@ -1,3 +1,19 @@
+// Copyright 2025 The go-ethereum Authors
+// This file is part of the go-ethereum library.
+//
+// The go-ethereum library is free software: you can redistribute it and/or modify
+// it under the terms of the GNU Lesser General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// The go-ethereum library is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+// GNU Lesser General Public License for more details.
+//
+// You should have received a copy of the GNU Lesser General Public License
+// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+
 package live
 
 import (
@@ -11,7 +27,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
-	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -57,15 +72,9 @@ type supplyInfo struct {
 	ParentHash common.Hash `json:"parentHash"`
 }
 
-type supplyTxCallstack struct {
-	calls []supplyTxCallstack
-	burn  *big.Int
-}
-
 type supply struct {
-	delta       supplyInfo
-	txCallstack []supplyTxCallstack // Callstack for current transaction
-	logger      *lumberjack.Logger
+	delta  supplyInfo
+	logger *lumberjack.Logger
 }
 
 type supplyTracerConfig struct {
@@ -100,10 +109,7 @@ func newSupply(cfg json.RawMessage) (*tracing.Hooks, error) {
 		OnBlockStart:    t.OnBlockStart,
 		OnBlockEnd:      t.OnBlockEnd,
 		OnGenesisBlock:  t.OnGenesisBlock,
-		OnTxStart:       t.OnTxStart,
 		OnBalanceChange: t.OnBalanceChange,
-		OnEnter:         t.OnEnter,
-		OnExit:          t.OnExit,
 		OnClose:         t.OnClose,
 	}, nil
 }
@@ -169,79 +175,21 @@ func (s *supply) OnBalanceChange(a common.Address, prevBalance, newBalance *big.
 
 	// NOTE: don't handle "BalanceIncreaseGenesisBalance" because it is handled in OnGenesisBlock
 	switch reason {
-	case tracing.BalanceIncreaseRewardMineUncle:
-	case tracing.BalanceIncreaseRewardMineBlock:
+	case tracing.BalanceIncreaseRewardMineBlock, tracing.BalanceIncreaseRewardMineUncle:
 		s.delta.Issuance.Reward.Add(s.delta.Issuance.Reward, diff)
 	case tracing.BalanceIncreaseWithdrawal:
 		s.delta.Issuance.Withdrawals.Add(s.delta.Issuance.Withdrawals, diff)
 	case tracing.BalanceDecreaseSelfdestructBurn:
 		// BalanceDecreaseSelfdestructBurn is non-reversible as it happens
-		// at the end of the transaction.
+		// at the end of the transaction. It is also the only source of the
+		// selfdestruct burn: the state reports the balance a destruct really
+		// destroys, so the EVM does not have to guess it from the SELFDESTRUCT
+		// enter event, where a self-destruct to self keeps its balance from
+		// EIP-6780 (Cancun) onwards and from EIP-8246 (Amsterdam) onwards.
 		s.delta.Burn.Misc.Sub(s.delta.Burn.Misc, diff)
 	default:
 		return
 	}
-}
-
-func (s *supply) OnTxStart(vm *tracing.VMContext, tx *types.Transaction, from common.Address) {
-	s.txCallstack = make([]supplyTxCallstack, 0, 1)
-}
-
-// internalTxsHandler handles internal transactions burned amount
-func (s *supply) internalTxsHandler(call *supplyTxCallstack) {
-	// Handle Burned amount
-	if call.burn != nil {
-		s.delta.Burn.Misc.Add(s.delta.Burn.Misc, call.burn)
-	}
-
-	if len(call.calls) > 0 {
-		// Recursivelly handle internal calls
-		for _, call := range call.calls {
-			callCopy := call
-			s.internalTxsHandler(&callCopy)
-		}
-	}
-}
-
-func (s *supply) OnEnter(depth int, typ byte, from common.Address, to common.Address, input []byte, gas uint64, value *big.Int) {
-	call := supplyTxCallstack{
-		calls: make([]supplyTxCallstack, 0),
-	}
-
-	// This is a special case of burned amount which has to be handled here
-	// which happens when type == selfdestruct and from == to.
-	if vm.OpCode(typ) == vm.SELFDESTRUCT && from == to && value.Cmp(common.Big0) == 1 {
-		call.burn = value
-	}
-
-	// Append call to the callstack, so we can fill the details in CaptureExit
-	s.txCallstack = append(s.txCallstack, call)
-}
-
-func (s *supply) OnExit(depth int, output []byte, gasUsed uint64, err error, reverted bool) {
-	if depth == 0 {
-		// No need to handle Burned amount if transaction is reverted
-		if !reverted {
-			s.internalTxsHandler(&s.txCallstack[0])
-		}
-		return
-	}
-
-	size := len(s.txCallstack)
-	if size <= 1 {
-		return
-	}
-	// Pop call
-	call := s.txCallstack[size-1]
-	s.txCallstack = s.txCallstack[:size-1]
-	size -= 1
-
-	// In case of a revert, we can drop the call and all its subcalls.
-	// Caution, that this has to happen after popping the call from the stack.
-	if reverted {
-		return
-	}
-	s.txCallstack[size-1].calls = append(s.txCallstack[size-1].calls, call)
 }
 
 func (s *supply) OnClose() {

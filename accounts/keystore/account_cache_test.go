@@ -253,6 +253,35 @@ func TestCacheAddDeleteOrder(t *testing.T) {
 	}
 }
 
+// TestDeleteFileKeepsCacheOnRemoveFailure pins the ordering deleteFile relies
+// on: the cache entry is only dropped after the key file is really gone.
+// A failed removal keeps it: the file may still exist, and Delete reports the
+// failure, so the account must not silently disappear from the wallet list;
+// a later scan reconciles the cache once the file is really gone.
+// The success path is covered by TestKeyStore, the event ordering under -race
+// by TestWalletNotifications.
+func TestDeleteFileKeepsCacheOnRemoveFailure(t *testing.T) {
+	t.Parallel()
+	cache, _ := newAccountCache(filepath.Join("testdata", "no-such-dir"))
+	cache.watcher.running = true // prevent unexpected reloads
+
+	account := accounts.Account{
+		Address: common.HexToAddress("7ef5a6135f1fd6a02593eedc869c6d41d934aef8"),
+		URL:     accounts.URL{Scheme: KeyStoreScheme, Path: filepath.Join("testdata", "no-such-dir", "UTC--missing")},
+	}
+	cache.add(account)
+
+	if err := cache.deleteFile(account); !os.IsNotExist(err) {
+		t.Fatalf("deleteFile error = %v, want file-not-found", err)
+	}
+	if !cache.hasAddress(account.Address) {
+		t.Error("cache entry dropped although the key file could not be removed")
+	}
+	if got := cache.accounts(); len(got) != 1 || got[0] != account {
+		t.Errorf("cache accounts = %v, want [%v]", got, account)
+	}
+}
+
 func TestCacheFind(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join("testdata", "dir")

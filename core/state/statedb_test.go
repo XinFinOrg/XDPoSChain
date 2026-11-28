@@ -485,7 +485,9 @@ func TestCopyObjectState(t *testing.T) {
 
 // TestSnapshotRandom tests snapshot random.
 func TestSnapshotRandom(t *testing.T) {
-	config := &quick.Config{MaxCount: 1000}
+	// Copying and comparing the whole state once per snapshot is slow under -race,
+	// so the count is kept low
+	config := &quick.Config{MaxCount: 200}
 	err := quick.Check((*snapshotTest).run, config)
 	if cerr, ok := err.(*quick.CheckError); ok {
 		test := cerr.In[0].(*snapshotTest)

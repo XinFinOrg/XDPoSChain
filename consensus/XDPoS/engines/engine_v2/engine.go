@@ -27,10 +27,16 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/trie"
 	"golang.org/x/sync/errgroup"
 )
+
+// skippedProposedBlock counts skips at this engine's two gates, once per
+// handler invocation. It is the alert target for reorg-race stalls; the wiring
+// bug keeps its own counter (consensus/unjudgeable-proposed-block).
+var skippedProposedBlock = metrics.NewRegisteredCounter("consensus/skipped-proposed-block", nil)
 
 type XDPoS_v2 struct {
 	config       *params.XDPoSConfig // Consensus engine configuration parameters
@@ -87,6 +93,16 @@ type XDPoS_v2 struct {
 }
 
 func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan int, newRoundCh chan types.Round) (*XDPoS_v2, error) {
+	return newEngine(chainConfig, db, minePeriodCh, newRoundCh, true)
+}
+
+// NewFaker builds an engine without judging the XDPoS schedule: the faker is
+// the declared unvalidated path (#2743).
+func NewFaker(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan int, newRoundCh chan types.Round) (*XDPoS_v2, error) {
+	return newEngine(chainConfig, db, minePeriodCh, newRoundCh, false)
+}
+
+func newEngine(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan int, newRoundCh chan types.Round, validateSchedule bool) (*XDPoS_v2, error) {
 	if chainConfig == nil {
 		return nil, errors.New("engine_v2.New requires startup-validated XDPoS V2 config")
 	}
@@ -96,6 +112,11 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database, minePeriodCh chan i
 	// instead of nil-dereferencing deeper in constructor setup.
 	if config == nil || config.V2 == nil || config.V2.SwitchBlock == nil || config.V2.CurrentConfig == nil || len(config.V2.AllConfigs) == 0 {
 		return nil, errors.New("engine_v2.New requires startup-validated XDPoS V2 config")
+	}
+	if validateSchedule {
+		if err := config.CheckSchedule(); err != nil {
+			return nil, err
+		}
 	}
 	// Setup timeoutTimer
 	duration := time.Duration(config.V2.CurrentConfig.TimeoutPeriod) * time.Second
@@ -229,14 +250,11 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 			Round:  types.Round(0),
 			Number: header.Number,
 		}
+		gapNumber, _ := x.config.GapBlockNumber(header.Number.Uint64())
 		quorumCert = &types.QuorumCert{
 			ProposedBlockInfo: blockInfo,
 			Signatures:        nil,
-			GapNumber:         header.Number.Uint64() - x.config.Gap,
-		}
-		// prevent overflow
-		if header.Number.Uint64() < x.config.Gap {
-			quorumCert.GapNumber = 0
+			GapNumber:         gapNumber,
 		}
 		// can not call processQC because round is equal to default
 		x.currentRound = 1
@@ -254,13 +272,12 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 	}
 
 	// Initial first v2 snapshot
-	lastGapNum := uint64(0)
-	if x.config.V2.SwitchBlock.Uint64() > x.config.Gap {
-		lastGapNum = x.config.V2.SwitchBlock.Uint64() - x.config.Gap
-	}
+	lastGapNum, _ := x.config.GapBlockNumber(x.config.V2.SwitchBlock.Uint64())
 	lastGapHeader := chain.GetHeaderByNumber(lastGapNum)
+	lastGapHash := lastGapHeader.Hash()
 
-	snap, _ := loadSnapshot(x.db, lastGapHeader.Hash())
+	snap, err := loadSnapshot(x.db, lastGapHash)
+	reportBootstrapSnapshotLoad(x.db, lastGapNum, lastGapHash, err)
 
 	if snap == nil {
 		checkpointHeader := chain.GetHeaderByNumber(x.config.V2.SwitchBlock.Uint64())
@@ -305,6 +322,18 @@ func (x *XDPoS_v2) initial(chain consensus.ChainReader, header *types.Header) er
 	log.Warn("[initial] finish initialisation")
 
 	return nil
+}
+
+// reportBootstrapSnapshotLoad logs why initial() is about to rewrite the bootstrap snapshot.
+func reportBootstrapSnapshotLoad(db ethdb.KeyValueReader, number uint64, hash common.Hash, err error) {
+	switch {
+	case err == nil || snapshotNotStored(db, hash):
+		// A missing record is the normal first start: initial() writes it.
+	case errors.Is(err, errUnusableSnapshot):
+		log.Warn("[initial] stored bootstrap snapshot is unusable, rebuilding", "number", number, "hash", hash, "err", err)
+	default:
+		log.Warn("[initial] cannot read the stored bootstrap snapshot, rewriting it", "number", number, "hash", hash, "err", err)
+	}
 }
 
 // Check if it's my turn to mine a block. Note: The second return value `preIndex` is useless in V2 engine
@@ -470,11 +499,14 @@ func (x *XDPoS_v2) Finalize(chain consensus.ChainReader, header *types.Header, s
 		parentHeader := chain.GetHeaderByHash(header.ParentHash)
 		isMyTurn, err := x.yourturn(chain, decodedExtraField.Round, parentHeader, signer)
 		if err != nil {
-			log.Error("[Finalize] Error checking myturn", "err", err, "round", decodedExtraField.Round, "signer", signer, "parentHeader", parentHeader)
-			return nil, err
-		}
-
-		if !isMyTurn { // if myturn use Seal to save file
+			// Bookkeeping of this node rather than a fault of the block: yourturn only
+			// decides whether the reward file is written, and the import path replays
+			// historical and competing epoch-switch blocks through here, where rounds at
+			// or below the highest one this node sealed - or a gap snapshot this node
+			// cannot read - are ordinary. The rewards above are already applied; the
+			// seal-time check still enforces one block per round.
+			log.Warn("[Finalize] Error checking myturn, skipping the reward file", "err", err, "round", decodedExtraField.Round, "signer", signer, "parentHeader", parentHeader)
+		} else if !isMyTurn { // if myturn use Seal to save file
 			x.saveRewardToFile(header.Hash(), header.Number.Uint64())
 		}
 	}
@@ -583,7 +615,14 @@ func (x *XDPoS_v2) CalcDifficulty(chain consensus.ChainReader, time uint64, pare
 func (x *XDPoS_v2) IsAuthorisedAddress(chain consensus.ChainReader, header *types.Header, address common.Address) bool {
 	snap, err := x.GetSnapshot(chain, header)
 	if err != nil {
-		log.Error("[IsAuthorisedAddress] Can't get snapshot with at ", "number", header.Number, "hash", header.Hash().Hex(), "err", err)
+		// The txpool asks this for every incoming special transaction, also while
+		// the node is syncing, when the head snapshot may not be built yet. That is
+		// expected, so log at Debug then and keep Error for a synced head.
+		logFn := log.Error
+		if x.HookSyncing != nil && x.HookSyncing() {
+			logFn = log.Debug
+		}
+		logFn("[IsAuthorisedAddress] Can't get snapshot with at ", "number", header.Number, "hash", header.Hash().Hex(), "err", err)
 		return false
 	}
 	for _, mn := range snap.NextEpochCandidates {
@@ -612,7 +651,7 @@ func (x *XDPoS_v2) GetSnapshot(chain consensus.ChainReader, header *types.Header
 func (x *XDPoS_v2) UpdateMasternodes(chain consensus.ChainReader, header *types.Header, ms []utils.Masternode) error {
 	number := header.Number.Uint64()
 	log.Trace("[UpdateMasternodes]", "number", number, "hash", header.Hash())
-	if number%x.config.Epoch != x.config.Epoch-x.config.Gap {
+	if !x.config.IsGapBlock(number) {
 		return fmt.Errorf("[UpdateMasternodes] not gap block, number: %d, epoch: %d,gap: %d", number, x.config.Epoch, x.config.Gap)
 	}
 
@@ -747,8 +786,20 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 					- Use the above xdc address to check against the master node list from step 1(For the running epoch)
 			4. Broadcast(Not part of consensus)
 	*/
+	if vote == nil || vote.ProposedBlockInfo == nil || vote.ProposedBlockInfo.Number == nil {
+		return false, nil
+	}
 	if vote.ProposedBlockInfo.Round < x.currentRound {
 		log.Debug("[VerifyVoteMessage] Disqualified vote message as the proposed round does not match currentRound", "voteHash", vote.Hash(), "voteProposedBlockInfoRound", vote.ProposedBlockInfo.Round, "currentRound", x.currentRound)
+		return false, nil
+	}
+
+	// GapNumber is attacker-controlled until here, and getSnapshot would read a
+	// canonical header for any height. Only a gap block can back a vote, plus the
+	// chain-start fallback 0, which names no gap block but is what GapBlockNumber
+	// returns for an epoch that starts no farther than Gap into the chain.
+	if _, ok := x.config.GapTrigger(); ok && vote.GapNumber != 0 && !x.config.IsGapBlock(vote.GapNumber) {
+		log.Debug("[VerifyVoteMessage] Disqualified vote message as the gap number is not a gap block", "voteHash", vote.Hash(), "gapNumber", vote.GapNumber)
 		return false, nil
 	}
 
@@ -762,10 +813,7 @@ func (x *XDPoS_v2) VerifyVoteMessage(chain consensus.ChainReader, vote *types.Vo
 		GapNumber:         vote.GapNumber,
 	}), vote.Signature, snapshot.NextEpochCandidates)
 	if err != nil {
-		for i, mn := range snapshot.NextEpochCandidates {
-			log.Warn("[VerifyVoteMessage] Master node list item", "index", i, "Master node", mn.Hex())
-		}
-		log.Warn("[VerifyVoteMessage] Error while verifying vote message", "votedBlockNum", vote.ProposedBlockInfo.Number.Uint64(), "votedBlockHash", vote.ProposedBlockInfo.Hash.Hex(), "voteHash", vote.Hash(), "error", err.Error())
+		log.Debug("[VerifyVoteMessage] Error while verifying vote message", "votedBlockNum", vote.ProposedBlockInfo.Number.Uint64(), "votedBlockHash", vote.ProposedBlockInfo.Hash.Hex(), "voteHash", vote.Hash(), "candidates", len(snapshot.NextEpochCandidates), "signer", signer, "error", err.Error())
 		return false, err
 	}
 	vote.SetSigner(signer)
@@ -843,6 +891,20 @@ func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ChainReader, blockHeader
 		return err
 	}
 
+	// Re-check at two points: x.lock serializes this handler, not InsertChain,
+	// so a reorg can land in between. The first check protects processQC, whose
+	// first step advances highestQuorumCert before its own existence check; that
+	// check cannot tell a reorged-away fork from the canonical block, because the
+	// fork stays in the database.
+	ok, reason, canonicalHash := consensus.ShouldHandleProposedBlock(chain, blockHeader)
+	if !ok {
+		skippedProposedBlock.Inc(1)
+		consensus.SkipLogLevel(reason)("[ProposedBlockHandler] skip block before processQC", "reason", reason, "hash", blockHeader.Hash(), "number", blockHeader.Number, "canonicalHash", canonicalHash)
+		// Return nil, never an error: the fetcher treats a handler error as an
+		// import failure and suppresses the block's broadcast.
+		return nil
+	}
+
 	// Generate blockInfo
 	blockInfo := &types.BlockInfo{
 		Hash:   blockHeader.Hash(),
@@ -865,6 +927,18 @@ func (x *XDPoS_v2) ProposedBlockHandler(chain consensus.ChainReader, blockHeader
 		return err
 	}
 	if verified {
+		// A reorg can still land between the processQC re-check and the
+		// broadcast, so drop the vote if the block has been reorged away.
+		// processQC's writes stay: the block's embedded QC certifies its parent,
+		// so advancing highestQuorumCert, lockQuorumCert and the commit block on
+		// it is correct, and BlockChain.reorg refuses any reorg that would drop
+		// the committed block. Only the vote for the reorged block must go.
+		ok, reason, canonicalHash = consensus.ShouldHandleProposedBlock(chain, blockHeader)
+		if !ok {
+			skippedProposedBlock.Inc(1)
+			consensus.SkipLogLevel(reason)("[ProposedBlockHandler] skip vote for proposed block", "reason", reason, "hash", blockHeader.Hash(), "number", blockHeader.Number, "canonicalHash", canonicalHash)
+			return nil
+		}
 		return x.sendVote(chain, blockInfo)
 	}
 
@@ -998,12 +1072,7 @@ func (x *XDPoS_v2) verifyQC(blockChainReader consensus.ChainReader, quorumCert *
 		return err
 	}
 	epochSwitchNumber := epochInfo.EpochSwitchBlockInfo.Number.Uint64()
-	gapNumber := epochSwitchNumber - epochSwitchNumber%x.config.Epoch
-	if gapNumber > x.config.Gap {
-		gapNumber -= x.config.Gap
-	} else {
-		gapNumber = 0
-	}
+	gapNumber, _ := x.config.GapBlockNumber(epochSwitchNumber)
 	if gapNumber != quorumCert.GapNumber {
 		log.Error("[verifyQC] QC gap number mismatch", "epochSwitchNumber", epochSwitchNumber, "BlockNum", quorumCert.ProposedBlockInfo.Number, "BlockInfoHash", quorumCert.ProposedBlockInfo.Hash, "Gap", quorumCert.GapNumber, "GapShouldBe", gapNumber)
 		return fmt.Errorf("gap number mismatch QC Gap %d, shouldBe %d", quorumCert.GapNumber, gapNumber)
@@ -1258,6 +1327,13 @@ func (x *XDPoS_v2) GetPreviousPenaltyByHash(chain consensus.ChainReader, hash co
 		return []common.Address{}
 	}
 	return common.ExtractAddressFromBytes(header.Penalties)
+}
+
+// CurrentRound returns the BFT round the engine is currently in.
+func (x *XDPoS_v2) CurrentRound() types.Round {
+	x.lock.RLock()
+	defer x.lock.RUnlock()
+	return x.currentRound
 }
 
 func (x *XDPoS_v2) FindParentBlockToAssign(chain consensus.ChainReader) *types.Block {

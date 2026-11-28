@@ -6,7 +6,6 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
-	"github.com/XinFinOrg/XDPoSChain/log"
 )
 
 type BatchItem struct {
@@ -21,16 +20,21 @@ type BatchDatabase struct {
 }
 
 // NewBatchDatabase use rlp as encoding
-func NewBatchDatabase(datadir string, cacheLimit int) *BatchDatabase {
+func NewBatchDatabase(datadir string, cacheLimit int) (*BatchDatabase, error) {
 	return NewBatchDatabaseWithEncode(datadir, cacheLimit)
 }
 
 // batchdatabase is a fast cache db to retrieve in-mem object
-func NewBatchDatabaseWithEncode(datadir string, cacheLimit int) *BatchDatabase {
-	db, err := rawdb.NewLevelDBDatabase(datadir, 128, 1024, "", false)
-	if err != nil {
-		log.Error("Can't create new DB", "error", err)
-		return nil
+func NewBatchDatabaseWithEncode(datadir string, cacheLimit int) (*BatchDatabase, error) {
+	var (
+		db  ethdb.Database
+		err error
+	)
+	if datadir == "" {
+		// An empty data directory is an ephemeral, in-memory database.
+		db = rawdb.NewMemoryDatabase()
+	} else if db, err = rawdb.NewLevelDBDatabase(datadir, 128, 1024, "", false); err != nil {
+		return nil, err
 	}
 	itemCacheLimit := defaultCacheLimit
 	if cacheLimit > 0 {
@@ -43,7 +47,7 @@ func NewBatchDatabaseWithEncode(datadir string, cacheLimit int) *BatchDatabase {
 		cacheLimit: itemCacheLimit,
 	}
 
-	return batchDB
+	return batchDB, nil
 }
 
 func (db *BatchDatabase) IsEmptyKey(key []byte) bool {

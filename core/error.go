@@ -103,6 +103,11 @@ var (
 	// ErrSenderNoEOA is returned if the sender of a transaction is a contract.
 	ErrSenderNoEOA = errors.New("sender not an eoa")
 
+	// ErrFinalize marks a failure from consensus.Engine.Finalize: callers
+	// classify it without matching the message, which still reads
+	// "finalize error: <engine error>", as GenerateChain panics with.
+	ErrFinalize = errors.New("finalize error")
+
 	// --  XDPoS errors --
 
 	ErrNotXDPoS           = errors.New("XDPoS not found in config")

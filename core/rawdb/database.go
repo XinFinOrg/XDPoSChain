@@ -25,8 +25,8 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/ethdb/leveldb"
 	"github.com/XinFinOrg/XDPoSChain/ethdb/memorydb"
+	"github.com/XinFinOrg/XDPoSChain/internal/tablewriter"
 	"github.com/XinFinOrg/XDPoSChain/log"
-	"github.com/olekukonko/tablewriter"
 )
 
 // nofreezedb is a database wrapper that disables freezer data retrievals.

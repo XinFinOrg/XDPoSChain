@@ -33,7 +33,7 @@ import (
 // derivation that still fetched the stakes over IPC would fail there instead of
 // producing the set, and the block would not be imported at all.
 func TestNextEpochSnapshotDoesNotNeedAnIPCEndpoint(t *testing.T) {
-	skipLongInShortMode(t)
+	t.Parallel()
 	config := params.TestXDPoSMockChainConfig
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, int(config.XDPoS.Epoch+config.XDPoS.Gap)-1, config, nil)
 

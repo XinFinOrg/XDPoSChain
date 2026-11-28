@@ -143,7 +143,11 @@ func newTestBackend(config *node.Config) (*node.Node, []*types.Block, error) {
 		return nil, nil, fmt.Errorf("can't create new node: %v", err)
 	}
 	// Create XDCx and lending services required by eth.New
-	xdcx := XDCx.New(n, &XDCx.Config{DataDir: filepath.Join(config.DataDir, "XDCx")})
+	xdcx, err := XDCx.New(n, &XDCx.Config{DataDir: filepath.Join(config.DataDir, "XDCx")})
+	if err != nil {
+		n.Close()
+		return nil, nil, fmt.Errorf("can't create the XDCx service: %v", err)
+	}
 	lending := XDCxlending.New(n, xdcx)
 	// Create Ethereum Service
 	ecfg := &ethconfig.Config{Genesis: genesis, RPCGasCap: 1000000}
@@ -189,7 +193,7 @@ func TestEthClient(t *testing.T) {
 	log.SetDefault(log.NewLogger(log.DiscardHandler()))
 	defer log.SetDefault(prevLog)
 
-	backend, chain, err := newTestBackend(nil)
+	backend, chain, err := newTestBackend(&node.Config{DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -859,7 +863,7 @@ func ExampleRevertErrorData() {
 
 // TestSimulateV1 tests simulate v 1.
 func TestSimulateV1(t *testing.T) {
-	backend, _, err := newTestBackend(nil)
+	backend, _, err := newTestBackend(&node.Config{DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Failed to create test backend: %v", err)
 	}
@@ -927,7 +931,7 @@ func TestSimulateV1(t *testing.T) {
 
 // TestSimulateV1WithBlockOverrides tests simulate v 1 with block overrides.
 func TestSimulateV1WithBlockOverrides(t *testing.T) {
-	backend, _, err := newTestBackend(nil)
+	backend, _, err := newTestBackend(&node.Config{DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Failed to create test backend: %v", err)
 	}
@@ -986,7 +990,7 @@ func TestSimulateV1WithBlockOverrides(t *testing.T) {
 
 // TestSimulateV1WithStateOverrides tests simulate v 1 with state overrides.
 func TestSimulateV1WithStateOverrides(t *testing.T) {
-	backend, _, err := newTestBackend(nil)
+	backend, _, err := newTestBackend(&node.Config{DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Failed to create test backend: %v", err)
 	}
@@ -1050,7 +1054,7 @@ func TestSimulateV1WithStateOverrides(t *testing.T) {
 
 // TestSimulateV1WithBlockNumberOrHash tests simulate v 1 with block number or hash.
 func TestSimulateV1WithBlockNumberOrHash(t *testing.T) {
-	backend, _, err := newTestBackend(nil)
+	backend, _, err := newTestBackend(&node.Config{DataDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Failed to create test backend: %v", err)
 	}

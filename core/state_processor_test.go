@@ -185,13 +185,13 @@ func TestStateProcessorErrors(t *testing.T) {
 		tooBigNumber.Add(tooBigNumber, common.Big1)
 		maxInitCodeSize := params.MaxInitCodeSize
 		tooBigInitCode := make([]byte, maxInitCodeSize+1)
-		tooBigInitCodeIntrinsicGas, err := IntrinsicGas(tooBigInitCode, nil, nil, true, rules.IsHomestead, rules.IsPrague, rules.IsEIP1559)
+		tooBigInitCodeIntrinsicGas, err := IntrinsicGas(tooBigInitCode, nil, nil, common.Address{}, nil, nil, rules)
 		if err != nil {
 			t.Fatal(err)
 		}
 		tooBigInitCodeRequiredGas := tooBigInitCodeIntrinsicGas
 		if rules.IsPrague {
-			tooBigInitCodeFloorGas, err := FloorDataGas(tooBigInitCode)
+			tooBigInitCodeFloorGas, err := FloorDataGas(rules, common.Address{}, nil, nil, tooBigInitCode, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -686,8 +686,6 @@ func TestProcessSnapshotsParentStateBeforeBlockLevelHooks(t *testing.T) {
 
 	config := params.TestChainConfig.Clone()
 	setXinFinForksToFuture(config, big.NewInt(1_000_000_000))
-	// setXinFinForksToFuture leaves Amsterdam unset.
-	config.AmsterdamBlock = big.NewInt(1_000_000_000)
 	config.TIPSigningBlock = big.NewInt(1)
 
 	db := rawdb.NewMemoryDatabase()
@@ -732,8 +730,6 @@ func TestProcessBlockNoValidatorSnapshotsParentStateBeforeBlockLevelHooks(t *tes
 
 	config := params.TestChainConfig.Clone()
 	setXinFinForksToFuture(config, big.NewInt(1_000_000_000))
-	// setXinFinForksToFuture leaves Amsterdam unset.
-	config.AmsterdamBlock = big.NewInt(1_000_000_000)
 	config.TIPSigningBlock = big.NewInt(1)
 
 	db := rawdb.NewMemoryDatabase()
@@ -792,6 +788,115 @@ func TestProcessBlockNoValidatorSnapshotsParentStateBeforeBlockLevelHooks(t *tes
 	}
 	if engine.stateHasSigners {
 		t.Fatal("block signers account still present in the processed state")
+	}
+}
+
+// newFinalizeTestConfig returns a config with every fork past the processed
+// block, so only the Finalize call under test can fail.
+func newFinalizeTestConfig() *params.ChainConfig {
+	config := params.TestChainConfig.Clone()
+	setXinFinForksToFuture(config, big.NewInt(1_000_000_000))
+	return config
+}
+
+// newFinalizeTestRig builds the chain the Finalize tests run on.
+func newFinalizeTestRig(t *testing.T, config *params.ChainConfig) (*BlockChain, *state.StateDB, *types.Block) {
+	t.Helper()
+
+	db := rawdb.NewMemoryDatabase()
+	gspec := &Genesis{Config: config}
+	blockchain, err := NewBlockChain(db, nil, gspec, noopConsensusEngine{}, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	t.Cleanup(blockchain.Stop)
+
+	statedb, err := blockchain.State()
+	if err != nil {
+		t.Fatalf("failed to get state: %v", err)
+	}
+	return blockchain, statedb, GenerateBadBlock(t, gspec.ToBlock(), noopConsensusEngine{}, nil, config)
+}
+
+// stopOnFinalizeEngine raises the stop flag during Finalize and then fails: the
+// stop has to win over the engine's error.
+type stopOnFinalizeEngine struct {
+	noopConsensusEngine
+	calculated *CalculatedBlock
+}
+
+func (e *stopOnFinalizeEngine) Finalize(chain consensus.ChainReader, header *types.Header, state vm.StateDB, parentState *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
+	e.calculated.stop.Store(true)
+	return nil, errors.New("finalize failed")
+}
+
+// TestProcessReturnsFinalizeError pins that a Finalize failure surfaces as the
+// Process error, not as receipts from a block that was never finalized, and
+// that the engine's error stays reachable through the wrap.
+func TestProcessReturnsFinalizeError(t *testing.T) {
+	t.Parallel()
+
+	config := newFinalizeTestConfig()
+	blockchain, statedb, block := newFinalizeTestRig(t, config)
+	processor := NewStateProcessor(config, blockchain, failingFinalizeEngine{})
+
+	receipts, logs, usedGas, err := processor.Process(block, statedb, nil, vm.Config{}, map[common.Address]*big.Int{})
+	if err == nil {
+		t.Fatal("Process reported success despite a Finalize failure")
+	}
+	if !errors.Is(err, ErrFinalize) || !strings.Contains(err.Error(), "finalize error: finalize failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !errors.Is(err, errFinalizeFailed) {
+		t.Fatalf("the engine's error was lost from the chain: %v", err)
+	}
+	if receipts != nil || logs != nil || usedGas != 0 {
+		t.Fatalf("Process leaked a block that was never finalized: receipts=%v logs=%v gas=%d", receipts, logs, usedGas)
+	}
+}
+
+// TestProcessBlockNoValidatorReturnsFinalizeError pins the same contract on the
+// validator-free path, including the engine's error staying reachable through
+// the wrap.
+func TestProcessBlockNoValidatorReturnsFinalizeError(t *testing.T) {
+	t.Parallel()
+
+	config := newFinalizeTestConfig()
+	blockchain, statedb, block := newFinalizeTestRig(t, config)
+	processor := NewStateProcessor(config, blockchain, failingFinalizeEngine{})
+	calculating := &CalculatedBlock{block: block}
+
+	receipts, logs, usedGas, err := processor.ProcessBlockNoValidator(calculating, statedb, nil, vm.Config{}, map[common.Address]*big.Int{})
+	if err == nil {
+		t.Fatal("ProcessBlockNoValidator reported success despite a Finalize failure")
+	}
+	if !errors.Is(err, ErrFinalize) || !strings.Contains(err.Error(), "finalize error: finalize failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !errors.Is(err, errFinalizeFailed) {
+		t.Fatalf("the engine's error was lost from the chain: %v", err)
+	}
+	if receipts != nil || logs != nil || usedGas != 0 {
+		t.Fatalf("ProcessBlockNoValidator leaked a block that was never finalized: receipts=%v logs=%v gas=%d", receipts, logs, usedGas)
+	}
+}
+
+// TestProcessBlockNoValidatorReportsStopOverFinalizeError pins that a stopped
+// calculation reports the stop, not the Finalize error, to getResultBlock.
+func TestProcessBlockNoValidatorReportsStopOverFinalizeError(t *testing.T) {
+	t.Parallel()
+
+	config := newFinalizeTestConfig()
+	blockchain, statedb, block := newFinalizeTestRig(t, config)
+	calculating := &CalculatedBlock{block: block}
+	processor := NewStateProcessor(config, blockchain, &stopOnFinalizeEngine{calculated: calculating})
+
+	receipts, logs, usedGas, err := processor.ProcessBlockNoValidator(calculating, statedb, nil, vm.Config{}, map[common.Address]*big.Int{})
+	if !errors.Is(err, ErrStopPreparingBlock) {
+		t.Fatalf("a stopped calculation reported %v, want %v", err, ErrStopPreparingBlock)
+	}
+	if receipts != nil || logs != nil || usedGas != 0 {
+		t.Fatalf("a stopped calculation returned a partial result: receipts=%v logs=%v gas=%d", receipts, logs, usedGas)
 	}
 }
 
@@ -1593,13 +1698,14 @@ func TestProcessParentBlockHashPragueGuard(t *testing.T) {
 	}
 }
 
-// TestApplyBlockLevelHooksGate covers the activation gate shared by the three
+// TestApplyBlockLevelHooksGate covers the activation gate shared by the four
 // block level hooks: they all follow the EVM they are handed, so the block
 // before activation is a no-op and the activation block applies every write.
 func TestApplyBlockLevelHooksGate(t *testing.T) {
 	config := *params.MergedTestChainConfig
 	config.TIPSigningBlock = big.NewInt(10)
 	config.PragueBlock = big.NewInt(10)
+	config.AmsterdamBlock = big.NewInt(10)
 
 	newState := func() *state.StateDB {
 		t.Helper()
@@ -1634,7 +1740,10 @@ func TestApplyBlockLevelHooksGate(t *testing.T) {
 	if code := pre.GetCode(params.HistoryStorageAddress); len(code) != 0 {
 		t.Fatalf("history contract installed before Prague: %x", code)
 	}
-	// The activation block applies all three writes.
+	if code := pre.GetCode(params.DeterministicFactoryAddress); len(code) != 0 {
+		t.Fatalf("factory installed before Amsterdam: %x", code)
+	}
+	// The activation block applies every write.
 	parentHash := common.Hash{0x02}
 	act := newState()
 	ApplyBlockLevelHooks(parentHash, newEVM(act, 10))
@@ -1646,6 +1755,12 @@ func TestApplyBlockLevelHooksGate(t *testing.T) {
 	}
 	if nonce := act.GetNonce(params.Multicall3Address); nonce != 1 {
 		t.Fatalf("Multicall3 nonce = %d, want 1", nonce)
+	}
+	if code := act.GetCode(params.DeterministicFactoryAddress); !bytes.Equal(code, params.DeterministicFactoryCode) {
+		t.Fatalf("factory not installed at Amsterdam: %x", code)
+	}
+	if nonce := act.GetNonce(params.DeterministicFactoryAddress); nonce != 1 {
+		t.Fatalf("factory nonce = %d, want 1", nonce)
 	}
 	if code := act.GetCode(params.HistoryStorageAddress); !bytes.Equal(code, params.HistoryStorageCode) {
 		t.Fatalf("history contract not installed at Prague: %x", code)
@@ -2609,5 +2724,35 @@ func TestApplyTransactionForReplayPaysTheTRC21FeeOfAFailedTransaction(t *testing
 	}
 	if got := replayState.GetState(token, issuerBalanceSlot); got != wantIssuer {
 		t.Fatalf("replay credited the issuer with %v, block processing %v", got.Big(), wantIssuer.Big())
+	}
+}
+
+func TestRouteTransactionSignRoute(t *testing.T) {
+	config := &params.ChainConfig{ChainID: big.NewInt(1), TIPSigningBlock: big.NewInt(2)}
+	signTx := types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(0), params.TxGas, big.NewInt(0), nil)
+	regularTx := types.NewTransaction(0, common.Address{1}, big.NewInt(0), params.TxGas, big.NewInt(0), nil)
+	createTx := types.NewContractCreation(0, big.NewInt(0), params.TxGas, big.NewInt(0), nil)
+
+	for _, tt := range []struct {
+		name   string
+		number int64
+		tx     *types.Transaction
+		want   txRoute
+	}{
+		{"sign route before fork", 1, signTx, routeEVM},
+		{"sign route at fork", 2, signTx, routeSign},
+		{"sign route after fork", 3, signTx, routeSign},
+		{"regular address at fork", 2, regularTx, routeEVM},
+		{"contract creation at fork", 2, createTx, routeEVM},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			number := big.NewInt(tt.number)
+			if got := routeTransaction(config, number, tt.tx); got != tt.want {
+				t.Fatalf("routeTransaction = %v, want %v", got, tt.want)
+			}
+			if got, want := IsSignTransactionRoute(config, number, tt.tx), tt.want == routeSign; got != want {
+				t.Fatalf("IsSignTransactionRoute = %v, want %v", got, want)
+			}
+		})
 	}
 }

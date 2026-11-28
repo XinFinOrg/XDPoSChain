@@ -993,21 +993,27 @@ func setAllowlistAndDenylistForPeers(ctx *cli.Context, cfg *p2p.Config) {
 	}
 }
 
-// removeDenylistedPeers removes bootstrap nodes which is in peers denylist
+// removeDenylistedPeers removes bootstrap and static nodes which are in peers denylist
 func removeDenylistedPeers(cfg *p2p.Config) {
 	if len(cfg.DenyPeers) == 0 {
 		return
 	}
+	cfg.BootstrapNodes = filterDenylistedNodes(cfg.DenyPeers, cfg.BootstrapNodes, "bootstrap")
+	cfg.BootstrapNodesV5 = filterDenylistedNodes(cfg.DenyPeers, cfg.BootstrapNodesV5, "bootstrap-v5")
+	cfg.StaticNodes = filterDenylistedNodes(cfg.DenyPeers, cfg.StaticNodes, "static")
+}
 
-	filteredNodes := make([]*enode.Node, 0, len(cfg.BootstrapNodes))
-	for _, node := range cfg.BootstrapNodes {
-		if _, ok := cfg.DenyPeers[node.ID()]; ok {
-			log.Info("Remove denylisted peer", "enode", node, "id", node.ID())
+// filterDenylistedNodes removes the nodes which are in peers denylist
+func filterDenylistedNodes(denyPeers map[enode.ID]struct{}, nodes []*enode.Node, list string) []*enode.Node {
+	filteredNodes := make([]*enode.Node, 0, len(nodes))
+	for _, node := range nodes {
+		if _, ok := denyPeers[node.ID()]; ok {
+			log.Info("Remove denylisted peer", "list", list, "enode", node, "id", node.ID())
 			continue
 		}
 		filteredNodes = append(filteredNodes, node)
 	}
-	cfg.BootstrapNodes = filteredNodes
+	return filteredNodes
 }
 
 // setBootstrapNodes creates a list of bootstrap nodes from the command line
@@ -1309,8 +1315,8 @@ func SetP2PConfig(ctx *cli.Context, cfg *p2p.Config) {
 	setListenAddress(ctx, cfg)
 	setBootstrapNodes(ctx, cfg)
 	setAllowlistAndDenylistForPeers(ctx, cfg)
-	removeDenylistedPeers(cfg)
 	setBootstrapNodesV5(ctx, cfg)
+	removeDenylistedPeers(cfg)
 
 	if ctx.IsSet(MaxPeersFlag.Name) {
 		cfg.MaxPeers = ctx.Int(MaxPeersFlag.Name)
@@ -1785,7 +1791,10 @@ func RegisterEthStatsService(stack *node.Node, backend ethapi.Backend, url strin
 
 func RegisterXDCXService(stack *node.Node, cfg *XDCx.Config) (*XDCx.XDCX, *XDCxlending.Lending) {
 	// register XDCx service
-	XDCX := XDCx.New(stack, cfg)
+	XDCX, err := XDCx.New(stack, cfg)
+	if err != nil {
+		Fatalf("Failed to register the XDCx service: %v", err)
+	}
 	// register XDCxlending service
 	lendingServ := XDCxlending.New(stack, XDCX)
 	return XDCX, lendingServ
@@ -1919,7 +1928,7 @@ func formatBlockChainOpenError(err error, readonly bool) string {
 	case errors.Is(err, core.ErrReadOnlyGenesisStateRecovery):
 		return "Can't open blockchain in readonly mode: genesis state is missing and requires recovery. Reopen the database in writable mode to recover the missing genesis state, then retry."
 	case errors.Is(err, core.ErrReadOnlyHeadStateRepair):
-		return "Can't open blockchain in readonly mode: head state is missing and requires repair. Reopen the database in writable mode to repair the missing head state, then retry."
+		return "Can't open blockchain in readonly mode: the head state is missing or the head marker names no stored block, and the chain requires repair. Reopen the database in writable mode to repair it, then retry; a head marker that names no stored block resets the chain to genesis."
 	case errors.Is(err, core.ErrReadOnlyBadHashRewind):
 		return "Can't open blockchain in readonly mode: the local chain contains a denylisted hash and requires rewind. Reopen the database in writable mode so the chain can rewind past the denylisted hash, then retry."
 	case errors.Is(err, core.ErrReadOnlyConfigRewind):

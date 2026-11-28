@@ -200,10 +200,22 @@ func (bc *BlockChain) GetBlocksHashCache(number uint64) []common.Hash {
 	return nil
 }
 
-// GetBlockHashesFromHash retrieves a number of block hashes starting at a given
-// hash, fetching towards the genesis block.
-func (bc *BlockChain) GetBlockHashesFromHash(hash common.Hash, max uint64) []common.Hash {
-	return bc.hc.GetBlockHashesFromHash(hash, max)
+// GetAncestor retrieves the Nth ancestor of a given block, bounded by the
+// maxNonCanonical budget described on HeaderChain.GetAncestor.
+//
+// It deliberately takes no chainmu, even though HeaderChain documents itself
+// as not thread safe: an ancestor lookup must not wait behind a reorganisation.
+// go-ethereum #20079 dropped the read lock upstream's BlockChain.GetAncestor
+// used to take, because the lookup is an immutable read and the serving path
+// wants to answer concurrently. What it adds instead is a second canonical
+// read, which keeps a canonical answer self-consistent when a reorganisation
+// rewrites the origin's own mapping between the two reads. A reorganisation
+// that has published only the lower mappings is not covered, upstream
+// included: see HeaderChain.GetAncestor for the window and why it stays. The
+// read accessors in this tree take no chainmu at all, so do not add the lock
+// back here.
+func (bc *BlockChain) GetAncestor(hash common.Hash, number, ancestor uint64, maxNonCanonical *uint64) (common.Hash, uint64) {
+	return bc.hc.GetAncestor(hash, number, ancestor, maxNonCanonical)
 }
 
 // GetReceiptsByHash retrieves the receipts for all transactions in a given block.
@@ -221,6 +233,16 @@ func (bc *BlockChain) GetReceiptsByHash(hash common.Hash) types.Receipts {
 	}
 	bc.receiptsCache.Add(hash, receipts)
 	return receipts
+}
+
+// ReadTransaction returns the transaction and its canonical position, blocking while a
+// reorg rewrites the lookups it reads. The write side covers the reorg and the head write
+// that restores the canonical markers the reorg deletes, so a reader never observes a
+// half-updated index.
+func (bc *BlockChain) ReadTransaction(hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+	bc.txLookupLock.RLock()
+	defer bc.txLookupLock.RUnlock()
+	return rawdb.ReadTransaction(bc.db, hash)
 }
 
 // GetUnclesInChain retrieves all the uncles from a given block backwards until

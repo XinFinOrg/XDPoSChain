@@ -166,6 +166,7 @@ type Downloader struct {
 	cancelCh   chan struct{}  // Channel to cancel mid-flight syncs
 	cancelLock sync.RWMutex   // Lock to protect the cancel channel and peer in delivers
 	cancelWg   sync.WaitGroup // Make sure all fetcher goroutines have exited.
+	cancelGate sync.Mutex     // Serialises cancelWg.Add against cancelWg.Wait; never acquire it while holding cancelLock
 
 	quitCh   chan struct{} // Quit channel to signal termination
 	quitLock sync.Mutex    // Lock to prevent double closes
@@ -230,10 +231,10 @@ type BlockChain interface {
 	// InsertReceiptChain inserts a batch of receipts into the local chain.
 	InsertReceiptChain(types.Blocks, []types.Receipts) (int, error)
 
-	// IsLocalInsertError reports whether an InsertChain or InsertReceiptChain failure
-	// describes a local condition of this node rather than a fault of the blocks. The chain
-	// owns the classification; the downloader needs the verdict to decide whether the peer may
-	// be blamed.
+	// IsLocalInsertError reports whether an InsertChain, InsertReceiptChain or
+	// InsertHeaderChain failure describes a local condition of this node rather than a fault
+	// of the blocks. The chain owns the classification; the downloader needs the verdict to
+	// decide whether the peer may be blamed.
 	IsLocalInsertError(err error) bool
 
 	// TrieDB retrieves the low level trie database used for interacting
@@ -302,18 +303,26 @@ func (d *Downloader) SetPivotBlock(number uint64, hash common.Hash, root common.
 // gapPivotNumbers returns the gap blocks below a fast sync pivot whose snapshots the
 // epoch switches after the pivot read: N - N%Epoch - Gap and every later gap block
 // below N. Blocks below the pivot are never executed, so these snapshots have to be
-// built from state synced for them. It returns nil when XDPoS is not configured.
+// built from state synced for them. It returns nil when XDPoS is not configured or
+// the schedule designates no gap block.
 func (d *Downloader) gapPivotNumbers(number uint64) []uint64 {
 	cfg := d.blockchain.Config().XDPoS
-	if cfg == nil || cfg.Epoch == 0 {
+	if cfg == nil {
+		return nil
+	}
+	trigger, ok := cfg.GapTrigger()
+	if !ok {
 		return nil
 	}
 	epoch, gap := cfg.Epoch, cfg.Gap
 	epochBase := number - number%epoch
-	var baseGap uint64
-	if epochBase < gap {
-		baseGap = epoch - gap
-	} else {
+	// The epoch start anchors the list, unless it sits within the first gap of the
+	// chain: the pivot is then inside the first epoch and the trigger itself is the
+	// smallest gap height strictly below it. This is deliberately not
+	// GapBlockNumber's answer, which reports 0 for that shape; SetPivotBlock walks
+	// the list to sync the snapshots those heights carry, and 0 carries none.
+	baseGap := trigger
+	if epochBase >= gap {
 		baseGap = epochBase - gap
 	}
 	var gaps []uint64
@@ -367,8 +376,8 @@ func (d *Downloader) Synchronising() bool {
 
 // RegisterPeer injects a new download peer into the set of block source to be
 // used for fetching hashes and blocks from.
-func (d *Downloader) RegisterPeer(id string, version int, peer Peer) error {
-	logger := peerLogger(id)
+func (d *Downloader) RegisterPeer(id string, version uint, peer Peer) error {
+	logger := log.New("peer", shortPeerID(id))
 	logger.Trace("Registering sync peer")
 	if err := d.peers.Register(newPeerConnection(id, version, peer, logger)); err != nil {
 		logger.Error("Failed to register sync peer", "err", err)
@@ -380,7 +389,7 @@ func (d *Downloader) RegisterPeer(id string, version int, peer Peer) error {
 }
 
 // RegisterLightPeer injects a light client peer, wrapping it so it appears as a regular peer.
-func (d *Downloader) RegisterLightPeer(id string, version int, peer LightPeer) error {
+func (d *Downloader) RegisterLightPeer(id string, version uint, peer LightPeer) error {
 	return d.RegisterPeer(id, version, &lightPeerWrapper{peer})
 }
 
@@ -393,7 +402,7 @@ func (d *Downloader) RegisterLightPeer(id string, version int, peer LightPeer) e
 // the cleanup (queue revocation and peer drop event) runs at most once.
 func (d *Downloader) UnregisterPeer(id string) error {
 	// Unregister the peer from the active peer set and revoke any fetch tasks
-	logger := peerLogger(id)
+	logger := log.New("peer", shortPeerID(id))
 	logger.Trace("Unregistering sync peer")
 	if err := d.peers.Unregister(id); err != nil {
 		if errors.Is(err, errNotRegistered) {
@@ -422,7 +431,7 @@ func (d *Downloader) Synchronise(id string, head common.Hash, td *big.Int, mode 
 	if errors.Is(err, errInvalidChain) || errors.Is(err, errBadPeer) || errors.Is(err, errTimeout) ||
 		errors.Is(err, errStallingPeer) || errors.Is(err, errEmptyHeaderSet) ||
 		errors.Is(err, errPeersUnavailable) || errors.Is(err, errTooOld) || errors.Is(err, errInvalidAncestor) {
-		logger := peerLogger(id)
+		logger := log.New("peer", shortPeerID(id))
 		logger.Warn("Synchronisation failed, dropping peer", "err", err)
 		if d.dropPeer == nil {
 			// The dropPeer method is nil when `--copydb` is used for a local copy.
@@ -482,8 +491,9 @@ func (d *Downloader) synchronise(id string, hash common.Hash, td *big.Int, mode 
 		}
 	}
 	// Create cancel channel for aborting mid-flight and mark the master peer
+	cancelCh := make(chan struct{})
 	d.cancelLock.Lock()
-	d.cancelCh = make(chan struct{})
+	d.cancelCh = cancelCh
 	d.cancelPeer = id
 	d.cancelLock.Unlock()
 
@@ -497,7 +507,7 @@ func (d *Downloader) synchronise(id string, hash common.Hash, td *big.Int, mode 
 	if p == nil {
 		return errUnknownPeer
 	}
-	return d.syncWithPeer(p, hash, td)
+	return d.syncWithPeer(p, hash, td, cancelCh)
 }
 
 func (d *Downloader) getMode() SyncMode {
@@ -506,7 +516,7 @@ func (d *Downloader) getMode() SyncMode {
 
 // syncWithPeer starts a block synchronization based on the hash chain from the
 // specified peer and head hash.
-func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.Int) (err error) {
+func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.Int, cancelCh chan struct{}) (err error) {
 	d.mux.Post(StartEvent{})
 	defer func() {
 		// reset on error
@@ -521,7 +531,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 	}
 	mode := d.getMode()
 
-	log.Debug("Synchronising with the network", "peer", p.id, "eth", p.version, "head", hash, "td", td, "mode", mode)
+	log.Debug("Synchronising with the network", "peer", shortPeerID(p.id), "eth", p.version, "head", hash, "td", td, "mode", mode)
 	defer func(start time.Time) {
 		log.Debug("Synchronisation terminated", "elapsed", time.Since(start))
 	}(time.Now())
@@ -585,14 +595,32 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td *big.I
 	} else if mode == FullSync {
 		fetchers = append(fetchers, func() error { return d.processFullSyncContent(height) })
 	}
-	return d.spawnSync(fetchers)
+	return d.spawnSync(fetchers, cancelCh)
 }
 
 // spawnSync runs d.process and all given fetcher functions to completion in
 // separate goroutines, returning the first error that appears.
-func (d *Downloader) spawnSync(fetchers []func() error) error {
+func (d *Downloader) spawnSync(fetchers []func() error, cancelCh chan struct{}) error {
 	errc := make(chan error, len(fetchers))
+
+	// Register under cancelGate so a concurrent Cancel either waits for these
+	// fetchers or observes the sync as already cancelled: WaitGroup forbids Add
+	// from a zero counter racing Wait, and a sync cancelled before it could
+	// register must not start fetchers after Cancel returns.
+	d.cancelGate.Lock()
+	if syncCancelled(cancelCh) {
+		// The sync was cancelled after it installed its cancel channel but
+		// before any fetcher was registered. Nothing is in flight, so report
+		// the cancellation and leave the fetchers unstarted. Close the queue
+		// before releasing the gate so this sync stops touching it before a
+		// concurrent Cancel returns.
+		d.queue.Close()
+		d.cancelGate.Unlock()
+		return errCanceled
+	}
 	d.cancelWg.Add(len(fetchers))
+	d.cancelGate.Unlock()
+
 	for _, fn := range fetchers {
 		go func() { defer d.cancelWg.Done(); errc <- fn() }()
 	}
@@ -623,6 +651,8 @@ func (d *Downloader) spawnSync(fetchers []func() error) error {
 func (d *Downloader) cancel() {
 	// Close the current cancel channel
 	d.cancelLock.Lock()
+	defer d.cancelLock.Unlock()
+
 	if d.cancelCh != nil {
 		select {
 		case <-d.cancelCh:
@@ -631,15 +661,40 @@ func (d *Downloader) cancel() {
 			close(d.cancelCh)
 		}
 	}
-	d.cancelLock.Unlock()
 }
 
-// Cancel aborts all of the operations and waits for all download goroutines to
-// finish before returning.
+// syncCancelled reports whether the cancel channel of a starting sync was
+// closed before it could register its fetchers. The caller must hold
+// cancelGate: Cancel closes the channel before it takes the gate, so the spawn
+// either observes the close here or registers before Cancel waits.
+//
+// The channel is passed in instead of read from d.cancelCh, so the check cannot
+// observe a channel installed by another sync. spawnSync called directly by
+// tests passes nil and every registration proceeds.
+func syncCancelled(cancelCh chan struct{}) bool {
+	if cancelCh == nil {
+		return false
+	}
+	select {
+	case <-cancelCh:
+		return true
+	default:
+		return false
+	}
+}
+
+// Cancel aborts all of the operations and waits for the fetchers that the sync
+// it cancelled had registered. A sync that installed its cancel channel but has
+// not registered its fetchers yet never starts them: spawnSync observes the
+// closed channel and returns errCanceled, so Cancel does not have to wait for a
+// registration that may sit behind unrelated work. A sync that starts after
+// this call has returned is not cancelled by it.
 func (d *Downloader) Cancel() {
 	d.blockchain.InterruptInsert(true)
 	d.cancel()
+	d.cancelGate.Lock()
 	d.cancelWg.Wait()
+	d.cancelGate.Unlock()
 	d.blockchain.InterruptInsert(false)
 }
 
@@ -675,7 +730,7 @@ func (d *Downloader) fetchHeight(p *peerConnection, hash common.Hash) (*types.He
 		case packet := <-d.headerCh:
 			// Discard anything not from the origin peer
 			if packet.PeerId() != p.id {
-				log.Debug("Received headers from incorrect peer", "peer", packet.PeerId())
+				log.Debug("Received headers from incorrect peer", "peer", shortPeerID(packet.PeerId()))
 				break
 			}
 			// Make sure the peer actually gave something valid
@@ -820,7 +875,7 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 		case packet := <-d.headerCh:
 			// Discard anything not from the origin peer
 			if packet.PeerId() != p.id {
-				log.Debug("Received headers from incorrect peer", "peer", packet.PeerId())
+				log.Debug("Received headers from incorrect peer", "peer", shortPeerID(packet.PeerId()))
 				break
 			}
 			// Make sure the peer actually gave something valid
@@ -926,7 +981,7 @@ func (d *Downloader) findAncestor(p *peerConnection, remoteHeader *types.Header)
 			case packer := <-d.headerCh:
 				// Discard anything not from the origin peer
 				if packer.PeerId() != p.id {
-					log.Debug("Received headers from incorrect peer", "peer", packer.PeerId())
+					log.Debug("Received headers from incorrect peer", "peer", shortPeerID(packer.PeerId()))
 					break
 				}
 				// Make sure the peer actually gave something valid
@@ -1021,7 +1076,7 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, pivot uint64) 
 		case packet := <-d.headerCh:
 			// Make sure the active peer is giving us the skeleton headers
 			if packet.PeerId() != p.id {
-				log.Debug("Received skeleton from incorrect peer", "peer", packet.PeerId())
+				log.Debug("Received skeleton from incorrect peer", "peer", shortPeerID(packet.PeerId()))
 				break
 			}
 			headerReqTimer.UpdateSince(request)
@@ -1121,7 +1176,7 @@ func (d *Downloader) fetchHeaders(p *peerConnection, from uint64, pivot uint64) 
 			if d.dropPeer == nil {
 				// The dropPeer method is nil when `--copydb` is used for a local copy.
 				// Timeouts can occur if e.g. compaction hits at the wrong time, and can be ignored
-				p.log.Warn("Downloader wants to drop peer, but peerdrop-function is not set", "peer", p.id)
+				p.log.Warn("Downloader wants to drop peer, but peerdrop-function is not set", "peer", shortPeerID(p.id))
 				break
 			}
 			// Header retrieval timed out, consider the peer bad and drop
@@ -1349,7 +1404,7 @@ func (d *Downloader) fetchParts(deliveryCh chan dataPack, deliver func(dataPack)
 						if d.dropPeer == nil {
 							// The dropPeer method is nil when `--copydb` is used for a local copy.
 							// Timeouts can occur if e.g. compaction hits at the wrong time, and can be ignored
-							peer.log.Warn("Downloader wants to drop peer, but peerdrop-function is not set", "peer", pid)
+							peer.log.Warn("Downloader wants to drop peer, but peerdrop-function is not set", "peer", shortPeerID(pid))
 						} else {
 							d.dropPeer(pid)
 
@@ -1560,8 +1615,13 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 						if n > 0 {
 							rollback = append(rollback, chunk[:n]...)
 						}
+						// A local condition says nothing about the peer that served the headers, so
+						// it must not become the errInvalidChain that drops it. See localInsertFailure.
+						if d.blockchain.IsLocalInsertError(err) {
+							return d.localInsertFailure(localInsertStop{where: whereHeaders, from: chunk[0].Number, index: n}, err)
+						}
 						log.Debug("Invalid header encountered", "number", chunk[n].Number, "hash", chunk[n].Hash(), "parent", chunk[n].ParentHash, "err", err)
-						return fmt.Errorf("%w: %v", errInvalidChain, err)
+						return fmt.Errorf("%w: %w", errInvalidChain, err)
 					}
 					// All verifications passed, store newly found uncertain headers
 					rollback = append(rollback, unknown...)
@@ -1610,6 +1670,18 @@ func (d *Downloader) processHeaders(origin uint64, pivot uint64, td *big.Int) er
 	}
 }
 
+// flushAtBoundary reports whether the block sitting at residue number inside its
+// epoch ends an import boundary for full sync. The epoch boundaries are always a
+// boundary; the gap boundary is added only when the schedule designates one
+// (hasGap), so a schedule without a gap block keeps the epoch flushes and never
+// matches a residue the trigger does not select.
+func flushAtBoundary(number, epoch, trigger uint64, hasGap bool) bool {
+	if number == 0 || number == epoch-1 {
+		return true
+	}
+	return hasGap && number == trigger
+}
+
 // processFullSyncContent takes fetch results from the queue and imports them into the chain.
 func (d *Downloader) processFullSyncContent(height uint64) error {
 	for {
@@ -1617,13 +1689,19 @@ func (d *Downloader) processFullSyncContent(height uint64) error {
 		if len(results) == 0 {
 			return nil
 		}
-		if d.blockchain.Config() != nil && d.blockchain.Config().XDPoS != nil {
-			epoch := d.blockchain.Config().XDPoS.Epoch
-			gap := d.blockchain.Config().XDPoS.Gap
+		cfg := d.blockchain.Config()
+		// An unset epoch has no boundary inside the batch to cut at, so it shares the
+		// single-batch path of a chain without XDPoS instead of dividing by zero. An
+		// epoch that is set keeps its epoch boundaries whether or not the schedule
+		// designates a gap block: core's block import depends on the switch block
+		// being the first of its segment.
+		if cfg != nil && cfg.XDPoS != nil && cfg.XDPoS.Epoch != 0 {
+			epoch := cfg.XDPoS.Epoch
+			trigger, hasGap := cfg.XDPoS.GapTrigger()
 			inserts := []*fetchResult{}
 			for i := 0; i < len(results); i++ {
 				number := results[i].Header.Number.Uint64() % epoch
-				if number == 0 || number == epoch-1 || number == epoch-gap {
+				if flushAtBoundary(number, epoch, trigger, hasGap) {
 					inserts = append(inserts, results[i])
 					if d.chainInsertHook != nil {
 						d.chainInsertHook(inserts)
@@ -1669,11 +1747,12 @@ func (d *Downloader) headNumber() uint64 {
 	return 0
 }
 
-// localInsertWhere names the batch an insert stopped on: block segments, receipt batches, or the
-// fast sync pivot.
+// localInsertWhere names the batch an insert stopped on: header-only batches, block segments,
+// receipt batches, or the fast sync pivot.
 type localInsertWhere string
 
 const (
+	whereHeaders  localInsertWhere = "headers"
 	whereBlocks   localInsertWhere = "blocks"
 	whereReceipts localInsertWhere = "receipts"
 	wherePivot    localInsertWhere = "pivot"
@@ -1864,23 +1943,22 @@ func (d *Downloader) splitBlocksForVerification(blocks []*types.Block) [][]*type
 	if cfg == nil || cfg.XDPoS == nil || len(blocks) <= 1 {
 		return [][]*types.Block{blocks}
 	}
-	epoch, gap := cfg.XDPoS.Epoch, cfg.XDPoS.Gap
+	epoch := cfg.XDPoS.Epoch
 	if epoch == 0 {
 		return [][]*types.Block{blocks}
 	}
+	trigger, hasGap := cfg.XDPoS.GapTrigger()
 
 	var segments [][]*types.Block
 	start := 0
 	for i, block := range blocks {
 		number := block.NumberU64()
 		// Cut right after each gap block, but never after the very last block
-		// (that would just create an empty trailing segment). A schedule without
-		// a usable offset (Gap 0, or Gap >= Epoch) has no gap block at all, and
-		// this cut does not make one: the fallback that would read it walks back
-		// an unusable number of steps and UpdateM1At never fires on such a
-		// schedule, so this cut only keeps the epoch-switch cut below from
-		// costing anything there.
-		if gap != 0 && gap < epoch && number%epoch == epoch-gap && i < len(blocks)-1 {
+		// (that would just create an empty trailing segment). GapTrigger answers
+		// false for every schedule the startup gate refuses, so those have no gap
+		// cut to make: Gap == Epoch used to cut after the switch rather than before
+		// it, and Gap > Epoch wrapped the offset.
+		if hasGap && number%epoch == trigger && i < len(blocks)-1 {
 			segments = append(segments, blocks[start:i+1])
 			start = i + 1
 			continue

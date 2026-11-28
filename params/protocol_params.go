@@ -68,9 +68,18 @@ const (
 
 	TxTokenPerNonZeroByte     uint64 = 4     // Token cost per non-zero byte as specified by EIP-7623.
 	TxCostFloorPerToken       uint64 = 10    // Cost floor per byte of data as specified by EIP-7623.
+	TxCostFloorPerToken7976   uint64 = 16    // Cost floor per byte of data as specified by EIP-7976.
 	TxAccessListAddressGas    uint64 = 2400  // Per address specified in EIP 2930 access list
 	TxAccessListStorageKeyGas uint64 = 1900  // Per storage key specified in EIP 2930 access list
 	TxAuthTupleGas            uint64 = 12500 // Per auth tuple code specified in EIP-7702
+
+	// EIP-2780: resource-based intrinsic transaction gas.
+	TxBaseCost2780  uint64 = 12000 // Sender cost: signature recovery, account access and write, transaction inclusion.
+	TxValueCost2780 uint64 = 6000  // Recipient balance write and transfer log of a value transfer.
+
+	// EIP-8038 state-access prices, referenced by the EIP-2780 intrinsic base.
+	ColdAccountAccessAmsterdam uint64 = 3000  // COLD_ACCOUNT_ACCESS
+	CreateAccessAmsterdam      uint64 = 12000 // CREATE_ACCESS = ACCOUNT_WRITE + COLD_ACCOUNT_ACCESS
 
 	TxDataNonZeroGas uint64 = 68 // Per byte of data attached to a transaction that is not equal to zero. NOTE: Not payable on data of calls between transactions.
 
@@ -212,4 +221,14 @@ var (
 	// EIP-2935 - Serve historical block hashes from state
 	HistoryStorageAddress = common.HexToAddress("0x0000F90827F1C53a10cb7A02335B175320002935")
 	HistoryStorageCode    = common.FromHex("3373fffffffffffffffffffffffffffffffffffffffe14604657602036036042575f35600143038111604257611fff81430311604257611fff9006545f5260205ff35b5f5ffd5b5f35611fff60014303065500")
+
+	// EIP-7997 - Deterministic deployment factory
+	DeterministicFactoryAddress = common.HexToAddress("0x4e59b44847b379578588920cA78FbF26c0B4956C")
+	DeterministicFactoryCode    = common.FromHex("0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3")
+)
+
+// System log events.
+var (
+	// EIP-7708 - System log emitted for ETH transfers
+	EthTransferLogEvent = common.HexToHash("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef") // keccak256('Transfer(address,address,uint256)')
 )

@@ -24,9 +24,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math/rand"
 	"net"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -34,6 +36,7 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/internal/testlog"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p/discover/v4wire"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
@@ -139,6 +142,7 @@ func (test *udpTest) waitPacketOut(validate interface{}) (closed bool) {
 }
 
 func TestUDPv4_packetErrors(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -149,6 +153,7 @@ func TestUDPv4_packetErrors(t *testing.T) {
 }
 
 func TestUDP_pingPacketRejected(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -176,7 +181,7 @@ func TestUDP_pingPacketRejected(t *testing.T) {
 }
 
 func TestUDPv4_pingTimeout(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPTest(t)
@@ -191,7 +196,7 @@ func TestUDPv4_pingTimeout(t *testing.T) {
 }
 
 func TestUDPv4_resolveReturnsNilWhenUnresolved(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 
 	test := newUDPTest(t)
 	defer test.close()
@@ -212,7 +217,7 @@ func TestUDPv4_resolveReturnsNilWhenUnresolved(t *testing.T) {
 }
 
 func TestUDPv4_resolveReturnsNilWhenLookupMisses(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 
 	test := newUDPTest(t)
 	defer test.close()
@@ -235,7 +240,7 @@ func (req testPacket) Kind() byte   { return byte(req) }
 func (req testPacket) Name() string { return "" }
 
 func TestUDPv4_responseTimeouts(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPTest(t)
@@ -309,7 +314,7 @@ func TestUDPv4_responseTimeouts(t *testing.T) {
 }
 
 func TestUDPv4_findnodeTimeout(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPTest(t)
@@ -328,6 +333,7 @@ func TestUDPv4_findnodeTimeout(t *testing.T) {
 }
 
 func TestUDPv4_findnode(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -383,7 +389,7 @@ func TestUDPv4_findnode(t *testing.T) {
 }
 
 func TestUDPv4_findnodeMultiReply(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 
 	test := newUDPTest(t)
 	defer test.close()
@@ -441,6 +447,7 @@ func TestUDPv4_findnodeMultiReply(t *testing.T) {
 
 // This test checks that reply matching of pong verifies the ping hash.
 func TestUDPv4_pingMatch(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -455,6 +462,7 @@ func TestUDPv4_pingMatch(t *testing.T) {
 
 // This test checks that reply matching of pong verifies the sender IP address.
 func TestUDPv4_pingMatchIP(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	defer test.close()
 
@@ -472,6 +480,7 @@ func TestUDPv4_pingMatchIP(t *testing.T) {
 }
 
 func TestUDPv4_successfulPing(t *testing.T) {
+	testshort.Skip(t)
 	test := newUDPTest(t)
 	added := make(chan *node, 1)
 	test.table.nodeAddedHook = func(n *node) { added <- n }
@@ -538,7 +547,7 @@ func TestUDPv4_successfulPing(t *testing.T) {
 
 // This test checks that EIP-868 requests work.
 func TestUDPv4_EIP868(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 
 	test := newUDPTest(t)
 	defer test.close()
@@ -578,7 +587,7 @@ func TestUDPv4_EIP868(t *testing.T) {
 
 // This test verifies that a small network of nodes can boot up into a healthy state.
 func TestUDPv4_smallNetConvergence(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	// Start the network.
@@ -597,18 +606,26 @@ func TestUDPv4_smallNetConvergence(t *testing.T) {
 	// they have all found each other.
 	status := make(chan error, len(nodes))
 	for i := range nodes {
-		node := nodes[i]
+		self := nodes[i]
 		go func() {
-			found := make(map[enode.ID]bool, len(nodes))
-			it := node.RandomNodes()
+			missing := make(map[enode.ID]bool, len(nodes))
+			for _, n := range nodes {
+				if n.Self().ID() == self.Self().ID() {
+					continue // skip self
+				}
+				missing[n.Self().ID()] = true
+			}
+
+			it := self.RandomNodes()
 			for it.Next() {
-				found[it.Node().ID()] = true
-				if len(found) == len(nodes) {
+				delete(missing, it.Node().ID())
+				if len(missing) == 0 {
 					status <- nil
 					return
 				}
 			}
-			status <- fmt.Errorf("node %s didn't find all nodes", node.Self().ID().TerminalString())
+			missingIDs := slices.Collect(maps.Keys(missing))
+			status <- fmt.Errorf("node %s didn't find all nodes, missing %v", self.Self().ID().TerminalString(), missingIDs)
 		}()
 	}
 
@@ -625,7 +642,6 @@ func TestUDPv4_smallNetConvergence(t *testing.T) {
 			received++
 			if err != nil {
 				t.Error("ERROR:", err)
-				return
 			}
 		}
 	}

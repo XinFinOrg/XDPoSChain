@@ -19,9 +19,11 @@ package types
 import (
 	"fmt"
 	"io"
+	"math/big"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
@@ -61,6 +63,20 @@ type logMarshaling struct {
 	BlockNumber hexutil.Uint64
 	TxIndex     hexutil.Uint
 	Index       hexutil.Uint
+}
+
+// EthTransferLog creates an ETH transfer log according to EIP-7708.
+// Specification: https://eips.ethereum.org/EIPS/eip-7708
+func EthTransferLog(from, to common.Address, amount *big.Int) *Log {
+	return &Log{
+		Address: params.SystemAddress,
+		Topics: []common.Hash{
+			params.EthTransferLogEvent,
+			common.BytesToHash(from.Bytes()),
+			common.BytesToHash(to.Bytes()),
+		},
+		Data: common.BigToHash(amount).Bytes(),
+	}
 }
 
 type rlpLog struct {

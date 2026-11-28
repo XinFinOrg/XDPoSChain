@@ -267,8 +267,9 @@ func (m *MetaData) GetAbi() (*abi.ABI, error) {
 // util.go
 
 // WaitAccepted waits for a tx to become available on the backend, checking the pool of
-// pending transactions in addition to the blockchain. It stops waiting when the
-// context is canceled.
+// pending transactions in addition to the blockchain. A backend that also supports
+// receipt lookups reports a mined transaction through its receipt, which counts as
+// acceptance too. It stops waiting when the context is canceled.
 func WaitAccepted(ctx context.Context, b ContractBackend, tx *types.Transaction) error {
 	return bind2.WaitAccepted(ctx, b, tx.Hash())
 }

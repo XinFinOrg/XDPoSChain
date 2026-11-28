@@ -30,6 +30,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
@@ -84,7 +85,7 @@ func genValueTx(nbytes int) func(int, *BlockGen) {
 	return func(i int, gen *BlockGen) {
 		toaddr := common.Address{}
 		data := make([]byte, nbytes)
-		gas, _ := IntrinsicGas(data, nil, nil, false, false, false, false)
+		gas, _ := IntrinsicGas(data, nil, nil, benchRootAddr, &toaddr, nil, params.Rules{})
 		tx, _ := types.SignTx(types.NewTransaction(gen.TxNonce(benchRootAddr), toaddr, big.NewInt(1), gas, nil, data), types.HomesteadSigner{}, benchRootKey)
 		gen.AddTx(tx)
 	}
@@ -186,30 +187,22 @@ func BenchmarkChainRead_full_10k(b *testing.B) {
 }
 
 func BenchmarkChainRead_header_100k(b *testing.B) {
-	if testing.Short() {
-		b.Skip("Skipping in short-mode")
-	}
+	testshort.Skip(b)
 	benchReadChain(b, false, 100000)
 }
 
 func BenchmarkChainRead_full_100k(b *testing.B) {
-	if testing.Short() {
-		b.Skip("Skipping in short-mode")
-	}
+	testshort.Skip(b)
 	benchReadChain(b, true, 100000)
 }
 
 func BenchmarkChainRead_header_500k(b *testing.B) {
-	if testing.Short() {
-		b.Skip("Skipping in short-mode")
-	}
+	testshort.Skip(b)
 	benchReadChain(b, false, 500000)
 }
 
 func BenchmarkChainRead_full_500k(b *testing.B) {
-	if testing.Short() {
-		b.Skip("Skipping in short-mode")
-	}
+	testshort.Skip(b)
 	benchReadChain(b, true, 500000)
 }
 
@@ -230,16 +223,12 @@ func BenchmarkChainWrite_full_100k(b *testing.B) {
 }
 
 func BenchmarkChainWrite_header_500k(b *testing.B) {
-	if testing.Short() {
-		b.Skip("Skipping in short-mode")
-	}
+	testshort.Skip(b)
 	benchWriteChain(b, false, 500000)
 }
 
 func BenchmarkChainWrite_full_500k(b *testing.B) {
-	if testing.Short() {
-		b.Skip("Skipping in short-mode")
-	}
+	testshort.Skip(b)
 	benchWriteChain(b, true, 500000)
 }
 

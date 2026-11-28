@@ -1,22 +1,57 @@
-# XDPoS consensus
+# XDPoS domain
 
-Vocabulary for the XDPoS chain: the block schedule its validators run to, the block processing steps applied before the first transaction, and the chain data those blocks are stored in.
+Vocabulary for the XDPoS chain: the block schedule its validators run to, the block processing steps applied before the first transaction, the calldata pricing its transactions pay, the chain data those blocks are stored in, and the wire protocol its nodes speak.
 
 ## Language
 
 ### Schedule
 
 **gap block**:
-The block inside every epoch at which the next epoch's masternode set is prepared.
+The block inside every epoch at which the next epoch's masternode set is prepared. The gap block governing an epoch falls `Gap` blocks before that epoch starts, so it lies in the previous epoch; `params.XDPoSConfig.GapBlockNumber` returns that height, which is the **gap offset** coordinate, not the **gap trigger** height inside the epoch.
 _Avoid_: checkpoint block, gap height
 
+**gap offset**:
+The field `Gap` of `params.XDPoSConfig`: the number of blocks between the gap block and the epoch switch that follows it.
+_Avoid_: gap size, gap length, gap distance
+
+**gap trigger**:
+The height inside each epoch at which the gap block falls, `Epoch - Gap`.
+_Avoid_: gap height, checkpoint trigger
+
 **XDPoS schedule**:
-The rule that places one gap block inside each epoch, fixed by the epoch length and the gap offset. Core only starts a chain whose config satisfies `0 < gap < epoch`.
+The rule that places one gap block inside each epoch, fixed by the epoch length and the gap offset. `(*params.XDPoSConfig).CheckSchedule` is the judgement, reached through `CheckConfigForkOrder`; `core` keeps the earlier gate. The engines no longer repair a missing epoch, and the shared predicates and their guards live in `params`.
 _Avoid_: gap schedule, gap config, checkpoint schedule, epoch/gap pair, checkpoint spacing
 _See_: [ADR-0003](docs/adr/0003-enforce-gap-within-epoch.md)
 
 **reward checkpoint**:
 The block at which the v1 engine pays out masternode rewards, every `RewardCheckpoint` blocks. The interval is configured independently of the epoch, so a reward checkpoint is not necessarily an epoch boundary and can coincide with a gap block.
+
+### Block schedule
+
+**epoch**:
+The unit the validator schedule runs on, `Epoch` in the chain config (900 on mainnet), counted in blocks under the v1 engine and in rounds under the v2 engine; at each epoch switch block the masternode set is re-taken.
+_Avoid_: cycle, term
+_See_: [params/config_xdpos.go:46](params/config_xdpos.go), [consensus/XDPoS/engines/engine_v2/epochSwitch.go:162](consensus/XDPoS/engines/engine_v2/epochSwitch.go)
+
+**epoch switch block**:
+The block that opens a new epoch — under v1 the block whose number is a multiple of `Epoch`, under v2 the first block whose round falls in a new epoch of rounds.
+_Avoid_: epoch boundary, checkpoint block
+_See_: [consensus/XDPoS/engines/engine_v1/engine.go:1084](consensus/XDPoS/engines/engine_v1/engine.go), [consensus/XDPoS/engines/engine_v2/epochSwitch.go:162](consensus/XDPoS/engines/engine_v2/epochSwitch.go)
+
+**round**:
+The attempt counter inside an epoch, `types.Round`; a validator's turn is decided per round, and a timeout moves the chain to the next one and resets the timeout pools.
+_Avoid_: step, attempt
+_See_: [core/types/consensus_v2.go:12](core/types/consensus_v2.go), [consensus/XDPoS/engines/engine_v2/engine.go:1061](consensus/XDPoS/engines/engine_v2/engine.go)
+
+**slot number**:
+The position a block occupies in the chain, which on XDC is its block number: one block per slot, and no header field carries it separately.
+_Avoid_: slot, slot height, slot index
+_See_: [ADR-0006](docs/adr/0006-define-slot-number-as-block-number.md), [core/evm.go:43](core/evm.go)
+
+**masternode**:
+A node in the validator set that signs blocks and votes, capped by `MaxMasternodes`; the set is snapshotted at each epoch's gap block.
+_Avoid_: master node, witness
+_See_: [consensus/XDPoS/utils/types.go:17](consensus/XDPoS/utils/types.go), [params/config_xdpos.go:128](params/config_xdpos.go)
 
 ### Chain data
 
@@ -38,6 +73,50 @@ _See_: [ADR-0001](docs/adr/0001-bound-executed-marker-to-state-lifetime.md)
 ### Block processing
 
 **block level hooks**:
-The state changes block processing applies before the first transaction of a block: the TIPSigning removal of the legacy block signers account, the Multicall3 install after Prague whenever the account has no code and the EIP-2935 parent hash write. The DAO fork change is not one of them: only the paths that process or generate a block apply it, each on its own at `DAOForkBlock`, the way upstream `core.PreExecution` leaves it out.
+The state changes block processing applies before the first transaction of a block: the TIPSigning removal of the legacy block signers account, the Multicall3 install after Prague whenever the account has no code, the EIP-7997 factory install after Amsterdam on the same condition and the EIP-2935 parent hash write. The DAO fork change is not one of them: only the paths that process or generate a block apply it, each on its own at `DAOForkBlock`, the way upstream `core.PreExecution` leaves it out.
 _Avoid_: pre-execution calls, system calls
 _See_: [ApplyBlockLevelHooks](core/state_processor.go)
+
+**deterministic deployment factory**:
+The keyless CREATE2 factory at `0x4e59b44847b379578588920cA78FbF26c0B4956C` (EIP-7997), installed into the state by the block level hooks on Amsterdam-active blocks with the EIP's runtime code and a nonzero nonce: 1 on a fresh account, kept as is when the account already carries one. Its address and code are shared with other EVM chains so CREATE2 deployments land at the same addresses, but no network schedules Amsterdam yet.
+_Avoid_: CREATE2 factory, universal deployer, singleton factory
+_See_: [ApplyEIP7997HardFork](core/state_processor.go), [params/protocol_params.go](params/protocol_params.go)
+
+### Transaction pricing
+
+**calldata floor**:
+The minimum gas a transaction pays for its data, counted in calldata tokens; a gas limit below it rejects the transaction before execution, and an execution that used less is topped up to it. Before Amsterdam it counts the calldata bytes only, zero ones cheaper than non-zero; from Amsterdam every calldata byte costs the same four tokens, 64 gas, and the access list adds 20 bytes per address and 32 per storage key at the same rate — 1,280 and 2,048 gas (EIP-7981).
+_Avoid_: data gas, calldata gas
+_See_: [core/state_transition.go:179](core/state_transition.go), [ADR-0005](docs/adr/0005-port-amsterdam-eips-standalone.md)
+
+**intrinsic base cost**:
+The sender-side part of the intrinsic gas. Before Amsterdam it is the flat 21,000, or 53,000 for a contract creation; from Amsterdam it is decomposed per resource (EIP-2780): 12,000 for the sender, 3,000 for a recipient touch or 12,000 for a creation, and 6,000 when value moves to a different account, while a self-transfer pays only the sender part.
+_Avoid_: base fee, transaction base
+_See_: [core/state_transition.go:146](core/state_transition.go), [params/protocol_params.go:77](params/protocol_params.go)
+
+**calldata token**:
+The unit the calldata floor is counted in — one per zero byte and four per non-zero byte before Amsterdam, four per byte from Amsterdam on, with an access list entry adding 20 bytes per address and 32 per storage key (EIP-7981) — multiplied by the per-token cost to obtain the floor.
+_Avoid_: byte weight, token count
+_See_: [params/protocol_params.go:71](params/protocol_params.go)
+
+### Wire protocol
+
+**eth capability**:
+The devp2p capability XDPoSChain advertises under the name "eth"; the label names the wire protocol, not compatibility with Ethereum's wire format.
+_Avoid_: xdc capability
+_See_: [ADR-0004](docs/adr/0004-split-eth-wire-layer-into-protocols-eth.md)
+
+**xdc version**:
+A wire-protocol version of the eth capability — `xdc166`, `xdc165`, `xdc164`, `xdc100` — numbered apart from geth's eth6x series on purpose.
+_Avoid_: eth version, protocol version
+_See_: [ADR-0004](docs/adr/0004-split-eth-wire-layer-into-protocols-eth.md)
+
+**request id**:
+The `uint64` a `xdc166` request carries and the responder echoes back on the reply. It is transported only: nothing pairs a response with its request by id, so one in-flight request per kind per peer remains the rule, as on `xdc165` and older.
+_Avoid_: correlation id, nonce, sequence number
+_See_: [eth/protocols/eth/protocol.go:214](eth/protocols/eth/protocol.go)
+
+**BFT message**:
+One of the three consensus messages the eth capability carries: vote, timeout, and sync info.
+_Avoid_: consensus message
+_See_: [ADR-0004](docs/adr/0004-split-eth-wire-layer-into-protocols-eth.md)

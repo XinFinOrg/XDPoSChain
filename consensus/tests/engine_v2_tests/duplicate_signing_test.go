@@ -22,6 +22,7 @@ import (
 // dedupe; this test simulates an attacker using non-deterministic signing by
 // inserting two pool entries that resolve to the same signer.
 func TestVoteQCGeneration_DeduplicatesByzantineSigner(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -76,6 +77,7 @@ func TestVoteQCGeneration_DeduplicatesByzantineSigner(t *testing.T) {
 // after dedup is below threshold, no QC is generated. This is the byzantine
 // "trip threshold with padding" scenario the new dedup defends against.
 func TestVoteQCGeneration_BelowThresholdAfterDedupSkipsQC(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -117,6 +119,7 @@ func TestVoteQCGeneration_BelowThresholdAfterDedupSkipsQC(t *testing.T) {
 // duplicates in the timeout pool from the same signer must be dropped, and
 // the resulting TC must contain only one signature per unique signer.
 func TestTCGeneration_DeduplicatesByzantineSigner(t *testing.T) {
+	t.Parallel()
 	blockchain, _, _, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -167,6 +170,7 @@ func TestTCGeneration_DeduplicatesByzantineSigner(t *testing.T) {
 // pool tripped only by duplicates, unique signer count below threshold,
 // so no TC should be produced.
 func TestTCGeneration_BelowThresholdAfterDedupSkipsTC(t *testing.T) {
+	t.Parallel()
 	blockchain, _, _, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 

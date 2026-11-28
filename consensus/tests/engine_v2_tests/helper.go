@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
-	"os"
 	"testing"
 	"time"
 
@@ -70,10 +69,61 @@ func SignHashByPK(pk *ecdsa.PrivateKey, itemToSign []byte) []byte {
 	return signedHash
 }
 
-func skipLongInShortMode(t *testing.T) {
+// drainBroadcast drops everything already pending on ch without blocking.
+func drainBroadcast(ch chan interface{}) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
+		}
+	}
+}
+
+// expectVote waits for the next vote on ch, skipping countdown broadcasts.
+func expectVote(t *testing.T, ch chan interface{}, window time.Duration) *types.Vote {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("skipping long-running test in -short mode")
+	timer := time.NewTimer(window)
+	defer timer.Stop()
+	for {
+		select {
+		case msg := <-ch:
+			if vote, ok := msg.(*types.Vote); ok {
+				return vote
+			}
+		case <-timer.C:
+			t.Fatalf("no vote within %v", window)
+			return nil
+		}
+	}
+}
+
+// expectNoVote fails the test if a vote arrives on ch within window.
+func expectNoVote(t *testing.T, ch chan interface{}, window time.Duration) {
+	t.Helper()
+	check := func(msg interface{}) {
+		if _, ok := msg.(*types.Vote); ok {
+			t.Fatalf("should not broadcast a vote, got %T", msg)
+		}
+	}
+	timer := time.NewTimer(window)
+	defer timer.Stop()
+	for {
+		select {
+		case msg := <-ch:
+			check(msg)
+		case <-timer.C:
+			// BroadcastCh is unbuffered: a sender may be parked here, and its
+			// message would otherwise turn up in the next read.
+			for {
+				select {
+				case msg := <-ch:
+					check(msg)
+				default:
+					return
+				}
+			}
+		}
 	}
 }
 
@@ -87,22 +137,24 @@ func RandStringBytes(n int) string {
 	return string(b)
 }
 
+// getSignerAndSignFn returns pk's address and a sign function that behaves like
+// an unlocked keystore's SignHash: it signs with pk and refuses other accounts.
+//
+// It signs directly instead of importing pk into a throwaway keystore. Every
+// keystore starts a filesystem watcher that nothing here closes, and on macOS
+// (kqueue) each watcher goroutine blocks in a syscall and holds an OS thread
+// until the test binary exits. This helper runs hundreds of times per package
+// run, which drove the binary into macOS's 4096 threads-per-process limit
+// (runtime/cgo: pthread_create failed).
 func getSignerAndSignFn(pk *ecdsa.PrivateKey) (common.Address, func(account accounts.Account, hash []byte) ([]byte, error), error) {
-	veryLightScryptN := 2
-	veryLightScryptP := 1
-	dir, _ := os.MkdirTemp("", fmt.Sprintf("eth-getSignerAndSignFn-test-%v", RandStringBytes(5)))
-	defer os.RemoveAll(dir)
-
-	ks := keystore.NewKeyStore(dir, veryLightScryptN, veryLightScryptP)
-	pass := "" // not used but required by API
-	a1, err := ks.ImportECDSA(pk, pass)
-	if err != nil {
-		return common.Address{}, nil, err
+	signer := crypto.PubkeyToAddress(pk.PublicKey)
+	signFn := func(account accounts.Account, hash []byte) ([]byte, error) {
+		if account.Address != signer {
+			return nil, keystore.ErrLocked
+		}
+		return crypto.Sign(hash, pk)
 	}
-	if err := ks.Unlock(a1, ""); err != nil {
-		return a1.Address, nil, err
-	}
-	return a1.Address, ks.SignHash, nil
+	return signer, signFn, nil
 }
 
 func voteTX(gasLimit uint64, nonce uint64, addr string) (*types.Transaction, error) {
@@ -394,13 +446,46 @@ func signingTxWithSignerFn(header *types.Header, nonce uint64, signer common.Add
 	return signedTx, nil
 }
 
+// v2TestTimings shortens the V2 periods for this package. Round 10 needs a
+// larger period than round 0 for TestIsYourTurnConsensusV2CrossConfig.
+var v2TestTimings = map[uint64]struct {
+	timeoutPeriod int
+	minePeriod    int
+}{
+	0:   {timeoutPeriod: 1, minePeriod: 1},
+	10:  {timeoutPeriod: 1, minePeriod: 2},
+	900: {timeoutPeriod: 2, minePeriod: 2},
+}
+
+// shortenV2Timings rewrites the V2 timing knobs of cfg, which must be a clone.
+func shortenV2Timings(cfg *params.ChainConfig) {
+	if cfg == nil || cfg.XDPoS == nil || cfg.XDPoS.V2 == nil {
+		return
+	}
+	v2 := cfg.XDPoS.V2
+	for round, timing := range v2TestTimings {
+		if c, ok := v2.AllConfigs[round]; ok && c != nil {
+			c.TimeoutPeriod = timing.timeoutPeriod
+			c.MinePeriod = timing.minePeriod
+		}
+	}
+	if c := v2.CurrentConfig; c != nil {
+		if timing, ok := v2TestTimings[c.SwitchRound]; ok {
+			c.TimeoutPeriod = timing.timeoutPeriod
+			c.MinePeriod = timing.minePeriod
+		}
+	}
+}
+
 // legacyExecutionConfigForV2Tests shifts execution-layer forks far into the
 // future so V2 tests isolate consensus behavior from execution fork changes.
 func legacyExecutionConfigForV2Tests(chainConfig *params.ChainConfig) *params.ChainConfig {
 	if chainConfig == nil {
 		return nil
 	}
-	legacy := *chainConfig
+	// Clone so the timing rewrite cannot leak into the shared test config.
+	legacy := chainConfig.Clone()
+	shortenV2Timings(legacy)
 	futureForkBlock := big.NewInt(1_000_000_000)
 	legacy.ConstantinopleBlock = new(big.Int).Set(futureForkBlock)
 	legacy.PetersburgBlock = new(big.Int).Set(futureForkBlock)
@@ -430,7 +515,7 @@ func legacyExecutionConfigForV2Tests(chainConfig *params.ChainConfig) *params.Ch
 	legacy.TIPFixedRewardBlock = new(big.Int).Set(futureForkBlock)
 	legacy.TIPUpgradePenaltyBlock = new(big.Int).Set(futureForkBlock)
 	legacy.TIPEpochHalvingBlock = new(big.Int).Set(futureForkBlock)
-	return refreshChainConfigPresence(&legacy)
+	return refreshChainConfigPresence(legacy)
 }
 
 // refreshChainConfigPresence round-trips a chain config through JSON so tests
@@ -999,7 +1084,10 @@ func generateV2Extra(roundNumber int64, currentBlock *types.Block, signer common
 		Round:  round,
 		Number: currentBlock.Number(),
 	}
-	gapNumber := currentBlock.Number().Uint64() - currentBlock.Number().Uint64()%params.TestXDPoSMockChainConfig.XDPoS.Epoch - params.TestXDPoSMockChainConfig.XDPoS.Gap
+	gapNumber, ok := params.TestXDPoSMockChainConfig.XDPoS.GapBlockNumber(currentBlock.Number().Uint64())
+	if !ok {
+		panic("TestXDPoSMockChainConfig designates no gap block")
+	}
 	voteForSign := &types.VoteForSign{
 		ProposedBlockInfo: proposedBlockInfo,
 		GapNumber:         gapNumber,

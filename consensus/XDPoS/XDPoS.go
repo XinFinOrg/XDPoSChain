@@ -82,10 +82,8 @@ func New(chainConfig *params.ChainConfig, db ethdb.Database) (*XDPoS, error) {
 		return nil, errors.New("missing chain config")
 	}
 	config := chainConfig.XDPoS
-	// Set any missing consensus parameters to their defaults
-	if config != nil && config.Epoch == 0 {
-		config.Epoch = utils.EpochLength
-	}
+	// The schedule is judged by the CheckConfigForkOrder below, which reaches
+	// CheckSchedule: a missing epoch is refused there rather than repaired here.
 	if err := chainConfig.CheckConfigForkOrder(); err != nil {
 		return nil, err
 	}
@@ -127,19 +125,19 @@ func (x *XDPoS) Stop() {
 // accepts all blocks as valid without enforcing consensus rules.
 func NewFaker(db ethdb.Database, chainConfig *params.ChainConfig) *XDPoS {
 	var fakeEngine *XDPoS
-	// Set any missing consensus parameters to their defaults
 	fakeChainConfig := params.TestXDPoSMockChainConfig
 	if chainConfig != nil {
 		fakeChainConfig = chainConfig
 	}
-	if err := fakeChainConfig.CheckConfigForkOrder(); err != nil {
-		return nil
-	}
+	// A faker is the declared unvalidated path (#2743): it builds an engine for
+	// whatever config it is handed, so a schedule the startup gate would refuse can
+	// be exercised here. The consequence is on the caller: an Epoch of zero divides
+	// on first use instead of returning nil from this constructor.
 	conf := fakeChainConfig.XDPoS
 
 	minePeriodCh := make(chan int)
 	newRoundCh := make(chan types.Round, newRoundChanSize)
-	engineV2, err := engine_v2.New(fakeChainConfig, db, minePeriodCh, newRoundCh)
+	engineV2, err := engine_v2.NewFaker(fakeChainConfig, db, minePeriodCh, newRoundCh)
 	if err != nil {
 		return nil
 	}
@@ -291,12 +289,17 @@ func (x *XDPoS) VerifyUncles(chain consensus.ChainReader, block *types.Block) er
 	}
 }
 
+// ErrUnsupportedV2Seal reports that seal verification was asked of a v2 header.
+// A v2 block's proof is the validator signature in header.Validator, checked by
+// engine_v2's header verification; this adapter has no seal to verify.
+var ErrUnsupportedV2Seal = errors.New("not supported in the v2 consensus")
+
 // VerifySeal implements consensus.Engine, checking whether the signature contained
 // in the header satisfies the consensus protocol requirements.
 func (x *XDPoS) VerifySeal(chain consensus.ChainReader, header *types.Header) error {
 	switch x.config.BlockConsensusVersion(header.Number) {
 	case params.ConsensusEngineVersion2:
-		return nil
+		return ErrUnsupportedV2Seal
 	default: // Default "v1"
 		return x.EngineV1.VerifySeal(chain, header)
 	}
@@ -539,6 +542,12 @@ func (x *XDPoS) GetAuthorisedSignersFromSnapshot(chain consensus.ChainReader, he
 	default: // Default "v1"
 		return x.EngineV1.GetAuthorisedSignersFromSnapshot(chain, header)
 	}
+}
+
+// CurrentRound returns the round the v2 engine is currently in. XDPoS v1 has no
+// rounds, so the value is only meaningful on a v2 chain.
+func (x *XDPoS) CurrentRound() types.Round {
+	return x.EngineV2.CurrentRound()
 }
 
 func (x *XDPoS) FindParentBlockToAssign(chain consensus.ChainReader, currentBlock *types.Header) *types.Block {

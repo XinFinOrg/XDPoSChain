@@ -28,6 +28,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/params"
+	"github.com/holiman/uint256"
 )
 
 // pendingBlockNumber returns the height a pooled transaction is priced at: it
@@ -102,6 +103,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if val.BitLen() > 256 {
 		return types.ErrUint256Overflow
 	}
+	value, _ := uint256.FromBig(val)
 	// Ensure the transaction doesn't exceed the current block limit gas
 	if head.GasLimit < tx.Gas() {
 		return ErrGasLimit
@@ -126,44 +128,62 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if tx.Nonce()+1 < tx.Nonce() {
 		return core.ErrNonceMax
 	}
-	// Skip further validation for special transactions
+	// Special transactions are exempt from the gas price checks below, but the
+	// execution side still charges intrinsic and floor gas unless it routes them
+	// to ApplySignTransaction
 	if tx.IsSpecialTransaction() {
 		if opts.NotSigner(from) {
 			return fmt.Errorf("%w: %s", ErrSpecialTxNotFromSigner, from.Hex())
 		}
-		return nil
+		if core.IsSignTransactionRoute(opts.Config, pendingBlockNumber(head.Number), tx) {
+			return nil
+		}
+		if err := validateIntrinsicAndFloor(tx, from, value, rules); err != nil {
+			return err
+		}
+		return validateSetCodeAuthorizations(tx)
 	}
 	// Check zero gas price.
 	if tx.GasPrice().Sign() == 0 {
 		return ErrZeroGasPrice
 	}
-	// Ensure the transaction has more gas than the bare minimum needed to
-	// cover the transaction metadata.
-	// XDC schedules the EIP-2028 calldata pricing with the Prague fork.
-	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsPrague, rules.IsEIP1559)
+	if err := validateIntrinsicAndFloor(tx, from, value, rules); err != nil {
+		return err
+	}
+	// Ensure the gas price is high enough to cover the requirement of the calling pool
+	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
+		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.GasTipCap(), opts.MinTip)
+	}
+	if err := validateSetCodeAuthorizations(tx); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateSetCodeAuthorizations(tx *types.Transaction) error {
+	if tx.Type() == types.SetCodeTxType && len(tx.SetCodeAuthorizations()) == 0 {
+		return errors.New("set code tx must have at least one authorization tuple")
+	}
+	return nil
+}
+
+// validateIntrinsicAndFloor applies the same intrinsic gas and calldata floor
+// checks as the regular pool path; rules follow the head block.
+func validateIntrinsicAndFloor(tx *types.Transaction, from common.Address, value *uint256.Int, rules params.Rules) error {
+	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), from, tx.To(), value, rules)
 	if err != nil {
 		return err
 	}
 	if tx.Gas() < intrGas {
 		return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrIntrinsicGas, tx.Gas(), intrGas)
 	}
-	// Ensure the transaction can cover floor data gas.
 	if rules.IsPrague {
-		floorDataGas, err := core.FloorDataGas(tx.Data())
+		floorDataGas, err := core.FloorDataGas(rules, from, tx.To(), value, tx.Data(), tx.AccessList())
 		if err != nil {
 			return err
 		}
 		if tx.Gas() < floorDataGas {
 			return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrFloorDataGas, tx.Gas(), floorDataGas)
-		}
-	}
-	// Ensure the gas price is high enough to cover the requirement of the calling pool
-	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
-		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.GasTipCap(), opts.MinTip)
-	}
-	if tx.Type() == types.SetCodeTxType {
-		if len(tx.SetCodeAuthorizations()) == 0 {
-			return errors.New("set code tx must have at least one authorization tuple")
 		}
 	}
 	return nil
@@ -197,8 +217,6 @@ type ValidationOptionsWithState struct {
 
 	Trc21FeeCapacity map[common.Address]*big.Int
 
-	PendingNonce func(addr common.Address) uint64
-
 	CurrentNumber func() *big.Int
 }
 
@@ -231,9 +249,11 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	if next > tx.Nonce() {
 		return fmt.Errorf("%w: next nonce %v, tx nonce %v", core.ErrNonceTooLow, next, tx.Nonce())
 	}
-	if opts.PendingNonce(from)+common.LimitThresholdNonceInQueue < tx.Nonce() {
-		return core.ErrNonceTooHigh
-	}
+	// A future nonce is not rejected here: like upstream, the pool queues it and
+	// AccountQueue / GlobalQueue bound the queue. Rejecting it would make an
+	// out-of-order delivery permanent, since the tx fetcher fetches announced
+	// hashes in random order and never offers a rejected hash again (#3056).
+	//
 	// Ensure the transaction doesn't produce a nonce gap in pools that do not
 	// support arbitrary orderings
 	if opts.FirstNonceGap != nil {

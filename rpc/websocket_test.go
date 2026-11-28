@@ -209,9 +209,10 @@ func TestClientWebsocketPing(t *testing.T) {
 	t.Parallel()
 
 	var (
-		sendPing    = make(chan struct{})
-		server      = wsPingTestServer(t, sendPing)
-		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+		sendPing = make(chan struct{})
+		server   = wsPingTestServer(t, sendPing)
+		// The deadline only needs to expire before the ping below.
+		ctx, cancel = context.WithTimeout(context.Background(), 200*time.Millisecond)
 	)
 	defer cancel()
 	defer server.Shutdown(ctx)

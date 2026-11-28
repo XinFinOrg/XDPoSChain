@@ -25,6 +25,10 @@ import (
 	"time"
 )
 
+// feedTestTimeout is a hang watchdog, not a latency assertion: under load the
+// quadratic, serialised unsubscribe drain takes seconds
+const feedTestTimeout = 30 * time.Second
+
 func TestFeedPanics(t *testing.T) {
 	{
 		var f Feed
@@ -86,7 +90,7 @@ func TestFeed(t *testing.T) {
 
 		subchan := make(chan int)
 		sub := feed.Subscribe(subchan)
-		timeout := time.NewTimer(2 * time.Second)
+		timeout := time.NewTimer(feedTestTimeout)
 		defer timeout.Stop()
 		subscribed.Done()
 

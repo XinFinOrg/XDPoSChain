@@ -22,14 +22,17 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ChecksumDB keeps file checksums and tool versions.
@@ -172,6 +175,15 @@ func (db *ChecksumDB) DownloadFileFromKnownURL(dstPath string) error {
 	return db.DownloadFile(url, dstPath)
 }
 
+const (
+	downloadAttempts   = 5
+	downloadRetryDelay = 2 * time.Second
+	downloadTimeout    = 2 * time.Minute
+
+	// Caps the loop so the 10-minute lint job still has time to lint
+	downloadBudget = 5 * time.Minute
+)
+
 // DownloadFile downloads a file and verifies its checksum.
 func (db *ChecksumDB) DownloadFile(url, dstPath string) error {
 	basename := filepath.Base(dstPath)
@@ -187,13 +199,44 @@ func (db *ChecksumDB) DownloadFile(url, dstPath string) error {
 
 	fmt.Printf("%s is stale\n", dstPath)
 	fmt.Printf("downloading from %s\n", url)
-	resp, err := http.Get(url)
+	return downloadWithRetry(url, dstPath, hash, downloadAttempts, downloadRetryDelay, downloadTimeout, downloadBudget)
+}
+
+func downloadWithRetry(url, dstPath, hash string, attempts int, delay, timeout, budget time.Duration) error {
+	var err error
+	deadline := time.Now().Add(budget)
+	for attempt := 1; attempt <= attempts; attempt++ {
+		left := time.Until(deadline)
+		if left <= 0 {
+			break
+		}
+		if timeout <= 0 || timeout > left {
+			timeout = left
+		}
+		if err = downloadFile(url, dstPath, hash, timeout); err == nil {
+			return nil
+		}
+		if attempt == attempts || !isTransient(err) {
+			break
+		}
+		fmt.Printf("retrying download in %s\n", delay)
+		time.Sleep(delay)
+		delay *= 2
+	}
+	if err == nil {
+		err = fmt.Errorf("download budget of %s exhausted", budget)
+	}
+	return err
+}
+
+func downloadFile(url, dstPath, hash string, timeout time.Duration) error {
+	resp, err := (&http.Client{Timeout: timeout}).Get(url)
 	if err != nil {
-		return fmt.Errorf("download error: %v", err)
+		return fmt.Errorf("download error: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("download error: status %d", resp.StatusCode)
+		return &httpStatusError{code: resp.StatusCode}
 	}
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
 		return err
@@ -218,6 +261,35 @@ func (db *ChecksumDB) DownloadFile(url, dstPath string) error {
 	}
 	// It's valid, rename to dstPath to complete the download.
 	return os.Rename(tmpfile, dstPath)
+}
+
+type httpStatusError struct {
+	code int
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("download error: status %d", e.code)
+}
+
+type writeError struct {
+	err error
+}
+
+func (e *writeError) Error() string { return e.err.Error() }
+
+func (e *writeError) Unwrap() error { return e.err }
+
+func isTransient(err error) bool {
+	var status *httpStatusError
+	if errors.As(err, &status) {
+		return status.code == http.StatusTooManyRequests || status.code >= 500
+	}
+	var writeErr *writeError
+	if errors.As(err, &writeErr) {
+		return false
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // findHash returns the known hash of a file.
@@ -282,7 +354,10 @@ func (w *downloadWriter) Write(buf []byte) (int, error) {
 		fmt.Print(pct, "%")
 		w.lastpct = pct
 	}
-	return n, err
+	if err != nil {
+		return n, &writeError{err}
+	}
+	return n, nil
 }
 
 func (w *downloadWriter) Close() error {

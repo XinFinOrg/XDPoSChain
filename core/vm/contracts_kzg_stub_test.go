@@ -159,7 +159,7 @@ func TestKZGPointEvaluationStubFails(t *testing.T) {
 	}
 	evm := NewEVM(BlockContext{
 		CanTransfer: func(StateDB, common.Address, *uint256.Int) bool { return true },
-		Transfer:    func(StateDB, common.Address, common.Address, *uint256.Int) {},
+		Transfer:    func(StateDB, common.Address, common.Address, *uint256.Int, *params.Rules) {},
 		BlockNumber: big.NewInt(1),
 		Time:        1,
 		Random:      &common.Hash{},
@@ -184,11 +184,11 @@ func TestKZGPointEvaluationStubFails(t *testing.T) {
 	} {
 		t.Run("input/"+test.name, func(t *testing.T) {
 			const gas uint64 = 100_000
-			_, leftOverGas, err := evm.Call(caller, kzgPointEvalAddr, test.input, gas, zero)
+			_, leftOverGas, err := evm.Call(caller, kzgPointEvalAddr, test.input, NewGasBudget(gas), zero)
 			if !errors.Is(err, errKZGUnsupported) {
 				t.Fatalf("0x0a call with %s returned %v, want %v", test.name, err, errKZGUnsupported)
 			}
-			if leftOverGas != 0 {
+			if leftOverGas.RegularGas != 0 {
 				t.Fatalf("expected all gas to be consumed, leftOverGas = %d", leftOverGas)
 			}
 		})

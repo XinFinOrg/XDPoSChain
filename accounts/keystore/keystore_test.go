@@ -70,6 +70,41 @@ func TestKeyStore(t *testing.T) {
 	}
 }
 
+type removeKeyOnReadStore struct {
+	keyStore
+}
+
+func (s *removeKeyOnReadStore) GetKey(addr common.Address, filename, auth string) (*Key, error) {
+	key, err := s.keyStore.GetKey(addr, filename, auth)
+	if err != nil {
+		return key, err
+	}
+	if err := os.Remove(filename); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+// TestDeleteFileDisappearsAfterKeyLookup covers KeyStore.Delete when the key
+// file disappears between the key lookup and the removal: the removal fails and
+// the account is left in the cache for the watcher to drop. The cache state on
+// that path is pinned by TestDeleteFileKeepsCacheOnRemoveFailure, the event
+// ordering by TestWalletNotifications.
+func TestDeleteFileDisappearsAfterKeyLookup(t *testing.T) {
+	t.Parallel()
+	_, ks := tmpKeyStore(t)
+
+	account, err := ks.NewAccount("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ks.storage = &removeKeyOnReadStore{keyStore: ks.storage}
+
+	if err := ks.Delete(account, ""); !os.IsNotExist(err) {
+		t.Fatalf("Delete error = %v, want file-not-found", err)
+	}
+}
+
 func TestSign(t *testing.T) {
 	t.Parallel()
 	_, ks := tmpKeyStore(t)

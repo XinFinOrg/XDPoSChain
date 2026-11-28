@@ -2,13 +2,8 @@ package legacypool
 
 import (
 	"math/big"
-	"strconv"
-	"strings"
 
-	"github.com/XinFinOrg/XDPoSChain/XDCxlending/lendingstate"
 	"github.com/XinFinOrg/XDPoSChain/common"
-	"github.com/XinFinOrg/XDPoSChain/crypto/keccak"
-	"github.com/XinFinOrg/XDPoSChain/rpc"
 )
 
 type LendingMsg struct {
@@ -34,80 +29,4 @@ type LendingMsg struct {
 
 	// This is only used when marshaling to JSON.
 	Hash common.Hash `json:"hash" rlp:"-"`
-}
-
-func getLendingNonce(userAddress common.Address) (uint64, error) {
-	rpcClient, err := rpc.DialHTTP("http://127.0.0.1:8501")
-	if err != nil {
-		return 0, err
-	}
-	defer rpcClient.Close()
-	var result interface{}
-	err = rpcClient.Call(&result, "XDCx_getLendingOrderCount", userAddress)
-	if err != nil {
-		return 0, err
-	}
-	s := result.(string)
-	s = strings.TrimPrefix(s, "0x")
-	n, err := strconv.ParseUint(s, 16, 32)
-	return n, err
-}
-
-func (l *LendingMsg) computeHash() common.Hash {
-	borrowing := l.Side == lendingstate.Borrowing
-	sha := keccak.NewLegacyKeccak256()
-	if l.Type == lendingstate.Repay {
-		sha.Write(common.BigToHash(big.NewInt(int64(l.AccountNonce))).Bytes())
-		sha.Write([]byte(l.Status))
-		sha.Write(l.RelayerAddress.Bytes())
-		sha.Write(l.UserAddress.Bytes())
-		sha.Write(l.LendingToken.Bytes())
-		sha.Write(common.BigToHash(big.NewInt(int64(l.Term))).Bytes())
-		sha.Write(common.BigToHash(big.NewInt(int64(l.LendingTradeId))).Bytes())
-	} else if l.Type == lendingstate.TopUp {
-		sha.Write(common.BigToHash(big.NewInt(int64(l.AccountNonce))).Bytes())
-		sha.Write([]byte(l.Status))
-		sha.Write(l.RelayerAddress.Bytes())
-		sha.Write(l.UserAddress.Bytes())
-		sha.Write(l.LendingToken.Bytes())
-		sha.Write(common.BigToHash(big.NewInt(int64(l.Term))).Bytes())
-		sha.Write(common.BigToHash(big.NewInt(int64(l.LendingTradeId))).Bytes())
-		sha.Write(common.BigToHash(l.Quantity).Bytes())
-	} else {
-		if l.Status == lendingstate.LendingStatusCancelled {
-			sha := keccak.NewLegacyKeccak256()
-			sha.Write(l.Hash.Bytes())
-			sha.Write(common.BigToHash(big.NewInt(int64(l.AccountNonce))).Bytes())
-			sha.Write(l.UserAddress.Bytes())
-			sha.Write(common.BigToHash(big.NewInt(int64(l.LendingId))).Bytes())
-			sha.Write([]byte(l.Status))
-			sha.Write(l.RelayerAddress.Bytes())
-		} else if l.Status == lendingstate.LendingStatusNew {
-			sha.Write(l.RelayerAddress.Bytes())
-			sha.Write(l.UserAddress.Bytes())
-			if borrowing {
-				sha.Write(l.CollateralToken.Bytes())
-			}
-			sha.Write(l.LendingToken.Bytes())
-			sha.Write(common.BigToHash(l.Quantity).Bytes())
-			sha.Write(common.BigToHash(big.NewInt(int64(l.Term))).Bytes())
-			if l.Type == lendingstate.Limit {
-				sha.Write(common.BigToHash(big.NewInt(int64(l.Interest))).Bytes())
-			}
-			sha.Write([]byte(l.Side))
-			sha.Write([]byte(l.Status))
-			sha.Write([]byte(l.Type))
-			sha.Write(common.BigToHash(big.NewInt(int64(l.AccountNonce))).Bytes())
-			sha.Write(common.BigToHash(big.NewInt(int64(l.LendingTradeId))).Bytes())
-			if borrowing {
-				autoTopUp := int64(0)
-				if l.AutoTopUp {
-					autoTopUp = int64(1)
-				}
-				sha.Write(common.BigToHash(big.NewInt(autoTopUp)).Bytes())
-			}
-		}
-	}
-
-	return common.BytesToHash(sha.Sum(nil))
 }

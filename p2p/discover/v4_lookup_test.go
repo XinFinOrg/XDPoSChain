@@ -24,13 +24,14 @@ import (
 	"testing"
 
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/p2p/discover/v4wire"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enr"
 )
 
 func TestUDPv4_Lookup(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPTest(t)
@@ -67,7 +68,7 @@ func TestUDPv4_Lookup(t *testing.T) {
 }
 
 func TestUDPv4_LookupIterator(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPTest(t)
@@ -104,6 +105,7 @@ func TestUDPv4_LookupIterator(t *testing.T) {
 // TestUDPv4_LookupIteratorClose checks that lookupIterator ends when its Close
 // method is called.
 func TestUDPv4_LookupIteratorClose(t *testing.T) {
+	testshort.Skip(t)
 	t.Parallel()
 	test := newUDPTest(t)
 	defer test.close()
@@ -147,10 +149,27 @@ func serveTestnet(test *udpTest, testnet *preminedTestnet) {
 				test.packetInFrom(nil, key, to, &v4wire.Pong{Expiration: futureExp, ReplyTok: hash})
 			case *v4wire.Findnode:
 				dist := enode.LogDist(n.ID(), testnet.target.id())
-				nodes := testnet.nodesAtDistance(dist - 1)
-				test.packetInFrom(nil, key, to, &v4wire.Neighbors{Expiration: futureExp, Nodes: nodes})
+				replyNeighbors(test, key, to, testnet.nodesAtDistance(dist-1))
 			}
 		})
+	}
+}
+
+// replyNeighbors repeats the set to bucketSize because the findnode matcher
+// otherwise waits out respTimeout and the lookup drops the duplicates
+func replyNeighbors(test *udpTest, key *ecdsa.PrivateKey, to *net.UDPAddr, nodes []v4wire.Node) {
+	if len(nodes) == 0 {
+		test.packetInFrom(nil, key, to, &v4wire.Neighbors{Expiration: futureExp})
+		return
+	}
+	filled := make([]v4wire.Node, 0, bucketSize)
+	for len(filled) < bucketSize {
+		filled = append(filled, nodes[len(filled)%len(nodes)])
+	}
+	for len(filled) > 0 {
+		n := min(len(filled), v4wire.MaxNeighbors)
+		test.packetInFrom(nil, key, to, &v4wire.Neighbors{Expiration: futureExp, Nodes: filled[:n]})
+		filled = filled[n:]
 	}
 }
 

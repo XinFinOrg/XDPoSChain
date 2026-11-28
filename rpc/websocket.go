@@ -35,11 +35,13 @@ import (
 const (
 	wsReadBuffer       = 1024
 	wsWriteBuffer      = 1024
-	wsPingInterval     = 30 * time.Second
 	wsPingWriteTimeout = 5 * time.Second
 	wsPongTimeout      = 30 * time.Second
 	wsDefaultReadLimit = 32 * 1024 * 1024
 )
+
+// wsPingInterval is a variable so tests can shorten the idle period.
+var wsPingInterval = 30 * time.Second
 
 var wsBufferPool = new(sync.Pool)
 
@@ -354,9 +356,9 @@ func (wc *websocketCodec) pingLoop() {
 			return
 
 		case <-wc.pingReset:
-			if !pingTimer.Stop() {
-				<-pingTimer.C
-			}
+			// Reset stops and re-arms the timer in one step. Draining pingTimer.C
+			// after Stop reports false blocks forever once the select above has
+			// taken the value: Go 1.23+ timer channels are unbuffered.
 			pingTimer.Reset(wsPingInterval)
 
 		case <-pingTimer.C:

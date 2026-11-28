@@ -144,6 +144,9 @@ func (o *BlockOverrides) Apply(blockCtx *vm.BlockContext) {
 	}
 	if o.Number != nil {
 		blockCtx.BlockNumber = o.Number.ToInt()
+		// A slot is a block on this chain, so SLOTNUM follows an overridden
+		// block number too (docs/adr/0006-define-slot-number-as-block-number.md).
+		blockCtx.SlotNum = blockCtx.BlockNumber.Uint64()
 	}
 	if o.Difficulty != nil {
 		blockCtx.Difficulty = o.Difficulty.ToInt()

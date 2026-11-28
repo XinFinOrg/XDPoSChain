@@ -160,7 +160,7 @@ type Config struct {
 	Journal   string           // Journal of local transactions to survive node restarts
 	Rejournal time.Duration    // Time interval to regenerate the local transaction journal
 
-	PriceLimit uint64 // Minimum gas price to enforce for acceptance into the pool
+	PriceLimit uint64 // Minimum gas price tip to enforce for acceptance into the pool
 	PriceBump  uint64 // Minimum price bump percentage to replace an already existing transaction (nonce)
 
 	AccountSlots uint64 // Number of executable transaction slots guaranteed per account
@@ -468,8 +468,10 @@ func (pool *LegacyPool) SetGasTip(tip *big.Int) error {
 	return nil
 }
 
-// Nonce returns the next nonce of an account, with all transactions executable
-// by the pool already applied on top.
+// Nonce returns the PENDING nonce of an account: the next nonce with all
+// transactions executable by the pool already applied on top. It implements
+// SubPool.Nonce, which TxPool.PoolNonce aggregates. Note that TxPool.Nonce,
+// despite the same name, returns the on-chain nonce instead.
 func (pool *LegacyPool) Nonce(addr common.Address) uint64 {
 	pool.mu.RLock()
 	defer pool.mu.RUnlock()
@@ -621,10 +623,6 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
 
 		Trc21FeeCapacity: pool.trc21FeeCapacity,
 
-		PendingNonce: func(addr common.Address) uint64 {
-			return pool.pendingNonces.get(addr)
-		},
-
 		CurrentNumber: func() *big.Int {
 			header := pool.currentHead.Load()
 			if header == nil {
@@ -761,8 +759,13 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 	}
 
 	// Special transactions must also honor the reservation semantics to keep
-	// the coordinator's ownership accounting balanced.
-	if tx.IsSpecialTransaction() && pool.IsSigner(from) && pool.pendingNonces.get(from) == tx.Nonce() {
+	// the coordinator's ownership accounting balanced. A signer's special tx at
+	// the next pending nonce, or replacing one it already has pending, bypasses
+	// the pool-full check and is kept out of the price heap at admission, so a
+	// sign tx is not refused on price. A replacement takes the old tx's slot and
+	// does not grow the pool. Like any tx, it can be evicted after a reheap.
+	if tx.IsSpecialTransaction() && pool.IsSigner(from) &&
+		(pool.pendingNonces.get(from) == tx.Nonce() || (hasPending && pool.pending[from].Contains(tx.Nonce()))) {
 		return pool.promoteSpecialTx(from, tx)
 	}
 
@@ -943,7 +946,13 @@ func (pool *LegacyPool) promoteTx(addr common.Address, hash common.Hash, tx *typ
 	return true
 }
 
-func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transaction) (bool, error) {
+// promoteSpecialTx inserts a special transaction from a signer straight into the
+// pending list at the account's pending nonce. Like add, it reports whether the
+// transaction replaced an existing one, not merely whether it was inserted: on a
+// plain insertion add's caller must mark the account dirty, so that the reorg
+// promotes the transactions queued behind this nonce right away rather than at
+// the next chain head.
+func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transaction) (replaced bool, err error) {
 	list := pool.pending[addr]
 	newPending := list == nil
 	if newPending {
@@ -953,10 +962,8 @@ func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transact
 	base := new(uint256.Int).Set(list.totalcost)
 	old := list.txs.Get(tx.Nonce())
 	if old != nil {
-		if old.IsSpecialTransaction() {
-			return false, txpool.ErrDuplicateSpecialTransaction
-		}
-		// Old is being replaced, subtract old cost
+		// Old is being replaced, subtract old cost. A special tx replaces any
+		// tx at its nonce, special or not, as list.Add does.
 		if _, underflow := base.SubOverflow(base, uint256.MustFromBig(old.Cost())); underflow {
 			panic("totalcost underflow")
 		}
@@ -996,11 +1003,14 @@ func (pool *LegacyPool) promoteSpecialTx(addr common.Address, tx *types.Transact
 	if pool.all.Get(tx.Hash()) == nil {
 		pool.all.Add(tx)
 	}
-	// Set the potentially new pending nonce and notify any subsystems of the new tx
+	// Set the potentially new pending nonce and notify any subsystems of the new tx.
+	// A replacement keeps the pending nonce: it may sit below the list's tail.
 	pool.queue.bump(addr)
-	pool.pendingNonces.set(addr, tx.Nonce()+1)
+	if old == nil {
+		pool.pendingNonces.set(addr, tx.Nonce()+1)
+	}
 	pool.queueTxEvent(tx)
-	return true, nil
+	return old != nil, nil
 }
 
 // AddRemotes enqueues a batch of transactions into the pool if they are valid.

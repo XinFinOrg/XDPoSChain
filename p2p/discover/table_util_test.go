@@ -26,6 +26,7 @@ import (
 	"net"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/log"
@@ -43,9 +44,17 @@ func init() {
 
 func newTestTable(t transport) (*Table, *enode.DB) {
 	db, _ := enode.OpenDB("")
-	tab, _ := newTable(t, db, Config{Log: log.Root()})
+	return newTestTableWithDB(t, db), db
+}
+
+// newTestTableWithDB is newTestTable on a database the caller owns. Opening a
+// database dominates the cost of short-lived tables, so tests that create many
+// of them share one.
+func newTestTableWithDB(t transport, db *enode.DB) *Table {
+	// Keep revalidation out of the test: it would move entries while the test reads them
+	tab, _ := newTable(t, db, Config{Log: log.Root(), PingInterval: 1000 * time.Hour})
 	go tab.loop()
-	return tab, db
+	return tab
 }
 
 // nodeAtDistance creates a node for which enode.LogDist(base, n.id) == ld.

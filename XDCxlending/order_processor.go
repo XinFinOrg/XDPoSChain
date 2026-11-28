@@ -991,7 +991,7 @@ func (l *Lending) GetCollateralPrices(header *types.Header, chain consensus.Chai
 	// collateralPrice: price of ticker collateralToken/lendToken
 
 	collateralPriceFromContract, updatedBlock := lendingstate.GetCollateralPrice(statedb, collateralToken, lendingToken)
-	collateralPriceUpdatedFromContract := updatedBlock.Uint64()/chain.Config().XDPoS.Epoch == header.Number.Uint64()/chain.Config().XDPoS.Epoch
+	collateralPriceUpdatedFromContract := chain.Config().XDPoS.IsSameEpoch(updatedBlock.Uint64(), header.Number.Uint64())
 
 	lendTokenXDCPrice, err := l.GetXDCBasePrices(header, chain, statedb, tradingStateDb, lendingToken)
 	if err != nil {
@@ -1013,7 +1013,7 @@ func (l *Lending) GetCollateralPrices(header *types.Header, chain consensus.Chai
 	}
 	var collateralPrice *big.Int
 	inverseCollateralPriceFromContract, updatedBlock := lendingstate.GetCollateralPrice(statedb, lendingToken, collateralToken)
-	inverseCollateralPriceUpdatedFromContract := updatedBlock.Uint64()/chain.Config().XDPoS.Epoch == header.Number.Uint64()/chain.Config().XDPoS.Epoch
+	inverseCollateralPriceUpdatedFromContract := chain.Config().XDPoS.IsSameEpoch(updatedBlock.Uint64(), header.Number.Uint64())
 	if inverseCollateralPriceUpdatedFromContract {
 		log.Debug("Getting lending/collateral token price from contract", "price", inverseCollateralPriceFromContract)
 		collateralPrice = new(big.Int).Mul(lendingTokenDecimal, collateralTokenDecimal)
@@ -1047,7 +1047,7 @@ func (l *Lending) GetCollateralPrices(header *types.Header, chain consensus.Chai
 
 func (l *Lending) GetXDCBasePrices(header *types.Header, chain consensus.ChainContext, statedb *state.StateDB, tradingStateDb *tradingstate.TradingStateDB, token common.Address) (*big.Int, error) {
 	tokenXDCPriceFromContract, updatedBlock := lendingstate.GetCollateralPrice(statedb, token, common.XDCNativeAddressBinary)
-	tokenXDCPriceUpdatedFromContract := updatedBlock.Uint64()/chain.Config().XDPoS.Epoch == header.Number.Uint64()/chain.Config().XDPoS.Epoch
+	tokenXDCPriceUpdatedFromContract := chain.Config().XDPoS.IsSameEpoch(updatedBlock.Uint64(), header.Number.Uint64())
 
 	if token == common.XDCNativeAddressBinary {
 		return common.BasePrice, nil
@@ -1058,7 +1058,7 @@ func (l *Lending) GetXDCBasePrices(header *types.Header, chain consensus.ChainCo
 		return tokenXDCPriceFromContract, nil
 	} else {
 		XDCTokenPriceFromContract, updatedBlock := lendingstate.GetCollateralPrice(statedb, common.XDCNativeAddressBinary, token)
-		XDCTokenPriceUpdatedFromContract := updatedBlock.Uint64()/chain.Config().XDPoS.Epoch == header.Number.Uint64()/chain.Config().XDPoS.Epoch
+		XDCTokenPriceUpdatedFromContract := chain.Config().XDPoS.IsSameEpoch(updatedBlock.Uint64(), header.Number.Uint64())
 		if XDCTokenPriceUpdatedFromContract && XDCTokenPriceFromContract != nil && XDCTokenPriceFromContract.Sign() > 0 {
 			// getting lendToken price from contract first
 			// otherwise, getting from XDCx lendToken/XDC

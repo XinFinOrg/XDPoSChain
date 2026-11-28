@@ -27,7 +27,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/bitutil"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
-	"github.com/XinFinOrg/XDPoSChain/core/vm/privacy"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/crypto/blake2b"
 	"github.com/XinFinOrg/XDPoSChain/crypto/bn256"
@@ -69,8 +68,6 @@ var PrecompiledContractsByzantium = PrecompiledContracts{
 	common.BytesToAddress([]byte{6}):  &bn256AddByzantium{},
 	common.BytesToAddress([]byte{7}):  &bn256ScalarMulByzantium{},
 	common.BytesToAddress([]byte{8}):  &bn256PairingByzantium{},
-	common.BytesToAddress([]byte{30}): &ringSignatureVerifier{},
-	common.BytesToAddress([]byte{40}): &bulletproofVerifier{},
 	common.BytesToAddress([]byte{41}): &XDCxLastPrice{},
 	common.BytesToAddress([]byte{42}): &XDCxEpochPrice{},
 }
@@ -87,8 +84,6 @@ var PrecompiledContractsIstanbul = PrecompiledContracts{
 	common.BytesToAddress([]byte{7}):  &bn256ScalarMulIstanbul{},
 	common.BytesToAddress([]byte{8}):  &bn256PairingIstanbul{},
 	common.BytesToAddress([]byte{9}):  &blake2F{},
-	common.BytesToAddress([]byte{30}): &ringSignatureVerifier{},
-	common.BytesToAddress([]byte{40}): &bulletproofVerifier{},
 	common.BytesToAddress([]byte{41}): &XDCxLastPrice{},
 	common.BytesToAddress([]byte{42}): &XDCxEpochPrice{},
 }
@@ -267,9 +262,9 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 // RunPrecompiledContract runs and evaluates the output of a precompiled contract.
 // It returns
 // - the returned bytes,
-// - the _remaining_ gas,
+// - the remaining gas budget,
 // - any error that occurred
-func RunPrecompiledContract(evm *EVM, p PrecompiledContract, input []byte, suppliedGas uint64, logger *tracing.Hooks) (ret []byte, remainingGas uint64, err error) {
+func RunPrecompiledContract(evm *EVM, p PrecompiledContract, input []byte, gas GasBudget, logger *tracing.Hooks) (ret []byte, remainingGas GasBudget, err error) {
 	if evm != nil {
 		if evm.chainConfig.IsTIPXDCXReceiver(evm.Context.BlockNumber) {
 			switch p := p.(type) {
@@ -282,15 +277,16 @@ func RunPrecompiledContract(evm *EVM, p PrecompiledContract, input []byte, suppl
 	}
 
 	gasCost := p.RequiredGas(input)
-	if suppliedGas < gasCost {
-		return nil, 0, ErrOutOfGas
+	prior, ok := gas.Charge(GasCosts{RegularGas: gasCost})
+	if !ok {
+		gas.Exhaust()
+		return nil, gas, ErrOutOfGas
 	}
 	if logger != nil && logger.OnGasChange != nil {
-		logger.OnGasChange(suppliedGas, suppliedGas-gasCost, tracing.GasChangeCallPrecompiledContract)
+		logger.OnGasChange(prior, gas.RegularGas, tracing.GasChangeCallPrecompiledContract)
 	}
-	suppliedGas -= gasCost
 	output, err := p.Run(input)
-	return output, suppliedGas, err
+	return output, gas, err
 }
 
 // ecrecover implemented as a native contract.
@@ -780,51 +776,6 @@ func (c *p256Verify) Run(input []byte) ([]byte, error) {
 
 func (c *p256Verify) Name() string {
 	return "P256VERIFY"
-}
-
-type ringSignatureVerifier struct{}
-
-func (c *ringSignatureVerifier) RequiredGas(input []byte) uint64 {
-	// Ring signature verification currently uses a fixed gas charge.
-	return 100000
-}
-
-func (c *ringSignatureVerifier) Run(proof []byte) ([]byte, error) {
-	der, err := privacy.Deserialize(proof)
-	if err != nil {
-		return []byte{}, errors.New("fail to deserialize proof")
-	}
-	if !privacy.Verify(der, false) {
-		return []byte{}, errors.New("fail to verify ring signature")
-	}
-	return []byte{}, nil
-}
-
-func (c *ringSignatureVerifier) Name() string {
-	return "RING_SIG_VERIFY"
-}
-
-type bulletproofVerifier struct{}
-
-func (c *bulletproofVerifier) RequiredGas(input []byte) uint64 {
-	// Bulletproof verification currently uses a fixed gas charge.
-	return 100000
-}
-
-func (c *bulletproofVerifier) Name() string {
-	return "BULLET_PROOF_VERIFY"
-}
-
-func (c *bulletproofVerifier) Run(proof []byte) ([]byte, error) {
-	mrp := new(privacy.MultiRangeProof)
-	if mrp.Deserialize(proof) != nil {
-		return []byte{}, errors.New("failed to deserialize bulletproofs")
-	}
-
-	if !privacy.MRPVerify(mrp) {
-		return []byte{}, errors.New("failed to verify bulletproof")
-	}
-	return []byte{}, nil
 }
 
 // bn256PairingIstanbul implements a pairing pre-compile for the bn256 curve

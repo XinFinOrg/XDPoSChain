@@ -48,6 +48,12 @@ func TestSplitBlocksForVerification(t *testing.T) {
 	noGapSchedule := params.TestXDPoSMockChainConfig.Clone()
 	noGapSchedule.XDPoS.Gap = 0
 
+	// A config with no epoch length cannot be started with, but a test can build
+	// one directly; the split must return the batch whole rather than divide by
+	// zero.
+	zeroEpochSchedule := params.TestXDPoSMockChainConfig.Clone()
+	zeroEpochSchedule.XDPoS.Epoch = 0
+
 	for _, tc := range []struct {
 		name   string
 		cfg    *params.ChainConfig
@@ -89,6 +95,12 @@ func TestSplitBlocksForVerification(t *testing.T) {
 			cfg:    noGapSchedule,
 			blocks: blocksInRange(451, 1350),
 			want:   [][2]uint64{{451, 899}, {900, 1350}},
+		},
+		{
+			name:   "schedule without an epoch length: no cut and no division",
+			cfg:    zeroEpochSchedule,
+			blocks: blocksInRange(451, 1350),
+			want:   [][2]uint64{{451, 1350}},
 		},
 		{
 			name:   "chain without XDPoS",

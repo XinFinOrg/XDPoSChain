@@ -54,6 +54,9 @@ type CalculatedBlock struct {
 	// (getResultBlock) and polled by the goroutine running that calculation
 	// (ProcessBlockNoValidator), with nothing ordering the two, hence atomic.
 	stop atomic.Bool
+	// done is set when this entry's calculation returns, so a reader that already holds the
+	// entry cannot take it for one still in flight.
+	done atomic.Bool
 }
 
 // NewStateProcessor initialises a new StateProcessor.
@@ -99,7 +102,7 @@ func ApplyTIPSigningHardFork(config *params.ChainConfig, statedb vm.StateDB, blo
 // Like ProcessParentBlockHash the install is not limited to the activation block:
 // any Prague-active block re-installs the code when the address has none, so a node
 // that lost the account recovers. Neither hook resets an existing account, so the
-// balance and the storage stay; this install alone sets the nonce 1 a CREATE-deployed
+// balance and the storage stay; this install sets the nonce 1 a CREATE-deployed
 // contract carries since EIP-161.
 //
 // The state may be a tracing wrapper: the install is then reported to the tracer
@@ -125,14 +128,38 @@ func ApplyMulticall3HardFork(config *params.ChainConfig, statedb vm.StateDB, blo
 	statedb.SetNonce(params.Multicall3Address, 1, tracing.NonceChangeUnspecified)
 }
 
+// ApplyEIP7997HardFork reinstalls the factory on any Amsterdam-active block
+// whose address has no code, so a node that lost the account recovers.
+func ApplyEIP7997HardFork(config *params.ChainConfig, statedb vm.StateDB, blockNumber *big.Int) {
+	if blockNumber.Sign() == 0 || !config.IsAmsterdam(blockNumber) {
+		return
+	}
+	if code := statedb.GetCode(params.DeterministicFactoryAddress); len(code) > 0 {
+		if !bytes.Equal(code, params.DeterministicFactoryCode) {
+			log.Error("deterministic factory code mismatch",
+				"have", crypto.Keccak256Hash(code),
+				"want", crypto.Keccak256Hash(params.DeterministicFactoryCode),
+			)
+			panic("deterministic factory code mismatch")
+		}
+		return
+	}
+	statedb.SetCode(params.DeterministicFactoryAddress, params.DeterministicFactoryCode)
+	// Preserve a pre-existing nonce; only bump the default zero nonce to 1.
+	if statedb.GetNonce(params.DeterministicFactoryAddress) == 0 {
+		statedb.SetNonce(params.DeterministicFactoryAddress, 1, tracing.NonceChangeUnspecified)
+	}
+}
+
 // ApplyBlockLevelHooks applies the block level state changes block processing
-// performs before the first transaction: the two statedb mutations, then the
+// performs before the first transaction: the statedb mutations, then the
 // parent hash history write. The caller owns the EVM; the DAO fork stays out,
 // as upstream core.PreExecution leaves it out (ethereum/go-ethereum#34812).
 func ApplyBlockLevelHooks(parentHash common.Hash, evm *vm.EVM) {
 	config, blockNumber := evm.ChainConfig(), evm.Context.BlockNumber
 	ApplyTIPSigningHardFork(config, evm.StateDB, blockNumber)
 	ApplyMulticall3HardFork(config, evm.StateDB, blockNumber)
+	ApplyEIP7997HardFork(config, evm.StateDB, blockNumber)
 	ProcessParentBlockHash(parentHash, evm)
 }
 
@@ -143,6 +170,7 @@ func ApplyBlockLevelHooks(parentHash common.Hash, evm *vm.EVM) {
 // Process returns the receipts and logs accumulated during the process and
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
+// A Finalize failure is returned too, with the receipts, logs and gas discarded.
 func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tradingState *tradingstate.TradingStateDB, cfg vm.Config, tokensFee map[common.Address]*big.Int) (types.Receipts, []*types.Log, uint64, error) {
 	if err := statedb.EnsureChainConfig(p.config); err != nil {
 		return nil, nil, 0, err
@@ -236,7 +264,9 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, tra
 	tracingStateDB.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
 
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts)
+	if _, err := p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts); err != nil {
+		return nil, nil, 0, fmt.Errorf("%w: %w", ErrFinalize, err)
+	}
 
 	return receipts, allLogs, *usedGas, nil
 }
@@ -347,7 +377,15 @@ func (p *StateProcessor) ProcessBlockNoValidator(cBlock *CalculatedBlock, stated
 	tracingStateDB.UpdateTRC21Fee(balanceUpdated, totalFeeUsed)
 
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
-	p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts)
+	if _, err := p.engine.Finalize(p.bc, header, tracingStateDB, parentState, block.Transactions(), block.Uncles(), receipts); err != nil {
+		// A calculation another entry point stopped is abandoned, not failed: the
+		// stop must win over the engine's error or getResultBlock records a bad
+		// block. A stop raised after Finalize returns is not re-checked.
+		if cBlock.stop.Load() {
+			return nil, nil, 0, ErrStopPreparingBlock
+		}
+		return nil, nil, 0, fmt.Errorf("%w: %w", ErrFinalize, err)
+	}
 	return receipts, allLogs, *usedGas, nil
 }
 
@@ -369,11 +407,11 @@ const (
 // through. ApplyTransactionWithEVM and the replay path both call it so state
 // replay can never drift from block processing.
 func routeTransaction(config *params.ChainConfig, blockNumber *big.Int, tx *types.Transaction) txRoute {
+	if IsSignTransactionRoute(config, blockNumber, tx) {
+		return routeSign
+	}
 	to := tx.To()
 	if to != nil {
-		if *to == common.BlockSignersBinary && config.IsTIPSigning(blockNumber) {
-			return routeSign
-		}
 		if *to == common.TradingStateAddrBinary && config.IsTIPXDCXReceiver(blockNumber) {
 			return routeEmpty
 		}
@@ -390,6 +428,14 @@ func routeTransaction(config *params.ChainConfig, blockNumber *big.Int, tx *type
 	return routeEVM
 }
 
+// IsSignTransactionRoute reports whether the execution side routes tx to
+// ApplySignTransaction at the given block. The pool shares this predicate and
+// passes the earliest block a transaction can be included in.
+func IsSignTransactionRoute(config *params.ChainConfig, blockNumber *big.Int, tx *types.Transaction) bool {
+	to := tx.To()
+	return to != nil && *to == common.BlockSignersBinary && config.IsTIPSigning(blockNumber)
+}
+
 // finaliseTxState writes the pending state changes of a single transaction to the trie,
 // the same way block processing does before it builds the receipt: the state is finalised
 // once per transaction, and the pre-Byzantium root is only kept for the receipt.
@@ -398,8 +444,8 @@ func routeTransaction(config *params.ChainConfig, blockNumber *big.Int, tx *type
 // *state.StateDB behind it. With a tracer configured that state is a hookedStateDB, and
 // its Finalise reports the balance burnt by self-destructed accounts to the tracer
 // (core/state/statedb_hooked.go); finalising the raw state instead would drop those
-// events. hookedStateDB.IntermediateRoot forwards unchanged, so the pre-Byzantium branch
-// is equivalent either way.
+// events. hookedStateDB.IntermediateRoot finalises through the hook as well, so the
+// pre-Byzantium branch reports the same burn.
 //
 // The sign and empty routes hand in evm.StateDB as well, even though they never enter the
 // EVM: no account self-destructs on those paths, so the hooked state reports no extra event.
@@ -802,7 +848,7 @@ func ProcessParentBlockHash(prevHash common.Hash, evm *vm.EVM) {
 	}
 	evm.SetTxContext(NewEVMTxContext(msg))
 	evm.StateDB.AddAddressToAccessList(params.HistoryStorageAddress)
-	_, _, err := evm.Call(msg.From, *msg.To, msg.Data, 30_000_000, common.U2560)
+	_, _, err := evm.Call(msg.From, *msg.To, msg.Data, vm.NewGasBudget(30_000_000), common.U2560)
 	if err != nil {
 		panic(err)
 	}

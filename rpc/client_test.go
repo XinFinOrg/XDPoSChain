@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/davecgh/go-spew/spew"
 )
@@ -566,6 +567,7 @@ func (b *unsubscribeBlocker) readBatch() ([]*jsonrpcMessage, bool, error) {
 // not respond.
 // It reproducers the issue https://github.com/ethereum/go-ethereum/issues/30156
 func TestUnsubscribeTimeout(t *testing.T) {
+	testshort.Skip(t)
 	t.Parallel()
 
 	srv := NewServer()

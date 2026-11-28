@@ -32,6 +32,10 @@ func TestEthTestsIncludesHeadersByHashCase(t *testing.T) {
 	assertEthTestsInclude(t, "GetBlockHeadersByHash")
 }
 
+func TestEthTestsIncludesNonexistentHeadersRepeatedCase(t *testing.T) {
+	assertEthTestsInclude(t, "GetNonexistentBlockHeadersRepeated")
+}
+
 func TestEthTestsIncludesHeadersReverseFromGenesisCase(t *testing.T) {
 	assertEthTestsInclude(t, "GetBlockHeadersReverseFromGenesis")
 }
@@ -106,4 +110,60 @@ func TestEthTestsIncludesTransactionBatchThenBlockBodiesSmokeCase(t *testing.T) 
 
 func TestEthTestsIncludesTransactionBatchThenReceiptsSmokeCase(t *testing.T) {
 	assertEthTestsInclude(t, "TransactionBatchThenReceiptsSmoke")
+}
+
+func TestEthTestsIncludesStatusXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "Status_Xdc166")
+}
+
+func TestEthTestsIncludesGetBlockHeadersXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "GetBlockHeaders_Xdc166")
+}
+
+func TestEthTestsIncludesGetBlockBodiesXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "GetBlockBodies_Xdc166")
+}
+
+func TestEthTestsIncludesGetNodeDataXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "GetNodeData_Xdc166")
+}
+
+func TestEthTestsIncludesGetReceiptsXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "GetReceipts_Xdc166")
+}
+
+func TestEthTestsIncludesGetPooledTransactionsXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "GetPooledTransactions_Xdc166")
+}
+
+func TestEthTestsIncludesSameRequestIDXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "SameRequestID_Xdc166")
+}
+
+func TestEthTestsIncludesLargeAnnounceCase(t *testing.T) {
+	assertEthTestsInclude(t, "LargeAnnounce")
+}
+
+func TestEthTestsIncludesOldAnnounceCase(t *testing.T) {
+	assertEthTestsInclude(t, "OldAnnounce")
+}
+
+func TestEthTestsIncludesBlockHashAnnounceCase(t *testing.T) {
+	assertEthTestsInclude(t, "BlockHashAnnounce")
+}
+
+func TestEthTestsIncludesBlockHashAnnounceXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "BlockHashAnnounce_Xdc166")
+}
+
+func TestEthTestsIncludesMaliciousTxCase(t *testing.T) {
+	assertEthTestsInclude(t, "MaliciousTx")
+}
+
+func TestEthTestsIncludesNewPooledTxsXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "NewPooledTxs_Xdc166")
+}
+
+func TestEthTestsIncludesLargeTxRequestXdc166Case(t *testing.T) {
+	assertEthTestsInclude(t, "LargeTxRequest_Xdc166")
 }

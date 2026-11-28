@@ -120,6 +120,8 @@ func TestInsertSideChainReportsFutureBlockAsLocal(t *testing.T) {
 // pruned. Every block is a re-import, so there is no sidechain total difficulty to accumulate and
 // nothing to write: the batch is a no-op in which the head must not move.
 func TestPrunedImportSideWithoutSidechainBlocks(t *testing.T) {
+	t.Parallel()
+
 	chain, blocks, _, _ := newPrunedCanonicalChain(t)
 
 	// Everything below the state window is on disk and canonical, without any state.
@@ -148,6 +150,8 @@ func TestPrunedImportSideWithoutSidechainBlocks(t *testing.T) {
 // drops the difficulty of every block in between, which makes a sidechain one block longer than the
 // canonical remainder look lighter than the head and skips the reorg it should have won.
 func TestSideImportUsesTheLastStoredCanonicalTd(t *testing.T) {
+	t.Parallel()
+
 	chain, blocks, engine, genDb := newPrunedCanonicalChain(t)
 
 	// blocks holds 2*TriesInMemory blocks and everything up to and including index

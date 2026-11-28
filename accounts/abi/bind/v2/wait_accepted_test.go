@@ -50,10 +50,49 @@ func (b *delayedBackend) TransactionByHash(ctx context.Context, hash common.Hash
 	return b.Backend.TransactionByHash(ctx, hash)
 }
 
+// minedOnlyBackend simulates a gateway that answers every eth_getTransactionByHash
+// lookup with not-found while still serving receipts, so acceptance of a mined
+// transaction can only be observed through its receipt.
+type minedOnlyBackend struct {
+	*simulated.Backend
+}
+
+func (b *minedOnlyBackend) TransactionByHash(ctx context.Context, hash common.Hash) (*types.Transaction, bool, error) {
+	return nil, false, ethereum.ErrNotFound
+}
+
+// receiptlessBackend hides the promoted TransactionReceipt of the embedded backend
+// behind a method of another signature, so the type deliberately does not implement
+// DeployBackend and WaitAccepted cannot probe receipts through it. It still answers
+// every transaction lookup with not-found, like a gateway in front of a node.
+type receiptlessBackend struct {
+	*minedOnlyBackend
+}
+
+func (b *receiptlessBackend) TransactionReceipt(ctx context.Context, hash common.Hash) error {
+	return ethereum.ErrNotFound
+}
+
+// brokenReceiptBackend serves transaction lookups with not-found and receipt
+// lookups with a transport error, so no receipt can be taken as evidence of
+// acceptance and the wait has to keep polling until the deadline.
+type brokenReceiptBackend struct {
+	*minedOnlyBackend
+	receiptCalls int
+}
+
+func (b *brokenReceiptBackend) TransactionReceipt(ctx context.Context, hash common.Hash) (*types.Receipt, error) {
+	b.receiptCalls++
+	return nil, errors.New("receipt lookup unavailable")
+}
+
 // TestWaitAccepted tests that WaitAccepted returns once the given transaction is
 // visible in the pool, that it keeps polling while the pool lookup misses until
-// the transaction turns up, that it honors the context deadline while the
-// transaction never turns up, and that the v1 binding forwards to it.
+// the transaction turns up, that a backend which only serves mined transactions
+// still reports a mined one through its receipt, that a backend without receipt
+// lookups falls back to transaction lookups only, that it honors the context
+// deadline while the transaction never turns up, and that the v1 binding
+// forwards to it.
 func TestWaitAccepted(t *testing.T) {
 	config := *params.TestXDPoSMockChainConfig
 	backend := simulated.New(
@@ -95,6 +134,41 @@ func TestWaitAccepted(t *testing.T) {
 	}
 	if delayed.calls < 2 {
 		t.Errorf("WaitAccepted gave up after %d lookups, want it to retry at least once", delayed.calls)
+	}
+
+	// A gateway that never reports transactions from eth_getTransactionByHash must
+	// not stall the wait once the transaction is mined: the receipt proves the
+	// pool accepted it.
+	backend.Commit()
+	if _, err := backend.TransactionReceipt(context.Background(), tx.Hash()); err != nil {
+		t.Fatalf("failed to retrieve the receipt of the mined transaction: %v", err)
+	}
+	minedOnly := &minedOnlyBackend{Backend: backend}
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := bind.WaitAccepted(ctx, minedOnly, tx.Hash()); err != nil {
+		t.Fatalf("WaitAccepted returned %v for a mined transaction on a backend that only serves receipts", err)
+	}
+
+	// A backend that cannot serve receipts must fall back to transaction lookups, so a
+	// mined transaction it never reports is not accepted and the deadline is the only way out.
+	receiptless := &receiptlessBackend{minedOnlyBackend: minedOnly}
+	ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := bind.WaitAccepted(ctx, receiptless, tx.Hash()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WaitAccepted returned %v for a backend without receipt lookups, want %v", err, context.DeadlineExceeded)
+	}
+
+	// A receipt lookup that fails for a reason other than not-found must neither
+	// be mistaken for acceptance nor end the wait: only the deadline can stop it.
+	broken := &brokenReceiptBackend{minedOnlyBackend: minedOnly}
+	ctx, cancel = context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := bind.WaitAccepted(ctx, broken, tx.Hash()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WaitAccepted returned %v for a failing receipt lookup, want %v", err, context.DeadlineExceeded)
+	}
+	if broken.receiptCalls == 0 {
+		t.Fatal("WaitAccepted never probed the receipt while the transaction lookup kept failing")
 	}
 
 	// A transaction that is not in the pool must not be reported as accepted,

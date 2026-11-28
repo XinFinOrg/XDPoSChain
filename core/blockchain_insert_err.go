@@ -112,13 +112,26 @@ var insertErrClasses = []struct {
 	// way until the sidechain it sits on is imported: local, and not worth parking.
 	{consensus.ErrMissingCanonicalGapHeader, insertErrClass{local: true}, "the epoch gap block is not canonical"},
 
-	// The stored set of that gap block is this node's own record, and an absent, unreadable or
-	// undecodable one is read the same way on the next attempt: local, and not worth parking.
+	// The stored set of that gap block is this node's own record, and an absent, unreadable,
+	// undecodable or candidate-less one keeps failing this way for the rest of the run: local,
+	// and not worth parking.
 	{consensus.ErrGapSnapshotUnavailable, insertErrClass{local: true}, "the epoch gap block snapshot is unavailable"},
+
+	// The v1 engine read the penalty set of a recent epoch checkpoint and this node holds no
+	// canonical header or no block body for it: local, and not worth parking.
+	{consensus.ErrMissingPenaltyBlock, insertErrClass{local: true}, "the epoch penalty block is unavailable"},
 
 	// Ahead of this node's clock, so the block is queued rather than failed. Not local on its
 	// own: the one path that hands it out wraps it in ErrLocalInsertAheadOfClock.
 	{consensus.ErrFutureBlock, insertErrClass{retryable: true}, ""},
+
+	// A block the consensus engine refused to finalize: the engines that can fail
+	// answer on the block, so it is a bad block. A local sentinel in the cause chain
+	// (ErrGapSnapshotUnavailable, ErrMissingCanonicalGapHeader, ErrMissingPenaltyBlock)
+	// matches its own earlier row first, so a local engine failure is classified there
+	// without any wrapping - engines cannot import this package to wrap it in
+	// ErrLocalInsertCondition.
+	{ErrFinalize, insertErrClass{badBlock: true}, ""},
 }
 
 // lookupInsertErr reads the table once for the two questions its callers ask: the class of

@@ -27,6 +27,8 @@ import (
 )
 
 func TestInsertSideChainReportsRefusedReorgAsLocal(t *testing.T) {
+	t.Parallel()
+
 	chain, blocks, engine, genDb := newPrunedCanonicalChain(t)
 
 	// A fork started below the state window and kept short, so the segment stays lighter

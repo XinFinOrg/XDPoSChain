@@ -708,7 +708,7 @@ func (q *queue) DeliverHeaders(id string, headers []*types.Header, headerProcCh 
 	headerReqTimer.UpdateSince(request.Time)
 	delete(q.headerPendPool, id)
 
-	logger := peerLogger(id)
+	logger := log.New("peer", shortPeerID(id))
 
 	// Ensure headers can be mapped onto the skeleton chain
 	target := q.headerTaskPool[request.From].Hash()

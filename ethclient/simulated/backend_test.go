@@ -25,13 +25,16 @@ import (
 	"math/rand"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	ethereum "github.com/XinFinOrg/XDPoSChain"
+	"github.com/XinFinOrg/XDPoSChain/XDCx"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi"
 	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/params"
@@ -375,9 +378,10 @@ func TestEstimateGas(t *testing.T) {
 	contractAddr, _, _, _ := bind.DeployContract(opts, parsed, common.FromHex(contractBin), sim)
 	sim.Commit()
 
-	// A data heavy call whose EIP-7623 floor (40 gas per non-zero, 10 per zero
-	// byte) prices it above the intrinsic gas, so the estimate must land on the
-	// floor: 21000 + 4*40 + 200*10 = 23160.
+	// A data heavy call whose calldata floor prices it above the intrinsic gas,
+	// so the estimate must land on the floor. After Amsterdam every byte is four
+	// tokens at 16 gas per token, and a zero-value call bases at 15,000:
+	// 15000 + 204*4*16 = 28056.
 	floorData := append(common.Hex2Bytes("e09fface"), make([]byte, 200)...)
 
 	cases := []struct {
@@ -386,14 +390,15 @@ func TestEstimateGas(t *testing.T) {
 		expectError error
 		expectData  interface{}
 	}{
-		{ethereum.CallMsg{From: addr, To: &addr, GasPrice: big.NewInt(0), Value: big.NewInt(1)}, params.TxGas, nil, nil},
+		{ethereum.CallMsg{From: addr, To: &addr, GasPrice: big.NewInt(0), Value: big.NewInt(1)}, params.TxBaseCost2780, nil, nil},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, GasPrice: big.NewInt(0), Value: big.NewInt(1)}, 0, errors.New("execution reverted"), nil},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("d8b98391")}, 0, errors.New("execution reverted: revert reason"), "0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000d72657665727420726561736f6e00000000000000000000000000000000000000"},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("aa8b1d30")}, 0, errors.New("execution reverted"), nil},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("50f6fe34")}, 0, errors.New("gas required exceeds allowance (100000)"), nil},
 		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("b9b046f9")}, 0, errors.New("invalid opcode: INVALID"), nil},
-		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("e09fface")}, 21275, nil, nil},
-		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: floorData}, 23160, nil, nil},
+		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: params.TxBaseCost2780, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("e09fface")}, 0, errors.New("gas required exceeds allowance (12000)"), nil},
+		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("e09fface")}, 15275, nil, nil},
+		{ethereum.CallMsg{From: addr, To: &contractAddr, Gas: 100000, GasPrice: big.NewInt(0), Data: floorData}, 28056, nil, nil},
 	}
 	for _, c := range cases {
 		got, err := sim.EstimateGas(context.Background(), c.message)
@@ -412,6 +417,41 @@ func TestEstimateGas(t *testing.T) {
 		if got != c.expect {
 			t.Fatalf("gas mismatch, want %d got %d", c.expect, got)
 		}
+	}
+}
+
+// TestEstimateGasPreAmsterdamGasCap checks that a gas cap below the flat 21,000
+// is still raised to the block gas limit on the forks before Amsterdam: only
+// from Amsterdam on does the search start at the EIP-2780 base.
+func TestEstimateGasPreAmsterdamGasCap(t *testing.T) {
+	t.Parallel()
+	const contractAbi = "[{\"inputs\":[],\"name\":\"Assert\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"OOG\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"PureRevert\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"Revert\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"},{\"inputs\":[],\"name\":\"Valid\",\"outputs\":[],\"stateMutability\":\"nonpayable\",\"type\":\"function\"}]"
+	const contractBin = "0x60806040523480156100115760006000fd5b50610017565b61016e806100266000396000f3fe60806040523480156100115760006000fd5b506004361061005c5760003560e01c806350f6fe3414610062578063aa8b1d301461006c578063b9b046f914610076578063d8b9839114610080578063e09fface1461008a5761005c565b60006000fd5b61006a610094565b005b6100746100ad565b005b61007e6100b5565b005b6100886100c2565b005b610092610135565b005b6000600090505b5b808060010191505061009b565b505b565b60006000fd5b565b600015156100bf57fe5b5b565b6040517f08c379a000000000000000000000000000000000000000000000000000000000815260040180806020018281038252600d8152602001807f72657665727420726561736f6e0000000000000000000000000000000000000081526020015060200191505060405180910390fd5b565b5b56fea2646970667358221220345bbcbb1a5ecf22b53a78eaebf95f8ee0eceff6d10d4b9643495084d2ec934a64736f6c63430006040033"
+
+	key, _ := crypto.GenerateKey()
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	opts, _ := bind.NewKeyedTransactorWithChainID(key, big.NewInt(1337))
+
+	config := params.AllEthashProtocolChanges.Clone()
+	config.AmsterdamBlock = nil
+
+	sim := New(types.GenesisAlloc{addr: {Balance: big.NewInt(params.Ether)}}, 10000000, config)
+	defer sim.Close()
+
+	parsed, _ := abi.JSON(strings.NewReader(contractAbi))
+	contractAddr, _, _, _ := bind.DeployContract(opts, parsed, common.FromHex(contractBin), sim)
+	sim.Commit()
+
+	// 15,000 is above the EIP-2780 base but below the flat 21,000, so the cap is
+	// raised to the block gas limit and the call still estimates at 21,275.
+	gas, err := sim.EstimateGas(context.Background(), ethereum.CallMsg{
+		From: addr, To: &contractAddr, Gas: 15000, GasPrice: big.NewInt(0), Data: common.Hex2Bytes("e09fface"),
+	})
+	if err != nil {
+		t.Fatalf("estimate gas failed: %v", err)
+	}
+	if gas != 21275 {
+		t.Fatalf("estimated gas = %d, want 21275", gas)
 	}
 }
 
@@ -1099,8 +1139,9 @@ func TestEstimateGasSimpleTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("estimate gas failed: %v", err)
 	}
-	if gas < params.TxGas {
-		t.Fatalf("estimated gas too low: got %d want >= %d", gas, params.TxGas)
+	// A self-transfer pays only the EIP-2780 sender base.
+	if gas != params.TxBaseCost2780 {
+		t.Fatalf("estimated gas = %d, want %d", gas, params.TxBaseCost2780)
 	}
 }
 
@@ -1367,5 +1408,95 @@ func calledEventQuery(contractAddr common.Address, calledEventID common.Hash, fr
 		ToBlock:   toBlock,
 		Addresses: []common.Address{contractAddr},
 		Topics:    [][]common.Hash{{calledEventID}},
+	}
+}
+
+// TestXDCSimulatedBackendTradingDatabaseLifetime pins the in-memory trading
+// database to the backend lifetime: the constructor must leave it open, and
+// Backend.Close must release it.
+func TestXDCSimulatedBackendTradingDatabaseLifetime(t *testing.T) {
+	backend := New(types.GenesisAlloc{}, 10000000, params.TestXDPoSMockChainConfig)
+	engine, ok := backend.blockchain.Engine().(*XDPoS.XDPoS)
+	if !ok {
+		t.Fatalf("engine is %T, want *XDPoS.XDPoS", backend.blockchain.Engine())
+	}
+	service, ok := engine.GetXDCXService().(*XDCx.XDCX)
+	if !ok {
+		t.Fatalf("trading service is %T, want *XDCx.XDCX", engine.GetXDCXService())
+	}
+	db := service.GetLevelDB()
+
+	// A batch flush writes into the memorydb map, so it panics if the database
+	// was closed when the constructor returned.
+	batch := db.NewBatch()
+	batch.Put([]byte("trading-db-lifetime"), []byte("open"))
+	if err := batch.Write(); err != nil {
+		t.Fatalf("writing the trading database after construction: %v", err)
+	}
+
+	if err := backend.Close(); err != nil {
+		t.Fatalf("closing the backend: %v", err)
+	}
+	if err := db.Put([]byte("trading-db-lifetime"), []byte("closed")); err == nil {
+		t.Fatal("trading database is still writable after Backend.Close")
+	}
+}
+
+// TestXDCSimulatedBackendConcurrentCloseKeepsTheTradingDatabaseOpen pins the
+// shutdown to a single run: a Close that starts while the first one is still
+// stopping the chain must wait for it instead of releasing the node, and with
+// it the trading database, underneath the running shutdown.
+func TestXDCSimulatedBackendConcurrentCloseKeepsTheTradingDatabaseOpen(t *testing.T) {
+	backend := New(types.GenesisAlloc{}, 10000000, params.TestXDPoSMockChainConfig)
+	engine, ok := backend.blockchain.Engine().(*XDPoS.XDPoS)
+	if !ok {
+		t.Fatalf("engine is %T, want *XDPoS.XDPoS", backend.blockchain.Engine())
+	}
+	service, ok := engine.GetXDCXService().(*XDCx.XDCX)
+	if !ok {
+		t.Fatalf("trading service is %T, want *XDCx.XDCX", engine.GetXDCXService())
+	}
+	db := service.GetLevelDB()
+
+	// Hold the first shutdown after the chain stopped and before the node is
+	// closed. Only the first caller blocks, so a Close without the guard runs
+	// straight through to the node.
+	var held atomic.Bool
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	backend.testHookBeforeStackClose = func() {
+		if held.CompareAndSwap(false, true) {
+			close(entered)
+			<-release
+		}
+	}
+
+	first := make(chan error, 1)
+	go func() { first <- backend.Close() }()
+	<-entered
+
+	second := make(chan error, 1)
+	go func() { second <- backend.Close() }()
+
+	// The second Close must wait for the first shutdown instead of reporting
+	// success while it is still in progress.
+	select {
+	case err := <-second:
+		t.Fatalf("the second Close returned (%v) while the first shutdown was still in progress", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	// The trading database must still be open: an import interrupted by the
+	// first Close writes it, and a non-empty batch on a closed in-memory
+	// database panics.
+	if err := db.Put([]byte("concurrent-close"), []byte("open")); err != nil {
+		t.Fatalf("trading database closed while the first shutdown was still in progress: %v", err)
+	}
+
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := <-second; err != nil {
+		t.Fatalf("second Close: %v", err)
 	}
 }

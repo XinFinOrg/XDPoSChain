@@ -1,0 +1,45 @@
+# yaml-language-server: $schema=https://www.coderabbit.ai/integrations/schema.v2.json
+language: "en-US"
+reviews:
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+    # PRs here target dev-upgrade, which is not this repository's default branch
+    # (main), so it must be listed here to be auto reviewed; PRs targeting the
+    # default branch are reviewed without an entry. Entries are unanchored
+    # regexes, hence the explicit ^...$ anchors.
+    base_branches:
+      - "^dev-upgrade$"
+  path_filters:
+    # Exclude generated go files per package so that hand-written files matching
+    # gen_*.go (rlp/rlpgen/gen_test.go) stay in review scope.
+    - "!beacon/types/gen_*.go"
+    - "!core/gen_*.go"
+    - "!core/tracing/gen_*.go"
+    - "!core/types/gen_*.go"
+    - "!eth/ethconfig/gen_*.go"
+    - "!eth/tracers/live/gen_*.go"
+    - "!eth/tracers/logger/gen_*.go"
+    - "!eth/tracers/native/gen_*.go"
+    - "!ethclient/gen_*.go"
+    - "!ethclient/gethclient/gen_*.go"
+    - "!tests/gen_*.go"
+    - "!**/*.pb.go"
+    # Exclude abigen bindings; the hand-written go:generate drivers next to
+    # them stay in review scope.
+    - "!accounts/abi/bind/v2/internal/contracts/**/bindings.go"
+    - "!contracts/XDCx/contract/LendingRegistration.go"
+    - "!contracts/XDCx/contract/Registration.go"
+    - "!contracts/XDCx/contract/TRC21.go"
+    - "!contracts/XDCx/contract/TRC21Issuer.go"
+    - "!contracts/XDCx/contract/XDCXListing.go"
+    - "!contracts/blocksigner/contract/blocksigner.go"
+    - "!contracts/multisigwallet/contract/multisigwallet.go"
+    - "!contracts/randomize/contract/randomize.go"
+    - "!contracts/tests/contract/Inherited.go"
+    - "!contracts/trc21issuer/contract/TRC21.go"
+    - "!contracts/trc21issuer/contract/TRC21Issuer.go"
+    - "!contracts/validator/contract/validator.go"
+    # Exclude the params backfill generator's go generate output.
+    - "!params/config_backfill_generated.go"

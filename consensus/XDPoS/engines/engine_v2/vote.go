@@ -29,12 +29,7 @@ func (x *XDPoS_v2) sendVote(chainReader consensus.ChainReader, blockInfo *types.
 		return err
 	}
 	epochSwitchNumber := epochSwitchInfo.EpochSwitchBlockInfo.Number.Uint64()
-	gapNumber := epochSwitchNumber - epochSwitchNumber%x.config.Epoch
-	if gapNumber > x.config.Gap {
-		gapNumber -= x.config.Gap
-	} else {
-		gapNumber = 0
-	}
+	gapNumber, _ := x.config.GapBlockNumber(epochSwitchNumber)
 	signedHash, err := x.signSignature(types.VoteSigHash(&types.VoteForSign{
 		ProposedBlockInfo: blockInfo,
 		GapNumber:         gapNumber,

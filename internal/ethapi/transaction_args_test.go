@@ -29,7 +29,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
 	"github.com/XinFinOrg/XDPoSChain/XDCxlending"
 	"github.com/XinFinOrg/XDPoSChain/accounts"
-	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
@@ -393,7 +392,10 @@ func (b *backendMock) BlobBaseFee(ctx context.Context) *big.Int {
 	return new(big.Int)
 }
 
-func (b *backendMock) ChainDb() ethdb.Database           { return nil }
+func (b *backendMock) ChainDb() ethdb.Database { return nil }
+func (b *backendMock) ReadTransaction(common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+	return nil, common.Hash{}, 0, 0
+}
 func (b *backendMock) AccountManager() *accounts.Manager { return nil }
 func (b *backendMock) ExtRPCEnabled() bool               { return false }
 func (b *backendMock) RPCGasCap() uint64                 { return 0 }
@@ -512,10 +514,6 @@ func (b *backendMock) GetBlocksHashCache(blockNr uint64) []common.Hash {
 
 func (b *backendMock) GetEpochDuration() *big.Int {
 	return nil
-}
-
-func (b *backendMock) GetIPCClient() (bind.ContractBackend, error) {
-	return nil, nil
 }
 
 func (b *backendMock) GetMasternodesCap(uint64) map[common.Address]*big.Int {

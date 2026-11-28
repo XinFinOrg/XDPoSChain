@@ -54,8 +54,13 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 		hi uint64 // lowest-known gas limit where tx execution succeeds
 	)
 	// Determine the highest gas limit can be used during the estimation.
+	// The caller's cap counts from the transaction base, which EIP-2780 lowers.
 	hi = opts.Header.GasLimit
-	if call.GasLimit >= params.TxGas {
+	base := params.TxGas
+	if opts.Config.IsAmsterdam(opts.Header.Number) {
+		base = params.TxBaseCost2780
+	}
+	if call.GasLimit >= base {
 		hi = call.GasLimit
 	}
 

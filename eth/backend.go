@@ -47,19 +47,21 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
+	"github.com/XinFinOrg/XDPoSChain/eth/fetcher"
 	"github.com/XinFinOrg/XDPoSChain/eth/filters"
 	"github.com/XinFinOrg/XDPoSChain/eth/gasprice"
 	"github.com/XinFinOrg/XDPoSChain/eth/hooks"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/eth/tracers"
 	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
 	"github.com/XinFinOrg/XDPoSChain/internal/ethapi"
 	"github.com/XinFinOrg/XDPoSChain/internal/version"
 	"github.com/XinFinOrg/XDPoSChain/log"
+	"github.com/XinFinOrg/XDPoSChain/metrics"
 	"github.com/XinFinOrg/XDPoSChain/miner"
 	"github.com/XinFinOrg/XDPoSChain/node"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
-	"github.com/XinFinOrg/XDPoSChain/p2p/enr"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
@@ -77,9 +79,9 @@ type Ethereum struct {
 	// Channel for shutting down the service
 	shutdownChan chan bool
 
-	orderPool       *legacypool.OrderPool
-	lendingPool     *legacypool.LendingPool
-	protocolManager *ProtocolManager
+	orderPool   *legacypool.OrderPool
+	lendingPool *legacypool.LendingPool
+	handler     *handler
 
 	// DB interfaces
 	chainDb ethdb.Database // Block chain database
@@ -105,6 +107,11 @@ type Ethereum struct {
 	lock    sync.RWMutex // Protects the variadic fields (e.g. gas price and etherbase)
 	XDCX    *XDCx.XDCX
 	Lending *XDCxlending.Lending
+
+	// signerStatus reports whether an address is an authorised signer at the
+	// current head, and whether that answer is known. Nil unless the chain runs
+	// XDPoS. See signerStatusFor.
+	signerStatus func(common.Address) (authorised, known bool)
 }
 
 // New creates a new Ethereum object (including the
@@ -180,7 +187,7 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	if bcVersion != nil {
 		dbVer = fmt.Sprintf("%d", *bcVersion)
 	}
-	log.Info("Initialising Ethereum protocol", "versions", ProtocolVersions, "network", networkID, "dbversion", dbVer)
+	log.Info("Initialising Ethereum protocol", "versions", ethproto.ProtocolVersions, "network", networkID, "dbversion", dbVer)
 
 	// Create BlockChain object.
 	if !config.SkipBcVersionCheck {
@@ -330,12 +337,23 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 		stack.RegisterLifecycle(eth.localTxTracker)
 	}
 
-	if eth.protocolManager, err = NewProtocolManagerEx(eth.blockchain.Config(), config.SyncMode, networkID, eth.eventMux, eth.txPool, eth.orderPool, eth.lendingPool, eth.engine, eth.blockchain, chainDb); err != nil {
+	if eth.handler, err = newHandler(&handlerConfig{
+		Database:    chainDb,
+		Chain:       eth.blockchain,
+		TxPool:      eth.txPool,
+		Network:     networkID,
+		Sync:        config.SyncMode,
+		EventMux:    eth.eventMux,
+		ChainConfig: eth.blockchain.Config(),
+		OrderPool:   eth.orderPool,
+		LendingPool: eth.lendingPool,
+		Engine:      eth.engine,
+	}); err != nil {
 		return nil, err
 	}
 	// Set fast sync pivot block if configured
 	if config.FastSyncPivotNumber != 0 {
-		eth.protocolManager.downloader.SetPivotBlock(config.FastSyncPivotNumber, config.FastSyncPivotHash, config.FastSyncPivotRoot)
+		eth.handler.downloader.SetPivotBlock(config.FastSyncPivotNumber, config.FastSyncPivotHash, config.FastSyncPivotRoot)
 	}
 	eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, stack.Config().AnnounceTxs)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
@@ -367,11 +385,24 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 				log.Error("Cannot get etherbase for append m2 header", "err", err)
 				return fmt.Errorf("etherbase missing: %v", err)
 			}
-			ok := eth.txPool.IsSigner(eb)
-			if !ok {
-				return nil
+			signSlot := block.NumberU64()%common.MergeSignRange == 0 || !chainConfig.IsTIP2019(block.Number())
+			if !eth.canSign(eb) {
+				if _, known := eth.signerStatus(eb); signSlot && !known {
+					skippedSignatureSyncing.Inc(1)
+					log.Debug("Skipped block signature: node is syncing", "number", block.Number(), "hash", block.Hash())
+				}
+				return fetcher.ErrSignatureSkipped
 			}
-			if block.NumberU64()%common.MergeSignRange == 0 || !chainConfig.IsTIP2019(block.Number()) {
+			if signSlot {
+				// The state half of the proposed-block gate, shared with the
+				// fetcher's consensus callback: a block whose state this node
+				// cannot open is not voted for, so no signature may go out for
+				// it either. Checked inside the branch so the blocks that sign
+				// nothing pay nothing.
+				if !eth.handler.proposedBlockStateReady(block.Header()) {
+					log.Debug("skipped block signature: state not executed", "hash", block.Hash(), "number", block.Number())
+					return fetcher.ErrSignatureSkipped
+				}
 				if err := contracts.CreateTransactionSign(chainConfig, eth.txPool, eth.accountManager, block, chainDb, eb); err != nil {
 					return fmt.Errorf("fail to create tx sign for importing block: %v", err)
 				}
@@ -411,8 +442,8 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return block, false, nil
 		}
 
-		eth.protocolManager.blockFetcher.SetSignHook(signHook)
-		eth.protocolManager.blockFetcher.SetAppendM2HeaderHook(appendM2HeaderHook)
+		eth.handler.blockFetcher.SetSignHook(signHook)
+		eth.handler.blockFetcher.SetAppendM2HeaderHook(appendM2HeaderHook)
 
 		/*
 			XDPoS1.0 Specific hooks
@@ -427,17 +458,14 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 			return eth.Downloader().Synchronising()
 		}
 
-		isSigner := func(address common.Address) bool {
-			// During sync the head snapshot isn't built yet, so IsAuthorisedAddress
-			// would fail and spam "[IsAuthorisedAddress] Can't get snapshot". The
-			// signer check is meaningless before the chain is synced, so skip it; it
-			// is re-evaluated normally once syncing completes.
-			if eth.Downloader().Synchronising() {
-				return false
-			}
+		admit, status := signerChecks(eth.Downloader().Synchronising, func(address common.Address) bool {
 			return c.IsAuthorisedAddress(eth.blockchain, eth.blockchain.CurrentHeader(), address)
-		}
-		eth.txPool.SetSigner(isSigner)
+		})
+		eth.signerStatus = status
+		eth.txPool.SetSigner(admit)
+		// Gate parking on the same check the sign hook starts with: a node that
+		// cannot sign would only build parked entries and report their drops.
+		eth.handler.blockFetcher.SetSignerGate(signerGateFor(eth.Etherbase, eth.canSign))
 	}
 	// Start the RPC service
 	eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, eth.NetVersion())
@@ -447,6 +475,64 @@ func New(stack *node.Node, config *ethconfig.Config, XDCXServ *XDCx.XDCX, lendin
 	stack.RegisterProtocols(eth.Protocols())
 	stack.RegisterLifecycle(eth)
 	return eth, nil
+}
+
+// signerChecks splits the signer question by who asks it.
+//
+// admit is the txpool's test: is the sender of a special transaction a signer?
+// That is a fact about the sender, not about this node, so it does not depend on
+// this node's sync state. A syncing node that answered false here would reject
+// every candidate's sign transaction, and announce-once propagation would never
+// offer it again.
+//
+// status is this node's own question, see signerStatusFor.
+func signerChecks(syncing func() bool, isAuthorised func(common.Address) bool) (admit func(common.Address) bool, status func(common.Address) (authorised, known bool)) {
+	return isAuthorised, signerStatusFor(syncing, isAuthorised)
+}
+
+// signerStatusFor builds the test this node runs on itself before it signs a
+// block or decides whether to stake. While the downloader is syncing, the head
+// snapshot may not be built yet, so IsAuthorisedAddress would fail and spam the
+// log: the answer is unknown and known is false. What an unknown answer means is
+// up to the caller: signing and parking treat it as "no", the staking loop keeps
+// its current state. It must never be read as "not a signer" by a caller that
+// changes state on it.
+func signerStatusFor(syncing func() bool, isAuthorised func(common.Address) bool) func(common.Address) (authorised, known bool) {
+	return func(address common.Address) (bool, bool) {
+		if syncing() {
+			return false, false
+		}
+		return isAuthorised(address), true
+	}
+}
+
+// canSign reports whether address may sign a block now: it must be an authorised
+// signer, and the answer must be known, which it is not during a sync.
+func (e *Ethereum) canSign(address common.Address) bool {
+	if e.signerStatus == nil {
+		return false
+	}
+	authorised, known := e.signerStatus(address)
+	return known && authorised
+}
+
+// skippedSignatureSyncing counts sign slots skipped because the node was syncing.
+var skippedSignatureSyncing = metrics.NewRegisteredCounter("eth/skipped-signature-syncing", nil)
+
+// signerGateFor reports whether parking is worthwhile for this node: a node that
+// cannot sign would only build entries and report their drops. canSign answers
+// false for the whole run of a sync, so a syncing node parks nothing:
+// the parked deadline is shorter than a full sync, an entry booked now would
+// expire before the sync ends, and the sign hook would skip every attempt in
+// between. The sign hook re-checks before it signs.
+func signerGateFor(etherbase func() (common.Address, error), isSigner func(common.Address) bool) func() bool {
+	return func() bool {
+		eb, err := etherbase()
+		if err != nil {
+			return false
+		}
+		return isSigner(eb)
+	}
 }
 
 // rollbackHeadNumber reports the head block number recorded on disk, before the
@@ -533,7 +619,7 @@ func (e *Ethereum) APIs() []rpc.API {
 			Service:   NewMinerAPI(e),
 		}, {
 			Namespace: "eth",
-			Service:   downloader.NewDownloaderAPI(e.protocolManager.downloader, e.eventMux),
+			Service:   downloader.NewDownloaderAPI(e.handler.downloader, e.eventMux),
 		}, {
 			Namespace: "eth",
 			Service:   filters.NewFilterAPI(filters.NewFilterSystem(e.APIBackend, filters.Config{LogCacheSize: e.config.FilterLogCacheSize}), false),
@@ -594,25 +680,19 @@ func (e *Ethereum) SetEtherbase(etherbase common.Address) {
 	e.miner.SetEtherbase(etherbase)
 }
 
-// ValidateMasternode checks if node's address is in set of masternodes
-func (e *Ethereum) ValidateMasternode() (bool, error) {
+// ValidateMasternode reports whether the node's etherbase is an authorised signer
+// at the current head. known is false while the downloader is syncing: the
+// answer is unknown then, and the caller must not read it as "not a masternode".
+func (e *Ethereum) ValidateMasternode() (authorised, known bool, err error) {
 	eb, err := e.Etherbase()
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
-	if e.blockchain.Config().XDPoS != nil {
-		//check if miner's wallet is in set of validators
-		c := e.engine.(*XDPoS.XDPoS)
-
-		authorized := c.IsAuthorisedAddress(e.blockchain, e.blockchain.CurrentHeader(), eb)
-		if !authorized {
-			//This miner doesn't belong to set of validators
-			return false, nil
-		}
-	} else {
-		return false, errors.New("only verify masternode permission in XDPoS protocol")
+	if e.signerStatus == nil {
+		return false, false, errors.New("only verify masternode permission in XDPoS protocol")
 	}
-	return true, nil
+	authorised, known = e.signerStatus(eb)
+	return authorised, known, nil
 }
 
 func (e *Ethereum) StartStaking(local bool) error {
@@ -634,7 +714,7 @@ func (e *Ethereum) StartStaking(local bool) error {
 		// mechanism introduced to speed sync times. CPU mining on mainnet is ludicrous
 		// so noone will ever hit this path, whereas marking sync done on CPU mining
 		// will ensure that private networks work in single miner mode too.
-		atomic.StoreUint32(&e.protocolManager.acceptTxs, 1)
+		atomic.StoreUint32(&e.handler.acceptTxs, 1)
 	}
 	go e.miner.Start(eb)
 	return nil
@@ -654,25 +734,20 @@ func (e *Ethereum) EventMux() *event.TypeMux           { return e.eventMux }
 func (e *Ethereum) Engine() consensus.Engine           { return e.engine }
 func (e *Ethereum) ChainDb() ethdb.Database            { return e.chainDb }
 func (e *Ethereum) IsListening() bool                  { return true } // Always listening
-func (e *Ethereum) EthVersion() int                    { return int(ProtocolVersions[0]) }
+func (e *Ethereum) EthVersion() int                    { return int(ethproto.ProtocolVersions[0]) }
 func (e *Ethereum) NetVersion() uint64                 { return e.networkId }
-func (e *Ethereum) Downloader() *downloader.Downloader { return e.protocolManager.downloader }
+func (e *Ethereum) Downloader() *downloader.Downloader { return e.handler.downloader }
 func (e *Ethereum) BloomIndexer() *core.ChainIndexer   { return e.bloomIndexer }
 
 // Protocols returns all the currently configured
 func (e *Ethereum) Protocols() []p2p.Protocol {
-	protos := make([]p2p.Protocol, len(ProtocolVersions))
-	for i, vsn := range ProtocolVersions {
-		protos[i] = e.protocolManager.makeProtocol(vsn)
-		protos[i].Attributes = []enr.Entry{e.currentEthEntry()}
-	}
-	return protos
+	return ethproto.MakeProtocols(ethHandler{e.handler})
 }
 
 // Start implements node.Lifecycle, starting all internal goroutines needed by the
 // Ethereum protocol implementation.
 func (e *Ethereum) Start() error {
-	e.startEthEntryUpdate(e.p2pServer.LocalNode())
+	ethproto.StartENRUpdater(e.blockchain, e.p2pServer.LocalNode())
 
 	// Start the bloom bits servicing goroutines
 	e.startBloomHandlers(params.BloomBitsBlocks)
@@ -686,7 +761,7 @@ func (e *Ethereum) Start() error {
 		maxPeers -= e.config.LightPeers
 	}
 	// Start the networking layer and the light server if requested
-	e.protocolManager.Start(maxPeers)
+	e.handler.Start(maxPeers)
 	return nil
 }
 
@@ -701,9 +776,9 @@ func (e *Ethereum) Stop() error {
 	e.blockchain.Stop()
 	log.Info("Ethereum blockchain stopped")
 
-	log.Info("Stopping Ethereum protocolManager start")
-	e.protocolManager.Stop()
-	log.Info("Ethereum protocolManager stopped")
+	log.Info("Stopping Ethereum protocol handler")
+	e.handler.Stop()
+	log.Info("Ethereum protocol handler stopped")
 
 	log.Info("Stopping Ethereum txPool start")
 	e.txPool.Close()
@@ -729,7 +804,7 @@ func (e *Ethereum) Stop() error {
 }
 
 func (e *Ethereum) GetPeer() int {
-	return len(e.protocolManager.peers.peers)
+	return e.handler.peers.Len()
 }
 
 func (e *Ethereum) GetXDCX() *XDCx.XDCX {

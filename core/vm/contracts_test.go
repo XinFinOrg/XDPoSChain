@@ -69,8 +69,6 @@ var allPrecompiles = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x08}): &bn256PairingIstanbul{},
 	common.BytesToAddress([]byte{0x09}): &blake2F{},
 	common.BytesToAddress([]byte{0x0a}): kzgStub,
-	common.BytesToAddress([]byte{0x1e}): &ringSignatureVerifier{},
-	common.BytesToAddress([]byte{0x28}): &bulletproofVerifier{},
 	common.BytesToAddress([]byte{0x29}): &XDCxLastPrice{},
 	common.BytesToAddress([]byte{0x2a}): &XDCxEpochPrice{},
 
@@ -314,7 +312,7 @@ func testPrecompiled(addr string, test precompiledTest, t *testing.T) {
 		if expGas := test.Gas; expGas != 0 && expGas != gas {
 			t.Errorf("%s: gas wrong, expected %d, got %d", test.Name, expGas, gas)
 		}
-		if res, _, err := RunPrecompiledContract(nil, p, in, gas, nil); err != nil {
+		if res, _, err := RunPrecompiledContract(nil, p, in, NewGasBudget(gas), nil); err != nil {
 			t.Error(err)
 		} else if common.Bytes2Hex(res) != test.Expected {
 			t.Errorf("Expected %v, got %v", test.Expected, common.Bytes2Hex(res))
@@ -333,7 +331,7 @@ func testXDCxPrecompiled(addr string, test precompiledTest, t *testing.T) {
 	in := common.Hex2Bytes(test.Input)
 	gas := p.RequiredGas(in)
 	t.Run(fmt.Sprintf("%s-Gas=%d", test.Name, gas), func(t *testing.T) {
-		if res, _, err := RunPrecompiledContract(nil, p, in, gas, nil); err != nil {
+		if res, _, err := RunPrecompiledContract(nil, p, in, NewGasBudget(gas), nil); err != nil {
 			t.Error(err)
 		} else if common.Bytes2Hex(res) != test.Expected {
 			t.Errorf("Expected %v, got %v", test.Expected, common.Bytes2Hex(res))
@@ -347,7 +345,7 @@ func testPrecompiledWithEmptyTradingState(addr string, test precompiledTest, t *
 	in := common.Hex2Bytes(test.Input)
 	gas := p.RequiredGas(in)
 	t.Run(fmt.Sprintf("testPrecompiledWithEmptyTradingState-%s-Gas=%d", test.Name, gas), func(t *testing.T) {
-		if res, _, err := RunPrecompiledContract(nil, p, in, gas, nil); err != nil {
+		if res, _, err := RunPrecompiledContract(nil, p, in, NewGasBudget(gas), nil); err != nil {
 			t.Error(err)
 		} else if common.Bytes2Hex(res) != test.Expected {
 			t.Errorf("Expected %v, got %v", test.Expected, common.Bytes2Hex(res))
@@ -361,9 +359,12 @@ func testPrecompiledOOG(addr string, test precompiledTest, t *testing.T) {
 	gas := p.RequiredGas(in) - 1
 
 	t.Run(fmt.Sprintf("%s-Gas=%d", test.Name, gas), func(t *testing.T) {
-		_, _, err := RunPrecompiledContract(nil, p, in, gas, nil)
+		_, remaining, err := RunPrecompiledContract(nil, p, in, NewGasBudget(gas), nil)
 		if err.Error() != "out of gas" {
 			t.Errorf("Expected error [out of gas], got [%v]", err)
+		}
+		if remaining != (GasBudget{}) {
+			t.Errorf("OOG left over %v, want <0,0>", remaining)
 		}
 		// Verify that the precompile did not touch the input buffer
 		exp := common.Hex2Bytes(test.Input)
@@ -378,7 +379,7 @@ func testPrecompiledFailure(addr string, test precompiledFailureTest, t *testing
 	in := common.Hex2Bytes(test.Input)
 	gas := p.RequiredGas(in)
 	t.Run(test.Name, func(t *testing.T) {
-		_, _, err := RunPrecompiledContract(nil, p, in, gas, nil)
+		_, _, err := RunPrecompiledContract(nil, p, in, NewGasBudget(gas), nil)
 		if err == nil {
 			t.Fatalf("Expected error [%v], got no error", test.ExpectedError)
 		}
@@ -410,7 +411,7 @@ func benchmarkPrecompiled(addr string, test precompiledTest, bench *testing.B) {
 	bench.Run(fmt.Sprintf("%s-Gas=%d", test.Name, reqGas), func(bench *testing.B) {
 		for bench.Loop() {
 			copy(data, in)
-			res, _, err = RunPrecompiledContract(nil, p, data, reqGas, nil)
+			res, _, err = RunPrecompiledContract(nil, p, data, NewGasBudget(reqGas), nil)
 		}
 		//Check if it is correct
 		if err != nil {
@@ -660,7 +661,7 @@ func TestPrecompiledModExpMatchesStdlib(t *testing.T) {
 		for i, c := range cases {
 			input := modexpInput(c.base, c.exp, c.mod)
 			gas := variant.p.RequiredGas(input)
-			res, _, err := RunPrecompiledContract(nil, variant.p, input, gas, nil)
+			res, _, err := RunPrecompiledContract(nil, variant.p, input, NewGasBudget(gas), nil)
 			if err != nil {
 				t.Fatalf("%s case %d (base %x, exp %x, mod %x): %v", variant.name, i, c.base, c.exp, c.mod, err)
 			}
@@ -672,7 +673,7 @@ func TestPrecompiledModExpMatchesStdlib(t *testing.T) {
 	// EIP-7823 rejects operands larger than 1024 bytes, on the Osaka variant
 	// only; no other test exercises that path.
 	oversize := modexpInput(make([]byte, 1025), []byte{1}, []byte{1})
-	if _, _, err := RunPrecompiledContract(nil, with7823, oversize, with7823.RequiredGas(oversize), nil); err == nil {
+	if _, _, err := RunPrecompiledContract(nil, with7823, oversize, NewGasBudget(with7823.RequiredGas(oversize)), nil); err == nil {
 		t.Fatal("eip7823 variant accepted a 1025-byte operand")
 	}
 }

@@ -106,6 +106,7 @@ func traceNonEVMTxOnce(t *testing.T, tc nonEVMRouteCase, tracerName string) (jso
 		Transfer:    core.Transfer,
 		Coinbase:    common.HexToAddress("0x000000000000000000000000000000000000c01b"),
 		BlockNumber: blockNumber,
+		SlotNum:     blockNumber.Uint64(),
 		Difficulty:  big.NewInt(1),
 		GasLimit:    30_000_000,
 		BaseFee:     common.Big0,

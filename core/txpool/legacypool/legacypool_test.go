@@ -40,6 +40,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/event"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/XinFinOrg/XDPoSChain/trie"
 	"github.com/holiman/uint256"
@@ -1471,12 +1472,12 @@ func TestPromoteSpecialTxReplacementAvoidsIntermediateOverflow(t *testing.T) {
 	if !inserted {
 		t.Fatal("failed to insert baseline transaction")
 	}
-	inserted, err = pool.promoteSpecialTx(addr, special)
+	replaced, err := pool.promoteSpecialTx(addr, special)
 	if err != nil {
-		t.Fatalf("promoteSpecialTx failed: %v", err)
+		t.Fatalf("promoteSpecialTx failed (should not overflow after subtracting old cost): %v", err)
 	}
-	if !inserted {
-		t.Fatal("special replacement should not overflow after subtracting old cost")
+	if !replaced {
+		t.Fatal("special tx should be reported as replacing the baseline transaction")
 	}
 	want, overflow := uint256.FromBig(special.Cost())
 	if overflow {
@@ -1661,6 +1662,190 @@ func TestSpecialTxReplacementThroughPool(t *testing.T) {
 	})
 }
 
+// TestSpecialTxReplacesHeadOfStuckBacklog models the sign-tx reset of #3056: a
+// signer's special txs at nonces 0..3 are pending but never mined, and the next
+// sign tx, created at the on-chain nonce 0, replaces the head of that backlog.
+// The tail stays, and neither the pending count nor the pending nonce grows.
+func TestSpecialTxReplacesHeadOfStuckBacklog(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPool()
+	defer pool.Close()
+	pool.SetSigner(func(common.Address) bool { return true })
+
+	key, _ := crypto.GenerateKey()
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
+
+	// Sign txs carry a zero gas price; the payload only makes the hashes differ.
+	mkSpecial := func(nonce uint64, payload byte) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), []byte{payload}), types.HomesteadSigner{}, key)
+		if err != nil {
+			t.Fatalf("failed to sign special tx: %v", err)
+		}
+		return tx
+	}
+	var backlog []*types.Transaction
+	for nonce := uint64(0); nonce < 4; nonce++ {
+		tx := mkSpecial(nonce, 0x01)
+		if err := pool.addRemoteSync(tx); err != nil {
+			t.Fatalf("failed to add backlog tx %d: %v", nonce, err)
+		}
+		backlog = append(backlog, tx)
+	}
+	if got := pool.Nonce(addr); got != 4 {
+		t.Fatalf("pending nonce with the backlog = %d, want 4", got)
+	}
+
+	fresh := mkSpecial(0, 0x02)
+	if err := pool.addRemoteSync(fresh); err != nil {
+		t.Fatalf("fresh sign tx at the on-chain nonce was rejected: %v", err)
+	}
+	if pool.all.Get(fresh.Hash()) == nil {
+		t.Fatal("fresh sign tx is not in the pool")
+	}
+	if pool.all.Get(backlog[0].Hash()) != nil {
+		t.Fatal("stuck sign tx at the on-chain nonce was not replaced")
+	}
+	for _, tx := range backlog[1:] {
+		if pool.all.Get(tx.Hash()) == nil {
+			t.Fatalf("backlog tx at nonce %d was dropped, want it kept", tx.Nonce())
+		}
+	}
+	if pending, queued := pool.Stats(); pending != 4 || queued != 0 {
+		t.Fatalf("pool stats = (%d pending, %d queued), want (4, 0)", pending, queued)
+	}
+	if got := pool.Nonce(addr); got != 4 {
+		t.Fatalf("pending nonce after the replacement = %d, want 4", got)
+	}
+}
+
+// TestSpecialTxReplacementOnFullPool checks that a signer's sign tx is admitted
+// on a full pool, both at the next pending nonce and when it replaces a stuck
+// one, and that it is kept out of the price heap at admission, so ordinary txs
+// admitted before the next reheap cannot evict it.
+func TestSpecialTxReplacementOnFullPool(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPool()
+	defer pool.Close()
+	pool.SetSigner(func(common.Address) bool { return true })
+	pool.config.GlobalSlots = 4
+	pool.config.GlobalQueue = 0
+
+	signerKey, _ := crypto.GenerateKey()
+	signer := crypto.PubkeyToAddress(signerKey.PublicKey)
+	testAddBalance(pool, signer, big.NewInt(1_000_000_000_000_000))
+	mkSpecial := func(nonce uint64, payload byte) *types.Transaction {
+		tx, err := types.SignTx(types.NewTransaction(nonce, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), []byte{payload}), types.HomesteadSigner{}, signerKey)
+		if err != nil {
+			t.Fatalf("failed to sign special tx: %v", err)
+		}
+		return tx
+	}
+	inPriceHeap := func(tx *types.Transaction) bool {
+		for _, h := range []*priceHeap{&pool.priced.urgent, &pool.priced.floating} {
+			for _, heapTx := range h.list {
+				if heapTx.Hash() == tx.Hash() {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	// Fill the pool: two stuck sign txs plus two ordinary txs.
+	stuck := mkSpecial(0, 0x01)
+	for _, tx := range []*types.Transaction{stuck, mkSpecial(1, 0x01)} {
+		if err := pool.addRemoteSync(tx); err != nil {
+			t.Fatalf("failed to add stuck sign tx %d: %v", tx.Nonce(), err)
+		}
+	}
+	userKey, _ := crypto.GenerateKey()
+	testAddBalance(pool, crypto.PubkeyToAddress(userKey.PublicKey), big.NewInt(1_000_000_000_000_000))
+	for nonce := uint64(0); nonce < 2; nonce++ {
+		if err := pool.addRemoteSync(pricedTransaction(nonce, 100000, big.NewInt(common.DefaultMinGasPrice), userKey)); err != nil {
+			t.Fatalf("failed to add ordinary tx %d: %v", nonce, err)
+		}
+	}
+	if got := pool.all.Slots(); uint64(got) != pool.config.GlobalSlots+pool.config.GlobalQueue {
+		t.Fatalf("pool slots = %d, want the pool full", got)
+	}
+
+	// A fresh sign tx at the on-chain nonce replaces the stuck one.
+	fresh := mkSpecial(0, 0x02)
+	if err := pool.addRemoteSync(fresh); err != nil {
+		t.Fatalf("sign tx replacing a stuck one on a full pool was rejected: %v", err)
+	}
+	if pool.all.Get(stuck.Hash()) != nil || pool.all.Get(fresh.Hash()) == nil {
+		t.Fatal("stuck sign tx was not replaced by the fresh one")
+	}
+	if got := pool.Nonce(signer); got != 2 {
+		t.Fatalf("pending nonce after the replacement = %d, want 2", got)
+	}
+	// A sign tx at the next pending nonce is admitted too.
+	next := mkSpecial(2, 0x01)
+	if err := pool.addRemoteSync(next); err != nil {
+		t.Fatalf("sign tx at the pending nonce on a full pool was rejected: %v", err)
+	}
+	for _, tx := range []*types.Transaction{fresh, next} {
+		if inPriceHeap(tx) {
+			t.Fatalf("sign tx at nonce %d is in the price heap", tx.Nonce())
+		}
+	}
+
+	// Until the next reheap, better-paying ordinary txs evict ordinary txs, not
+	// the sign txs.
+	otherKey, _ := crypto.GenerateKey()
+	testAddBalance(pool, crypto.PubkeyToAddress(otherKey.PublicKey), big.NewInt(1_000_000_000_000_000))
+	for nonce := uint64(0); nonce < 2; nonce++ {
+		if err := pool.addRemoteSync(pricedTransaction(nonce, 100000, big.NewInt(2*common.DefaultMinGasPrice), otherKey)); err != nil {
+			t.Fatalf("failed to add better-paying tx %d: %v", nonce, err)
+		}
+	}
+	for _, tx := range []*types.Transaction{fresh, next} {
+		if pool.all.Get(tx.Hash()) == nil {
+			t.Fatalf("sign tx at nonce %d was evicted by an ordinary tx", tx.Nonce())
+		}
+	}
+}
+
+// TestSignerSpecialTxEvictsPendingRegular pins that a signer's sign tx at the
+// on-chain nonce replaces the signer's own pending regular tx at that nonce
+// without an error, and that the regular tx cannot come back at that nonce.
+func TestSignerSpecialTxEvictsPendingRegular(t *testing.T) {
+	t.Parallel()
+
+	pool, _ := setupPool()
+	defer pool.Close()
+	pool.SetSigner(func(common.Address) bool { return true })
+
+	key, _ := crypto.GenerateKey()
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	testAddBalance(pool, addr, big.NewInt(1_000_000_000_000_000))
+
+	regular := pricedTransaction(0, 100000, big.NewInt(common.DefaultMinGasPrice), key)
+	if err := pool.addRemoteSync(regular); err != nil {
+		t.Fatalf("failed to add regular tx: %v", err)
+	}
+	special, err := types.SignTx(types.NewTransaction(0, common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), nil), types.HomesteadSigner{}, key)
+	if err != nil {
+		t.Fatalf("failed to sign special tx: %v", err)
+	}
+	if err := pool.addRemoteSync(special); err != nil {
+		t.Fatalf("sign tx was rejected: %v", err)
+	}
+	if pool.all.Get(regular.Hash()) != nil || pool.all.Get(special.Hash()) == nil {
+		t.Fatal("sign tx did not replace the pending regular tx")
+	}
+	if err := pool.addRemoteSync(regular); !errors.Is(err, txpool.ErrReplaceUnderpriced) {
+		t.Fatalf("re-adding the regular tx: have %v, want %v", err, txpool.ErrReplaceUnderpriced)
+	}
+	if got := pool.Nonce(addr); got != 1 {
+		t.Fatalf("pending nonce = %d, want 1", got)
+	}
+}
+
 // TestPromoteSpecialTxOverflowReturnsErrorWithoutMutation tests promote special tx overflow returns error without mutation.
 func TestPromoteSpecialTxOverflowReturnsErrorWithoutMutation(t *testing.T) {
 	pool, key := setupPool()
@@ -1677,9 +1862,9 @@ func TestPromoteSpecialTxOverflowReturnsErrorWithoutMutation(t *testing.T) {
 	pool.mu.Lock()
 	defer pool.mu.Unlock()
 
-	inserted, err := pool.promoteSpecialTx(addr, special)
-	if inserted {
-		t.Fatal("overflowing special tx must not be inserted")
+	replaced, err := pool.promoteSpecialTx(addr, special)
+	if replaced {
+		t.Fatal("overflowing special tx must not replace anything")
 	}
 	if !errors.Is(err, txpool.ErrSpecialTxCostOverflow) {
 		t.Fatalf("wrong error: have %v, want %v", err, txpool.ErrSpecialTxCostOverflow)
@@ -2465,9 +2650,6 @@ func TestQueueAccountLimiting(t *testing.T) {
 	t.Parallel()
 
 	// Create the pool to test the per-account queue limit enforcement with.
-	// The limit has to sit below LimitThresholdNonceInQueue, because validation
-	// rejects transactions more than that many nonces ahead of the pending nonce,
-	// so a limit equal to it could never be exceeded by the loop below.
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
@@ -2508,6 +2690,72 @@ func TestQueueAccountLimiting(t *testing.T) {
 	if pool.all.Count() != int(accountQueue) {
 		t.Errorf("total transaction mismatch: have %d, want %d", pool.all.Count(), accountQueue)
 	}
+}
+
+// TestFutureNonceQueued checks that a transaction far ahead of the pending nonce
+// is queued rather than rejected, as upstream does; AccountQueue still bounds it.
+func TestFutureNonceQueued(t *testing.T) {
+	t.Parallel()
+
+	pool, key := setupPool()
+	defer pool.Close()
+	testAddBalance(pool, crypto.PubkeyToAddress(key.PublicKey), big.NewInt(1_000_000_000_000_000))
+
+	// Well past the 10-nonce window the pool used to enforce.
+	if err := pool.addRemoteSync(pricedTransaction(20, 100000, big.NewInt(300000000), key)); err != nil {
+		t.Fatalf("future-nonce tx rejected: %v", err)
+	}
+	if pending, queued := pool.Stats(); pending != 0 || queued != 1 {
+		t.Fatalf("pool stats = (%d pending, %d queued), want (0, 1)", pending, queued)
+	}
+}
+
+// TestOutOfOrderDeliveryPromotesAll pins the #3056 scenario: the tx fetcher
+// fetches announced hashes in random order and never offers a rejected one
+// again, so a burst from one sender must end up pending whatever order it
+// arrives in. With the old 10-nonce window, the highest nonces were rejected
+// for good and left a permanent gap.
+func TestOutOfOrderDeliveryPromotesAll(t *testing.T) {
+	t.Parallel()
+
+	const count = 20
+	price := big.NewInt(300000000)
+
+	t.Run("ordinary", func(t *testing.T) {
+		pool, key := setupPool()
+		defer pool.Close()
+		testAddBalance(pool, crypto.PubkeyToAddress(key.PublicKey), big.NewInt(1_000_000_000_000_000))
+
+		for nonce := count - 1; nonce >= 0; nonce-- {
+			if err := pool.addRemoteSync(pricedTransaction(uint64(nonce), 100000, price, key)); err != nil {
+				t.Fatalf("tx %d rejected: %v", nonce, err)
+			}
+		}
+		if pending, queued := pool.Stats(); pending != count || queued != 0 {
+			t.Fatalf("pool stats = (%d pending, %d queued), want (%d, 0)", pending, queued, count)
+		}
+	})
+
+	t.Run("special", func(t *testing.T) {
+		pool, key := setupPool()
+		defer pool.Close()
+		pool.SetSigner(func(common.Address) bool { return true })
+		testAddBalance(pool, crypto.PubkeyToAddress(key.PublicKey), big.NewInt(1_000_000_000_000_000))
+
+		// Sign txs from a candidate: zero gas price, to the BlockSigners contract.
+		for nonce := count - 1; nonce >= 0; nonce-- {
+			tx, err := types.SignTx(types.NewTransaction(uint64(nonce), common.BlockSignersBinary, big.NewInt(0), 200000, big.NewInt(0), nil), types.HomesteadSigner{}, key)
+			if err != nil {
+				t.Fatalf("failed to sign special tx %d: %v", nonce, err)
+			}
+			if err := pool.addRemoteSync(tx); err != nil {
+				t.Fatalf("special tx %d rejected: %v", nonce, err)
+			}
+		}
+		if pending, queued := pool.Stats(); pending != count || queued != 0 {
+			t.Fatalf("pool stats = (%d pending, %d queued), want (%d, 0)", pending, queued, count)
+		}
+	})
 }
 
 // Tests that if the transaction count belonging to multiple accounts go above
@@ -2572,16 +2820,18 @@ func TestQueueGlobalLimiting(t *testing.T) {
 // This logic should not hold for local transactions, unless the local tracking
 // mechanism is disabled.
 func TestQueueTimeLimiting(t *testing.T) {
-	// Reduce the eviction interval to a testable amount
+	testshort.Skip(t)
+	// Keep the interval and lifetime in proportion: the sleeps count
+	// intervals, the assertions compare ages against the lifetime
 	defer func(old time.Duration) { evictionInterval = old }(evictionInterval)
-	evictionInterval = time.Millisecond * 100
+	evictionInterval = time.Millisecond * 25
 
 	// Create the pool to test the non-expiration enforcement
 	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabase(rawdb.NewMemoryDatabase()))
 	blockchain := newTestBlockChain(params.TestChainConfig, 1000000, statedb, new(event.Feed))
 
 	config := testTxPoolConfig
-	config.Lifetime = time.Second
+	config.Lifetime = 250 * time.Millisecond
 
 	pool := New(config, blockchain)
 	pool.Init(config.PriceLimit, blockchain.CurrentBlock(), newReserver())

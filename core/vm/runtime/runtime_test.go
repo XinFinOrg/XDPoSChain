@@ -45,6 +45,20 @@ import (
 	_ "github.com/XinFinOrg/XDPoSChain/eth/tracers/js"
 )
 
+// TestSlotNumBlockContext pins EIP-7843's runtime path: the slot number the
+// block context carries is the runtime block number, and a config without one
+// leaves it at zero (docs/adr/0006-define-slot-number-as-block-number.md).
+func TestSlotNumBlockContext(t *testing.T) {
+	evm := NewEnv(&Config{ChainConfig: params.TestChainConfig, BlockNumber: big.NewInt(42)})
+	if got := evm.Context.SlotNum; got != 42 {
+		t.Errorf("SlotNum = %d, want 42", got)
+	}
+	evm = NewEnv(&Config{ChainConfig: params.TestChainConfig})
+	if got := evm.Context.SlotNum; got != 0 {
+		t.Errorf("SlotNum = %d without a block number, want 0", got)
+	}
+}
+
 func TestDefaults(t *testing.T) {
 	cfg := new(Config)
 	setDefaults(cfg)

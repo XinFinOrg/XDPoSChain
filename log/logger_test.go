@@ -33,6 +33,124 @@ func TestLoggingWithVmodule(t *testing.T) {
 	}
 }
 
+// TestLoggingWithVmoduleDowngrade checks that vmodule can be downgraded.
+func TestLoggingWithVmoduleDowngrade(t *testing.T) {
+	out := new(bytes.Buffer)
+	glog := NewGlogHandler(NewTerminalHandlerWithLevel(out, LevelTrace, false))
+	glog.Verbosity(LevelTrace) // Allow all logs globally
+	logger := NewLogger(glog)
+
+	// This should appear (global level allows it)
+	logger.Info("before vmodule downgrade, this should be logged")
+	if !bytes.Contains(out.Bytes(), []byte("before vmodule downgrade")) {
+		t.Fatal("expected 'before vmodule downgrade' to be logged")
+	}
+	out.Reset()
+
+	// Downgrade this file to only allow Warn and above
+	glog.Vmodule("logger_test.go=2")
+
+	// Info should now be filtered out
+	logger.Info("after vmodule downgrade, this should be filtered")
+	if bytes.Contains(out.Bytes(), []byte("after vmodule downgrade, this should be filtered")) {
+		t.Fatal("expected 'after vmodule downgrade, this should be filtered' to NOT be logged after vmodule downgrade")
+	}
+
+	// Warn should still appear
+	logger.Warn("after vmodule downgrade, this should be logged")
+	if !bytes.Contains(out.Bytes(), []byte("after vmodule downgrade, this should be logged")) {
+		t.Fatal("expected 'should appear' to be logged")
+	}
+}
+
+// TestLoggingCallsiteCacheInvalidation checks that a callsite cached under one
+// configuration is re-evaluated after the vmodule pattern or the global level
+// changes. Both records are emitted from the same statement, otherwise the
+// callsite cache is never hit and a cache reused across configs would go
+// unnoticed.
+func TestLoggingCallsiteCacheInvalidation(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		reconfigure func(*GlogHandler) error
+	}{
+		{
+			name: "vmodule",
+			reconfigure: func(glog *GlogHandler) error {
+				return glog.Vmodule("logger_test.go=2")
+			},
+		},
+		{
+			name: "verbosity",
+			reconfigure: func(glog *GlogHandler) error {
+				glog.Verbosity(LevelWarn)
+				return nil
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := new(bytes.Buffer)
+			glog := NewGlogHandler(NewTerminalHandlerWithLevel(out, LevelTrace, false))
+			glog.Verbosity(LevelTrace) // allow everything globally
+			// Keep a non-matching rule around: with any rule configured, Enabled
+			// lets every record through to the cache lookup, which is what the
+			// verbosity case needs to exercise.
+			if err := glog.Vmodule("unrelated_file.go=2"); err != nil {
+				t.Fatalf("Vmodule: %v", err)
+			}
+			logger := NewLogger(glog)
+
+			for i := 0; i < 2; i++ {
+				if i == 1 {
+					// Tighten the level for this file, then drop the first line.
+					if err := tc.reconfigure(glog); err != nil {
+						t.Fatalf("reconfigure: %v", err)
+					}
+					out.Reset()
+				}
+				// The same statement on both iterations: the second record hits
+				// the cache populated by the first unless the reconfiguration
+				// replaced it along with the config.
+				logger.Info("same callsite", "iteration", i)
+
+				if i == 0 && !bytes.Contains(out.Bytes(), []byte("same callsite")) {
+					t.Fatal("expected the global level to let the first record through")
+				}
+			}
+			if bytes.Contains(out.Bytes(), []byte("same callsite")) {
+				t.Fatal("expected the cached callsite to be re-evaluated under the new configuration")
+			}
+		})
+	}
+}
+
+// TestWithAttrsVerbosityChange checks that verbosity changes affect child loggers.
+func TestWithAttrsVerbosityChange(t *testing.T) {
+	out := new(bytes.Buffer)
+	glog := NewGlogHandler(NewTerminalHandlerWithLevel(out, LevelTrace, false))
+	glog.Verbosity(LevelInfo)
+
+	// Create a child logger with an extra attribute.
+	child := slog.New(glog.WithAttrs([]slog.Attr{slog.String("peer", "foo")}))
+
+	// Debug should be filtered at Info level.
+	child.Debug("this should be filtered")
+	if bytes.Contains(out.Bytes(), []byte("this should be filtered")) {
+		t.Fatal("expected debug message to be filtered at Info level")
+	}
+
+	// Change verbosity on the parent to allow Debug.
+	glog.Verbosity(LevelDebug)
+
+	// Child should pick up the new level and include its attributes.
+	child.Debug("this should be logged")
+	if !bytes.Contains(out.Bytes(), []byte("this should be logged")) {
+		t.Fatal("expected child logger to pick up verbosity change")
+	}
+	if !bytes.Contains(out.Bytes(), []byte("peer=foo")) {
+		t.Fatal("expected child logger to include WithAttrs attributes")
+	}
+}
+
 func TestTerminalHandlerWithAttrs(t *testing.T) {
 	out := new(bytes.Buffer)
 	glog := NewGlogHandler(NewTerminalHandlerWithLevel(out, LevelTrace, false).WithAttrs([]slog.Attr{slog.String("baz", "bat")}))
@@ -64,7 +182,7 @@ func TestJSONHandler(t *testing.T) {
 	logger = slog.New(handler)
 	logger.Debug("hi there")
 	if len(out.String()) != 0 {
-		t.Errorf("expected empty debug log output, but got: %v", out)
+		t.Errorf("expected empty debug log output, but got: %v", out.String())
 	}
 }
 

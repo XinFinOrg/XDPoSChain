@@ -38,6 +38,11 @@ func NewEnv(cfg *Config) *vm.EVM {
 		BaseFee:     cfg.BaseFee,
 		Random:      cfg.Random,
 	}
+	// EIP-7843: a slot is a block on this chain, so the block number is the slot
+	// number; a missing block number leaves the slot number at zero.
+	if cfg.BlockNumber != nil {
+		blockContext.SlotNum = cfg.BlockNumber.Uint64()
+	}
 
 	evm := vm.NewEVM(blockContext, cfg.State, nil, cfg.ChainConfig, cfg.EVMConfig)
 	evm.SetTxContext(txContext)

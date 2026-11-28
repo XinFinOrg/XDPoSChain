@@ -318,6 +318,29 @@ func TestDeleteAddressRevertKeepsDestructMarker(t *testing.T) {
 	}
 }
 
+// TestDeleteAddressRevertKeepsDestructedBalance pins that the burn a destruct
+// has cleared so far survives a DeleteAddress that is reverted again: without
+// it the account stays marked destructed but finalisation reports no burn.
+func TestDeleteAddressRevertKeepsDestructedBalance(t *testing.T) {
+	burned, balanceHook := burnRecorder()
+	s, _ := New(types.EmptyRootHash, NewDatabaseForTesting())
+	hooked := NewHookedState(s, &tracing.Hooks{OnBalanceChange: balanceHook})
+	addr := common.Address{0xaa}
+
+	hooked.AddBalance(addr, big.NewInt(100), tracing.BalanceChangeUnspecified)
+	hooked.CreateContract(addr)
+	hooked.SelfDestruct(addr)
+
+	snap := hooked.Snapshot()
+	hooked.DeleteAddress(addr)
+	hooked.RevertToSnapshot(snap)
+	hooked.Finalise(true)
+
+	if burned.Cmp(big.NewInt(100)) != 0 {
+		t.Fatalf("burn after the DeleteAddress revert = %v, want 100", burned)
+	}
+}
+
 // TestDeleteAddressRevertRestoresOrigins pins that the block-scoped origin caches
 // cleared by the removal are restored, so the commit keeps the original values.
 func TestDeleteAddressRevertRestoresOrigins(t *testing.T) {

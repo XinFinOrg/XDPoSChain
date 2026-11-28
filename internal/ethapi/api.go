@@ -22,12 +22,12 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	gomath "math"
 	"math/big"
 	"strings"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/accounts"
-	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/common/hexutil"
 	math "github.com/XinFinOrg/XDPoSChain/common/math"
@@ -35,9 +35,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/consensus/misc/eip1559"
-	contractValidator "github.com/XinFinOrg/XDPoSChain/contracts/validator/contract"
 	"github.com/XinFinOrg/XDPoSChain/core"
-	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/tracing"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -54,8 +52,6 @@ import (
 )
 
 const (
-	defaultGasPrice = 50 * params.Shannon
-
 	// statuses of candidates
 	statusMasternode = "MASTERNODE"
 	statusSlashed    = "SLASHED"
@@ -71,7 +67,10 @@ const (
 // be requested in a single eth_getStorageValues call.
 const maxGetStorageSlots = 1024
 
-var errEmptyHeader = errors.New("empty header")
+var (
+	errEmptyHeader        = errors.New("empty header")
+	errXDPoSConfigMissing = errors.New("xdpos config is nil")
+)
 
 // EthereumAPI provides an API to access Ethereum related information.
 // It offers only methods that operate on public data that is freely available to anyone.
@@ -333,7 +332,7 @@ func (api *BlockChainAPI) GetBalance(ctx context.Context, address common.Address
 
 // GetTransactionAndReceiptProof returns the Trie transaction and receipt proof of the given transaction hash.
 func (api *BlockChainAPI) GetTransactionAndReceiptProof(ctx context.Context, hash common.Hash) (map[string]interface{}, error) {
-	tx, blockHash, _, index := rawdb.ReadTransaction(api.b.ChainDb(), hash)
+	tx, blockHash, _, index := api.b.ReadTransaction(hash)
 	if tx == nil {
 		return nil, nil
 	}
@@ -665,6 +664,9 @@ func (api *BlockChainAPI) GetMasternodes(ctx context.Context, b *types.Block) ([
 
 // GetCandidateStatus returns status of the given candidate at a specified epochNumber
 func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddress common.Address, epoch rpc.EpochNumber) (map[string]interface{}, error) {
+	if api.b.ChainConfig().XDPoS == nil {
+		return nil, errXDPoSConfigMissing
+	}
 	var (
 		block                    *types.Block
 		header                   *types.Header
@@ -685,7 +687,11 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 	epochConfig := api.b.ChainConfig().XDPoS.Epoch
 
 	// checkpoint block
-	checkpointNumber, epochNumber = api.GetCheckpointFromEpoch(ctx, epoch)
+	checkpointNumber, epochNumber, err = api.GetCheckpointFromEpoch(ctx, epoch)
+	if err != nil {
+		result[fieldSuccess] = false
+		return result, err
+	}
 	result[fieldEpoch] = epochNumber.Int64()
 
 	block, err = api.b.BlockByNumber(ctx, checkpointNumber)
@@ -701,25 +707,11 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 	}
 
 	// list of candidates (masternode, slash, propose) at block checkpoint
+	candidatesBlock := checkpointNumber
 	if epoch == rpc.LatestEpochNumber {
-		candidates, err = api.getCandidatesFromSmartContract()
-	} else {
-		statedb, _, err := api.b.StateAndHeaderByNumber(ctx, checkpointNumber)
-		if err != nil {
-			result[fieldSuccess] = false
-			return result, err
-		}
-		if statedb == nil {
-			result[fieldSuccess] = false
-			return result, errors.New("nil statedb in GetCandidateStatus")
-		}
-		candidatesAddresses := statedb.GetCandidates()
-		candidates = make([]utils.Masternode, 0, len(candidatesAddresses))
-		for _, address := range candidatesAddresses {
-			v := statedb.GetCandidateCap(address)
-			candidates = append(candidates, utils.Masternode{Address: address, Stake: v})
-		}
+		candidatesBlock = rpc.LatestBlockNumber
 	}
+	candidates, err = api.getCandidatesFromState(ctx, candidatesBlock)
 	if err != nil || len(candidates) == 0 {
 		log.Debug("Candidates list cannot be found", "len(candidates)", len(candidates), "err", err)
 		result[fieldSuccess] = false
@@ -826,6 +818,9 @@ func (api *BlockChainAPI) GetCandidateStatus(ctx context.Context, coinbaseAddres
 
 // GetCandidates returns status of all candidates at a specified epochNumber
 func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumber) (map[string]interface{}, error) {
+	if api.b.ChainConfig().XDPoS == nil {
+		return nil, errXDPoSConfigMissing
+	}
 	var (
 		block            *types.Block
 		header           *types.Header
@@ -842,7 +837,11 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 	}
 	epochConfig := api.b.ChainConfig().XDPoS.Epoch
 
-	checkpointNumber, epochNumber = api.GetCheckpointFromEpoch(ctx, epoch)
+	checkpointNumber, epochNumber, err = api.GetCheckpointFromEpoch(ctx, epoch)
+	if err != nil {
+		result[fieldSuccess] = false
+		return result, err
+	}
 	result[fieldEpoch] = epochNumber.Int64()
 
 	block, err = api.b.BlockByNumber(ctx, checkpointNumber)
@@ -858,25 +857,11 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 		return result, errEmptyHeader
 	}
 	// list of candidates (masternode, slash, propose) at block checkpoint
+	candidatesBlock := checkpointNumber
 	if epoch == rpc.LatestEpochNumber {
-		candidates, err = api.getCandidatesFromSmartContract()
-	} else {
-		statedb, _, err := api.b.StateAndHeaderByNumber(ctx, checkpointNumber)
-		if err != nil {
-			result[fieldSuccess] = false
-			return result, err
-		}
-		if statedb == nil {
-			result[fieldSuccess] = false
-			return result, errors.New("nil statedb in GetCandidates")
-		}
-		candidatesAddresses := statedb.GetCandidates()
-		candidates = make([]utils.Masternode, 0, len(candidatesAddresses))
-		for _, address := range candidatesAddresses {
-			v := statedb.GetCandidateCap(address)
-			candidates = append(candidates, utils.Masternode{Address: address, Stake: v})
-		}
+		candidatesBlock = rpc.LatestBlockNumber
 	}
+	candidates, err = api.getCandidatesFromState(ctx, candidatesBlock)
 
 	if err != nil || len(candidates) == 0 {
 		log.Debug("Candidates list cannot be found", "len(candidates)", len(candidates), "err", err)
@@ -989,7 +974,10 @@ func (api *BlockChainAPI) GetCandidates(ctx context.Context, epoch rpc.EpochNumb
 }
 
 // GetCheckpointFromEpoch returns header of the previous checkpoint
-func (api *BlockChainAPI) GetCheckpointFromEpoch(ctx context.Context, epochNum rpc.EpochNumber) (rpc.BlockNumber, rpc.EpochNumber) {
+func (api *BlockChainAPI) GetCheckpointFromEpoch(ctx context.Context, epochNum rpc.EpochNumber) (rpc.BlockNumber, rpc.EpochNumber, error) {
+	if api.b.ChainConfig().XDPoS == nil {
+		return 0, epochNum, errXDPoSConfigMissing
+	}
 	var checkpointNumber uint64
 	epoch := api.b.ChainConfig().XDPoS.Epoch
 
@@ -1001,7 +989,7 @@ func (api *BlockChainAPI) GetCheckpointFromEpoch(ctx context.Context, epochNum r
 			checkpointNumber, currentEpoch, err = engine.GetCurrentEpochSwitchBlock(api.chainReader, blockNumer)
 			if err != nil {
 				log.Error("[GetCheckpointFromEpoch] Fail to get GetCurrentEpochSwitchBlock for current checkpoint block", "block", blockNumer, "err", err)
-				return 0, epochNum
+				return 0, 0, err
 			}
 
 			epochNum = rpc.EpochNumber(currentEpoch)
@@ -1013,42 +1001,40 @@ func (api *BlockChainAPI) GetCheckpointFromEpoch(ctx context.Context, epochNum r
 		checkpointNumber = epoch * (uint64(epochNum) - 1)
 	}
 
-	return rpc.BlockNumber(checkpointNumber), epochNum
+	return rpc.BlockNumber(checkpointNumber), epochNum, nil
 }
 
-// getCandidatesFromSmartContract returns all candidates with their capacities at the current time
-func (api *BlockChainAPI) getCandidatesFromSmartContract() ([]utils.Masternode, error) {
-	client, err := api.b.GetIPCClient()
+// getCandidatesFromState returns the voting contract's candidates and their capacities as they
+// stand in the state of the given block.
+//
+// It reads what the contract getters read: the candidate array is the contract's `candidates`,
+// whose zero entries are skipped, and a candidate's capacity is `validatorsState[candidate].cap`.
+// The slots are the ones core/state derives from the voting contract's layout - candidate slot 8,
+// validatorsState slot 1 with cap one slot on, see slotValidatorMapping in
+// core/state/statedb_utils.go - so a layout change in the contract has to be mirrored there.
+// The same data used to come back through the node's own IPC endpoint, which made both candidate
+// RPCs need an endpoint at all - a node started with --ipcdisable failed them - and cost an
+// eth_call for the list plus one per candidate.
+func (api *BlockChainAPI) getCandidatesFromState(ctx context.Context, blockNr rpc.BlockNumber) ([]utils.Masternode, error) {
+	statedb, _, err := api.b.StateAndHeaderByNumber(ctx, blockNr)
 	if err != nil {
-		return []utils.Masternode{}, err
+		return nil, err
 	}
-
-	addr := common.MasternodeVotingSMCBinary
-	validator, err := contractValidator.NewXDCValidator(addr, client)
-	if err != nil {
-		return []utils.Masternode{}, err
+	if statedb == nil {
+		return nil, errors.New("nil statedb reading the candidates")
 	}
-
-	opts := new(bind.CallOpts)
-	candidates, err := validator.GetCandidates(opts)
-	if err != nil {
-		return []utils.Masternode{}, err
+	candidatesAddresses := statedb.GetCandidates()
+	candidates := make([]utils.Masternode, 0, len(candidatesAddresses))
+	for _, address := range candidatesAddresses {
+		candidates = append(candidates, utils.Masternode{Address: address, Stake: statedb.GetCandidateCap(address)})
 	}
-
-	candidatesWithStakeInfo := make([]utils.Masternode, 0, len(candidates))
-
-	for _, candidate := range candidates {
-		if !candidate.IsZero() {
-			v, err := validator.GetCandidateCap(opts, candidate)
-			if err != nil {
-				return []utils.Masternode{}, err
-			}
-
-			candidatesWithStakeInfo = append(candidatesWithStakeInfo, utils.Masternode{Address: candidate, Stake: v})
-		}
+	// GetCandidates and GetCandidateCap return zero values when the voting contract storage
+	// cannot be read, memoizing the failure in StateDB.Error(). A list derived from such reads
+	// would be empty or partial, so surface the error instead of reporting it as the chain's.
+	if err := statedb.Error(); err != nil {
+		return nil, fmt.Errorf("reading the candidates of block %d from state: %w", blockNr, err)
 	}
-
-	return candidatesWithStakeInfo, nil
+	return candidates, nil
 }
 
 // ChainContextBackend provides methods required to implement ChainContext.
@@ -1127,7 +1113,17 @@ func doCall(ctx context.Context, b Backend, args TransactionArgs, state *state.S
 	// Make sure the context is cancelled when the call has completed
 	// this makes sure resources are cleaned up.
 	defer cancel()
-	return applyMessage(ctx, b, args, state, block, timeout, new(core.GasPool).AddGas(globalGasCap), &blockCtx, &vm.Config{NoBaseFee: true}, precompiles)
+
+	// A zero cap means unlimited, but a zero gas pool funds nothing:
+	// CallDefaults would hand out MaxUint64/2 gas, which buyGas then rejects
+	// against the empty pool before the EVM runs.
+	gp := new(core.GasPool)
+	if globalGasCap == 0 {
+		gp.AddGas(gomath.MaxUint64)
+	} else {
+		gp.AddGas(globalGasCap)
+	}
+	return applyMessage(ctx, b, args, state, block, timeout, gp, &blockCtx, &vm.Config{NoBaseFee: true}, precompiles)
 }
 
 func applyMessage(ctx context.Context, b Backend, args TransactionArgs, state *state.StateDB, block *types.Block, timeout time.Duration, gp *core.GasPool, blockContext *vm.BlockContext, vmConfig *vm.Config, precompiles vm.PrecompiledContracts) (*core.ExecutionResult, error) {
@@ -1201,11 +1197,7 @@ func (api *BlockChainAPI) Call(ctx context.Context, args TransactionArgs, blockN
 		latest := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
 		blockNrOrHash = &latest
 	}
-	timeout := api.b.RPCEVMTimeout()
-	if args.To != nil && *args.To == common.MasternodeVotingSMCBinary {
-		timeout = 0
-	}
-	result, err := DoCall(ctx, api.b, args, *blockNrOrHash, overrides, blockOverrides, timeout, api.b.RPCGasCap())
+	result, err := DoCall(ctx, api.b, args, *blockNrOrHash, overrides, blockOverrides, api.b.RPCEVMTimeout(), api.b.RPCGasCap())
 	if err != nil {
 		return nil, err
 	}
@@ -1247,13 +1239,20 @@ func (api *BlockChainAPI) SimulateV1(ctx context.Context, opts simOpts, blockNrO
 	if state == nil || err != nil {
 		return nil, err
 	}
+	// A zero cap means unlimited, but a zero gas pool funds nothing: without
+	// this buyGas rejects every simulated call.
+	gasCap := api.b.RPCGasCap()
+	if gasCap == 0 {
+		gasCap = gomath.MaxUint64
+	}
 	sim := &simulator{
 		b:           api.b,
 		state:       state,
 		base:        base,
 		chainConfig: api.b.ChainConfig(),
-		// Each tx and all the series of txes shouldn't consume more gas than cap
-		gp:             new(core.GasPool).AddGas(api.b.RPCGasCap()),
+		// Each tx and all the series of txes shouldn't consume more gas than the
+		// cap; a zero cap is MaxUint64 here, which leaves the run unbounded.
+		gp:             new(core.GasPool).AddGas(gasCap),
 		traceTransfers: opts.TraceTransfers,
 		validate:       opts.Validation,
 		fullTx:         opts.ReturnFullTransactions,
@@ -1421,6 +1420,7 @@ func (api *BlockChainAPI) findNearestSignedBlock(ctx context.Context, b *types.B
 	checkpointNumber, _, err := engine.GetCurrentEpochSwitchBlock(api.chainReader, big.NewInt(int64(signedBlockNumber)))
 	if err != nil {
 		log.Error("[findNearestSignedBlock] Error while trying to get current Epoch switch block", "Number", signedBlockNumber)
+		return nil
 	}
 
 	checkpointBlock, _ := api.b.BlockByNumber(ctx, rpc.BlockNumber(checkpointNumber))
@@ -1531,12 +1531,6 @@ func (api *BlockChainAPI) getSigners(ctx context.Context, block *types.Block, en
 }
 
 func (api *BlockChainAPI) rpcOutputBlockSigners(b *types.Block, ctx context.Context, masternodes []common.Address) ([]common.Address, error) {
-	_, err := api.b.GetIPCClient()
-	if err != nil {
-		log.Error("Fail to connect IPC client for block status", "error", err)
-		return []common.Address{}, err
-	}
-
 	engine, ok := api.b.Engine().(*XDPoS.XDPoS)
 	if !ok {
 		log.Error("Undefined XDPoS consensus engine")
@@ -1932,7 +1926,7 @@ func (s *TransactionAPI) GetTransactionCount(ctx context.Context, address common
 // GetTransactionByHash returns the transaction for the given hash
 func (s *TransactionAPI) GetTransactionByHash(ctx context.Context, hash common.Hash) (*RPCTransaction, error) {
 	// Try to return an already finalized transaction
-	tx, blockHash, blockNumber, index := rawdb.ReadTransaction(s.b.ChainDb(), hash)
+	tx, blockHash, blockNumber, index := s.b.ReadTransaction(hash)
 	if tx != nil {
 		header, err := s.b.HeaderByHash(ctx, blockHash)
 		if err != nil {
@@ -1952,7 +1946,7 @@ func (s *TransactionAPI) GetTransactionByHash(ctx context.Context, hash common.H
 // GetRawTransactionByHash returns the bytes of the transaction for the given hash.
 func (s *TransactionAPI) GetRawTransactionByHash(ctx context.Context, hash common.Hash) (hexutil.Bytes, error) {
 	// Retrieve a finalized transaction, or a pooled otherwise
-	tx, _, _, _ := rawdb.ReadTransaction(s.b.ChainDb(), hash)
+	tx, _, _, _ := s.b.ReadTransaction(hash)
 	if tx == nil {
 		if tx = s.b.GetPoolTransaction(hash); tx == nil {
 			// Transaction not found anywhere, abort
@@ -1965,7 +1959,7 @@ func (s *TransactionAPI) GetRawTransactionByHash(ctx context.Context, hash commo
 
 // GetTransactionReceipt returns the transaction receipt for the given transaction hash.
 func (s *TransactionAPI) GetTransactionReceipt(ctx context.Context, hash common.Hash) (map[string]interface{}, error) {
-	tx, blockHash, blockNumber, index := rawdb.ReadTransaction(s.b.ChainDb(), hash)
+	tx, blockHash, blockNumber, index := s.b.ReadTransaction(hash)
 	if tx == nil {
 		// When the transaction doesn't exist, the RPC method should return JSON null
 		// as per specification.
@@ -2529,14 +2523,17 @@ func GetSignersFromBlocks(b Backend, blockNumber uint64, blockHash common.Hash, 
 // Formular:
 //
 //	ROI = average_latest_epoch_reward_for_voters*number_of_epoch_per_year/latest_total_cap*100
-func (api *BlockChainAPI) GetStakerROI() float64 {
+func (api *BlockChainAPI) GetStakerROI() (float64, error) {
+	if api.b.ChainConfig().XDPoS == nil {
+		return 0, errXDPoSConfigMissing
+	}
 	blockNumber := api.b.CurrentBlock().Number.Uint64()
 	lastCheckpointNumber := blockNumber - (blockNumber % api.b.ChainConfig().XDPoS.Epoch) - api.b.ChainConfig().XDPoS.Epoch // calculate for 2 epochs ago
 	totalCap := new(big.Int).SetUint64(0)
 
 	mastersCap := api.b.GetMasternodesCap(lastCheckpointNumber)
 	if mastersCap == nil {
-		return 0
+		return 0, nil
 	}
 
 	masternodeReward := new(big.Int).Mul(new(big.Int).SetUint64(api.b.ChainConfig().XDPoS.Reward), new(big.Int).SetUint64(params.Ether))
@@ -2548,7 +2545,7 @@ func (api *BlockChainAPI) GetStakerROI() float64 {
 	holderReward := new(big.Int).Rsh(masternodeReward, 1)
 	EpochPerYear := 365 * 86400 / api.b.GetEpochDuration().Uint64()
 	voterRewardAYear := new(big.Int).Mul(holderReward, new(big.Int).SetUint64(EpochPerYear))
-	return 100.0 / float64(totalCap.Div(totalCap, voterRewardAYear).Uint64())
+	return 100.0 / float64(totalCap.Div(totalCap, voterRewardAYear).Uint64()), nil
 }
 
 // GetStakerROIMasternode Estimate ROI for stakers of a specific masternode using the last epoc reward
@@ -2556,10 +2553,13 @@ func (api *BlockChainAPI) GetStakerROI() float64 {
 // Formular:
 //
 //	ROI = latest_epoch_reward_for_voters*number_of_epoch_per_year/latest_total_cap*100
-func (api *BlockChainAPI) GetStakerROIMasternode(masternode common.Address) float64 {
+func (api *BlockChainAPI) GetStakerROIMasternode(masternode common.Address) (float64, error) {
+	if api.b.ChainConfig().XDPoS == nil {
+		return 0, errXDPoSConfigMissing
+	}
 	votersReward := api.b.GetVotersRewards(masternode)
 	if votersReward == nil {
-		return 0
+		return 0, nil
 	}
 
 	masternodeReward := new(big.Int).SetUint64(0) // this includes all reward for this masternode
@@ -2583,7 +2583,7 @@ func (api *BlockChainAPI) GetStakerROIMasternode(masternode common.Address) floa
 	EpochPerYear := 365 * 86400 / api.b.GetEpochDuration().Uint64()
 	voterRewardAYear := new(big.Int).Mul(holderReward, new(big.Int).SetUint64(EpochPerYear))
 
-	return 100.0 / float64(totalCap.Div(totalCap, voterRewardAYear).Uint64())
+	return 100.0 / float64(totalCap.Div(totalCap, voterRewardAYear).Uint64()), nil
 }
 
 type supplyV1 struct {
@@ -2606,6 +2606,10 @@ type tokenSupply struct {
 }
 
 func (api *BlockChainAPI) GetTokenStats(ctx context.Context, epochNr rpc.EpochNumber) (*tokenSupply, error) {
+	config := api.b.ChainConfig().XDPoS
+	if config == nil {
+		return nil, errXDPoSConfigMissing
+	}
 	engine, ok := api.b.Engine().(*XDPoS.XDPoS)
 	if !ok {
 		return nil, errors.New("undefined XDPoS consensus engine")
@@ -2638,10 +2642,6 @@ func (api *BlockChainAPI) GetTokenStats(ctx context.Context, epochNr rpc.EpochNu
 	targetHeader, err := api.b.HeaderByNumber(ctx, rpc.BlockNumber(number.Int64()))
 	if err != nil {
 		return nil, err
-	}
-	config := api.b.ChainConfig().XDPoS
-	if config == nil {
-		return nil, errors.New("xdpos config is nil")
 	}
 	preEpochMinted := new(big.Int).Mul(new(big.Int).SetUint64(config.Reward), new(big.Int).SetUint64(params.Ether))
 	onsetEpochMinus := onsetEpoch

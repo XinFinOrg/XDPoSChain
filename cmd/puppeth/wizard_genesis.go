@@ -295,33 +295,64 @@ func calcMasternodeRewards(period, epoch, threshold, yield uint64, masternodes i
 	}, true
 }
 
-// errGapOutsideEpoch marks the gap refusal, the only schedule error an input file can
-// cause by an epoch at or below the template's gap.
-var errGapOutsideEpoch = errors.New("gap must designate a block inside the epoch")
-
 // interactiveGapDefault is half the epoch, which is inside 0 < gap < epoch for every
 // epoch the prompt accepts: 1 at epoch 2, 50 at epoch 100, 450 at epoch 900.
 func interactiveGapDefault(epoch uint64) uint64 {
 	return epoch / 2
 }
 
-// checkXDPoSSchedule rejects a gap outside 0 < gap < epoch, or an epoch below 2.
-// The bound is open-coded pending ChainConfig.CheckConfigForkOrder (#2822), and
-// core already guards it two ways: isNextEpochGapBlock refuses Gap == Epoch as
-// this check does, while isGapBlockNumber accepts it.
+// checkXDPoSSchedule rejects a schedule the params bound refuses. The judgement
+// and its wording belong to params.XDPoSConfig.CheckSchedule and are returned as
+// is, so the wizard and a node starting on the generated genesis report one
+// contract.
 func checkXDPoSSchedule(cfg *params.XDPoSConfig) error {
 	if cfg == nil {
 		return errors.New("missing XDPoS config")
 	}
-	if cfg.Epoch < 2 {
-		// An unset epoch keeps its own wording; both cases are the same bound.
-		if cfg.Epoch == 0 {
-			return errors.New("epoch must be greater than 0")
-		}
-		return fmt.Errorf("epoch must be at least 2 so that a gap block exists inside the epoch (1 <= gap < epoch), got %d", cfg.Epoch)
+	return cfg.CheckSchedule()
+}
+
+// checkNegativeSwitchBlock refuses a switch block below zero where it can be
+// named. CheckSwitchBlockAlignment takes the remainder on the big.Int, so its
+// verdict is the same for a block and its absolute value: a negative multiple of
+// the epoch passes alignment and would only surface later as an XDPoS.V2.SwitchEpoch
+// that does not fit.
+func checkNegativeSwitchBlock(cfg *params.ChainConfig) error {
+	xdpos := cfg.XDPoS
+	if xdpos == nil || xdpos.V2 == nil || xdpos.V2.SwitchBlock == nil || xdpos.V2.SwitchBlock.Sign() >= 0 {
+		return nil
 	}
-	if cfg.Gap == 0 || cfg.Gap >= cfg.Epoch {
-		return fmt.Errorf("%w (1 <= gap < %d), got %d", errGapOutsideEpoch, cfg.Epoch, cfg.Gap)
+	return fmt.Errorf("the v2 switch block must not be negative: XDPoS.V2.SwitchEpoch is a uint64, so a negative block cannot be represented (switchBlock %v, epoch %d)", xdpos.V2.SwitchBlock, xdpos.Epoch)
+}
+
+// finalizeGenesisConfig refuses a genesis the init path would refuse, then keeps
+// XDPoS.V2.SwitchEpoch consistent with the switch block that was finally asked
+// for. Both run on the object about to be written: the prompt checks judge each
+// answer where it is given, and this is the one place that sees the complete
+// config. The pairing needs this because no validator compares SwitchEpoch with
+// the switch block - CheckConfigForkOrder aligns the switch block with the epoch
+// and compares no switch epoch - and the template supplies a SwitchEpoch of its
+// own, which a switch block typed at the prompt would otherwise leave describing
+// a different schedule. The gate just above already refuses every shape the
+// derivation can fail on - an unset switch block as a missing field, an unset
+// epoch through the schedule gate, and a quotient that fits no uint64 through
+// CheckSwitchBlockAlignment - so the refusal below cannot fire behind it. It
+// stays as the local guarantee that SwitchEpoch is assigned a quotient and never
+// a truncation of one, should that gate stop judging the quotient.
+func finalizeGenesisConfig(cfg *params.ChainConfig) error {
+	if err := checkNegativeSwitchBlock(cfg); err != nil {
+		return err
+	}
+	xdpos := cfg.XDPoS
+	if xdpos != nil {
+		if err := cfg.CheckConfigForkOrder(); err != nil {
+			return err
+		}
+		want, ok := params.SwitchEpochFor(xdpos.V2.SwitchBlock, xdpos.Epoch)
+		if !ok {
+			return fmt.Errorf("the v2 switch block names an epoch no uint64 can hold (switchBlock %v, epoch %d)", xdpos.V2.SwitchBlock, xdpos.Epoch)
+		}
+		xdpos.V2.SwitchEpoch = want.Uint64()
 	}
 	return nil
 }
@@ -408,12 +439,6 @@ func (w *wizard) makeGenesis() {
 		}
 
 		fmt.Println()
-		fmt.Println("Which block number start v2 consesus? (default = 0)")
-		if input == nil {
-			genesis.Config.XDPoS.V2.SwitchBlock = w.readDefaultBigInt(genesis.Config.XDPoS.V2.SwitchBlock)
-		}
-
-		fmt.Println()
 		fmt.Println("How long is the v2 timeout period? (default = 10)")
 		if input == nil {
 			genesis.Config.XDPoS.V2.CurrentConfig.TimeoutPeriod = w.readDefaultInt(10)
@@ -470,10 +495,14 @@ func (w *wizard) makeGenesis() {
 		}
 
 		// Ask these only inline: the file overwrites the epoch and never reads the gap.
+		// The gap bound is judged here through checkXDPoSSchedule once the pair is final,
+		// and again below on the complete config, which also sees an input file's epoch.
 		if input == nil {
 			fmt.Println()
 			fmt.Println("How many blocks per epoch? (default = 900, must be at least 2)")
 			epoch := w.readDefaultInt(900)
+			// The epoch floor is its own: the gap answer is still pending, so the pair
+			// cannot be judged yet - the template's gap would be the one on trial.
 			if epoch < 2 {
 				log.Crit("Epoch must be at least 2 so that a gap block exists inside it", "epoch", epoch)
 			}
@@ -482,18 +511,40 @@ func (w *wizard) makeGenesis() {
 			defaultGap := interactiveGapDefault(genesis.Config.XDPoS.Epoch)
 			fmt.Println()
 			fmt.Printf("How many blocks before the end of the epoch should the gap block fall? "+
-				"(1 <= gap < %d, default = %d)\n", genesis.Config.XDPoS.Epoch, defaultGap)
-			// Zero means unspecified; judge both answers before the uint64 conversion.
+				"(1 <= Gap < %d, default = %d)\n", genesis.Config.XDPoS.Epoch, defaultGap)
+			// Zero means unspecified; the sign is judged before the uint64 conversion,
+			// because a negative answer has no spelling params could see.
 			gap := w.readDefaultInt(int(defaultGap))
 			if gap < 0 {
 				log.Crit("Gap must not be negative", "gap", gap)
 			}
 			if gap == 0 {
 				gap = int(defaultGap)
-			} else if gap >= epoch {
-				log.Crit("Unusable XDPoS schedule", "err", fmt.Errorf("epoch must be greater than gap (1 <= gap < epoch), got epoch %d, gap %d", epoch, gap))
 			}
 			genesis.Config.XDPoS.Gap = uint64(gap)
+			// The pair is final now, so the bound is judged by the rule the node runs at
+			// startup and reports the same message, whatever shape was answered.
+			if err := checkXDPoSSchedule(genesis.Config.XDPoS); err != nil {
+				log.Crit("Unusable XDPoS schedule", "err", err)
+			}
+
+			// The switch block is asked here, once, after the epoch is final: the
+			// answer is judged against the epoch it has to divide, so the schedule
+			// the operator sees is the schedule that gets stored. Asking it next to
+			// the v2 runtime questions meant a later epoch answer invalidated it.
+			fmt.Println()
+			fmt.Printf("Which block number start v2 consensus? (default = %v)\n", genesis.Config.XDPoS.V2.SwitchBlock)
+			genesis.Config.XDPoS.V2.SwitchBlock = w.readDefaultBigInt(genesis.Config.XDPoS.V2.SwitchBlock)
+			// The sign is refused first: the alignment check below is blind to it, so a
+			// negative multiple of the epoch would pass the modulo.
+			if err := checkNegativeSwitchBlock(genesis.Config); err != nil {
+				log.Crit("Unusable XDPoS v2 switch block", "err", err)
+			}
+			// Judge the answer here as well as in CheckConfigForkOrder below, which is
+			// only reached after every genesis contract has been deployed.
+			if err := params.CheckSwitchBlockAlignment(genesis.Config.XDPoS.V2.SwitchBlock, genesis.Config.XDPoS.Epoch); err != nil {
+				log.Crit("Unusable XDPoS v2 switch block", "err", err)
+			}
 		}
 
 		fmt.Println()
@@ -521,10 +572,11 @@ func (w *wizard) makeGenesis() {
 		// Judge the pair before anything is derived from it: the epoch is baked
 		// into BlockSigner, the gap is not.
 		if err := checkXDPoSSchedule(genesis.Config.XDPoS); err != nil {
-			// Name the template value and the ways out, but only for a gap refusal: the
-			// file cannot set gap, so an epoch below 2 has nothing to do with it.
-			if input != nil && errors.Is(err, errGapOutsideEpoch) {
-				err = fmt.Errorf("%w; the input file cannot set gap: use an epoch above %d or the interactive path", err, params.LocalnetChainConfig.XDPoS.Gap)
+			// Name the template value and the ways out once for every tier: the file
+			// sets the epoch and the template supplies the gap, so each refusal above
+			// is answered by an epoch the template's gap fits in.
+			if input != nil && errors.Is(err, params.ErrInvalidEpochGap) {
+				err = fmt.Errorf("%w; the input file sets the epoch and the template supplies Gap %d: set an epoch above that, or use the interactive path", err, params.LocalnetChainConfig.XDPoS.Gap)
 			}
 			log.Crit("Unusable XDPoS schedule", "err", err)
 		}
@@ -759,6 +811,17 @@ func (w *wizard) makeGenesis() {
 		genesis.Config.ChainID = new(big.Int).SetUint64(uint64(w.readDefaultInt(rand.Intn(65536))))
 	}
 
+	// Refuse to store a genesis the init path would refuse. The prompt checks
+	// judge each answer where it is given; this is the one place that sees the
+	// complete config, so it re-derives the paired switch epoch from the switch
+	// block and the epoch that are final by now, then runs the same gate. Both
+	// paths run it: an input file carries the template pair, so the derivation
+	// is a no-op there, and a template or input file carrying a negative switch
+	// block is refused here because CheckSwitchBlockAlignment cannot see the
+	// sign.
+	if err := finalizeGenesisConfig(genesis.Config); err != nil {
+		log.Crit("Refusing to generate an invalid genesis", "err", err)
+	}
 	// All done, store the genesis and flush to disk
 	log.Info("Configured new genesis block")
 

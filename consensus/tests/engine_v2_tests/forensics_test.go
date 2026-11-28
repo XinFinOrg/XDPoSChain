@@ -2,6 +2,7 @@ package engine_v2_tests
 
 import (
 	"math/big"
+	"sync"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 )
 
 func TestProcessQcShallSetForensicsCommittedQc(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	engineV2 := blockchain.Engine().(*XDPoS.XDPoS).EngineV2
 
@@ -85,11 +87,33 @@ func TestProcessQcShallSetForensicsCommittedQc(t *testing.T) {
 	err = engineV2.VoteHandler(blockchain, voteMsg)
 	assert.Nil(t, err)
 
-	time.Sleep(5000 * time.Millisecond)
-	assert.Equal(t, 3, len(engineV2.GetForensicsFaker().HighestCommittedQCs))
+	// The committer goroutine records the QCs after the votes, and the read is
+	// under the forensics lock, so poll until all three are recorded instead
+	// of sleeping a fixed five seconds.
+	const (
+		pollInterval = 10 * time.Millisecond
+		pollTimeout  = 5 * time.Second
+		wantQCs      = 3
+	)
+	forensics := engineV2.GetForensicsFaker()
+	deadline := time.Now().Add(pollTimeout)
+	var committedQCs []types.QuorumCert
+	for {
+		committedQCs = forensics.GetCommittedQCs()
+		if len(committedQCs) >= wantQCs || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(pollInterval)
+	}
+	if assert.Len(t, committedQCs, wantQCs) {
+		// The last recorded QC is the incoming one, i.e. the QC for the
+		// voted block 905.
+		assert.Equal(t, currentBlock.Hash(), committedQCs[wantQCs-1].ProposedBlockInfo.Hash)
+	}
 }
 
 func TestSetCommittedQCsInOrder(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
 	forensics := blockchain.Engine().(*XDPoS.XDPoS).EngineV2.GetForensicsFaker()
 
@@ -104,18 +128,50 @@ func TestSetCommittedQCsInOrder(t *testing.T) {
 
 	err = forensics.SetCommittedQCs(append(headers, *blockchain.GetHeaderByNumber(903), *blockchain.GetHeaderByNumber(904)), *decodedExtraField.QuorumCert)
 	assert.Nil(t, err)
-	assert.Equal(t, 3, len(forensics.HighestCommittedQCs))
+	assert.Equal(t, 3, len(forensics.GetCommittedQCs()))
 
 	// Test previous blocks
 	err = utils.DecodeBytesExtraFields(blockchain.GetHeaderByNumber(904).Extra, &decodedExtraField)
 	assert.Nil(t, err)
 	err = forensics.SetCommittedQCs(append(headers, *blockchain.GetHeaderByNumber(902), *blockchain.GetHeaderByNumber(903)), *decodedExtraField.QuorumCert)
 	assert.Nil(t, err)
-	assert.Equal(t, 3, len(forensics.HighestCommittedQCs))
+	assert.Equal(t, 3, len(forensics.GetCommittedQCs()))
+}
+
+// TestSetCommittedQCsConcurrent records concurrently; the race detector is the assertion.
+func TestSetCommittedQCsConcurrent(t *testing.T) {
+	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 905, params.TestXDPoSMockChainConfig, nil)
+	forensics := blockchain.Engine().(*XDPoS.XDPoS).EngineV2.GetForensicsFaker()
+
+	var decodedExtraField types.ExtraFields_v2
+	err := utils.DecodeBytesExtraFields(currentBlock.Header().Extra, &decodedExtraField)
+	assert.Nil(t, err)
+	headers := []types.Header{*blockchain.GetHeaderByNumber(903), *blockchain.GetHeaderByNumber(904)}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				if err := forensics.SetCommittedQCs(headers, *decodedExtraField.QuorumCert); err != nil {
+					t.Errorf("SetCommittedQCs failed: %v", err)
+					return
+				}
+				if got := len(forensics.GetCommittedQCs()); got != 3 {
+					t.Errorf("GetCommittedQCs returned %d QCs, want 3", got)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	assert.Equal(t, 3, len(forensics.GetCommittedQCs()))
 }
 
 // Happty path
 func TestForensicsMonitoring(t *testing.T) {
+	t.Parallel()
 	blockchain, _, currentBlock, _, _, _ := PrepareXDCTestBlockChainForV2Engine(t, 915, params.TestXDPoSMockChainConfig, nil)
 	forensics := blockchain.Engine().(*XDPoS.XDPoS).EngineV2.GetForensicsFaker()
 	var decodedCurrentblockExtraField types.ExtraFields_v2

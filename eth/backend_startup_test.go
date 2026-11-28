@@ -56,7 +56,11 @@ func bootSetHeadNode(t *testing.T, dataDir string, gspec *core.Genesis) (*node.N
 	if err != nil {
 		t.Fatalf("can't create node: %v", err)
 	}
-	xdcx := XDCx.New(n, &XDCx.Config{DataDir: filepath.Join(dataDir, "XDCx")})
+	xdcx, err := XDCx.New(n, &XDCx.Config{DataDir: filepath.Join(dataDir, "XDCx")})
+	if err != nil {
+		n.Close()
+		return nil, nil, err
+	}
 	lending := XDCxlending.New(n, xdcx)
 
 	ethservice, err := New(n, &ethconfig.Config{Genesis: gspec}, xdcx, lending)

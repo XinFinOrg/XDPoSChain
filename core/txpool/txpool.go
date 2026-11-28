@@ -413,8 +413,15 @@ func (p *TxPool) SubscribeTransactions(ch chan<- core.NewTxsEvent, reorgs bool) 
 	return p.subs.Track(event.JoinSubscriptions(subs...))
 }
 
-// PoolNonce returns the next nonce of an account, with all transactions executable
-// by the pool already applied on top.
+// PoolNonce returns the PENDING nonce of an account: the next nonce with all
+// transactions executable by the pool already applied on top, i.e. the on-chain
+// nonce plus the account's executable transactions in the pool. A transaction
+// built on it is stacked behind the ones still in the pool.
+//
+// Not to be confused with Nonce, which returns the ON-CHAIN nonce. SubPool.Nonce,
+// despite its name, is the pending nonce, and this method aggregates it. The
+// names follow upstream (go-ethereum #31496); before that rename, TxPool.Nonce
+// returned this value, so code written against older versions may mean this.
 func (p *TxPool) PoolNonce(addr common.Address) uint64 {
 	// Since (for now) accounts are unique to subpools, only one pool will have
 	// (at max) a non-state nonce. To avoid stateful lookups, just return the
@@ -428,8 +435,14 @@ func (p *TxPool) PoolNonce(addr common.Address) uint64 {
 	return nonce
 }
 
-// Nonce returns the next nonce of an account at the current chain head. Unlike
-// PoolNonce, this function does not account for pending executable transactions.
+// Nonce returns the ON-CHAIN nonce of an account: the next nonce at the pool's
+// current head, ignoring every transaction still in the pool. A transaction built
+// on it takes the nonce of the account's oldest unmined transaction, if any.
+//
+// Not to be confused with PoolNonce, which returns the PENDING nonce, nor with
+// SubPool.Nonce / LegacyPool.Nonce, which also return the pending nonce despite
+// sharing this name. The pool refreshes its head state asynchronously on each
+// chain head event, so right after a block import this can lag one head behind.
 func (p *TxPool) Nonce(addr common.Address) uint64 {
 	p.stateLock.RLock()
 	defer p.stateLock.RUnlock()

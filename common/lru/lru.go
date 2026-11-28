@@ -86,6 +86,20 @@ func (c *Cache[K, V]) Remove(key K) bool {
 	return c.cache.Remove(key)
 }
 
+// RemoveIf drops the item under key if match reports true for it. The check and the removal
+// are atomic, so a value stored under the same key afterwards is not removed. match must
+// not touch the cache.
+func (c *Cache[K, V]) RemoveIf(key K, match func(V) bool) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	value, ok := c.cache.Peek(key)
+	if !ok || !match(value) {
+		return false
+	}
+	return c.cache.Remove(key)
+}
+
 // Keys returns all keys of items currently in the LRU.
 func (c *Cache[K, V]) Keys() []K {
 	c.mu.Lock()

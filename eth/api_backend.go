@@ -30,7 +30,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/XDCx/tradingstate"
 	"github.com/XinFinOrg/XDPoSChain/XDCxlending"
 	"github.com/XinFinOrg/XDPoSChain/accounts"
-	"github.com/XinFinOrg/XDPoSChain/accounts/abi/bind"
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
@@ -73,7 +72,7 @@ func (b *EthAPIBackend) CurrentBlock() *types.Header {
 }
 
 func (b *EthAPIBackend) SetHead(number uint64) {
-	b.eth.protocolManager.downloader.Cancel()
+	b.eth.handler.downloader.Cancel()
 	b.eth.blockchain.SetHead(number)
 }
 
@@ -362,8 +361,12 @@ func (b *EthAPIBackend) GetPoolTransaction(hash common.Hash) *types.Transaction 
 	return nil
 }
 
+func (b *EthAPIBackend) ReadTransaction(txHash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+	return b.eth.blockchain.ReadTransaction(txHash)
+}
+
 func (b *EthAPIBackend) GetTransaction(ctx context.Context, txHash common.Hash) (*types.Transaction, common.Hash, uint64, uint64, error) {
-	tx, blockHash, blockNumber, index := rawdb.ReadTransaction(b.eth.ChainDb(), txHash)
+	tx, blockHash, blockNumber, index := b.ReadTransaction(txHash)
 	return tx, blockHash, blockNumber, index, nil
 }
 
@@ -466,15 +469,6 @@ func (b *EthAPIBackend) StateAtTransaction(ctx context.Context, block *types.Blo
 	return b.eth.stateAtTransaction(ctx, block, txIndex, reexec)
 }
 
-func (b *EthAPIBackend) GetIPCClient() (bind.ContractBackend, error) {
-	client, err := b.eth.blockchain.GetClient()
-	if err != nil {
-		return nil, err
-	}
-
-	return client, nil
-}
-
 func (b *EthAPIBackend) CurrentHeader() *types.Header {
 	return b.eth.blockchain.CurrentHeader()
 }
@@ -530,10 +524,13 @@ func decodeRewardFile(data []byte) (map[string]map[string]map[string]*big.Int, e
 // 3. Find out the list signers_reward for input masternode's reward
 // 4. Calculate voters's rewards for input masternode
 func (b *EthAPIBackend) GetVotersRewards(masternodeAddr common.Address) map[common.Address]*big.Int {
+	engine, ok := b.Engine().(*XDPoS.XDPoS)
+	if !ok {
+		return nil
+	}
 	chain := b.eth.blockchain
 	header := chain.CurrentBlock()
 	number := header.Number.Uint64()
-	engine := b.Engine().(*XDPoS.XDPoS)
 	foundationWalletAddr := chain.Config().XDPoS.FoundationWalletAddr
 
 	// calculate for 2 epochs ago
@@ -683,11 +680,12 @@ func (b *EthAPIBackend) LendingService() *XDCxlending.Lending {
 }
 
 func (b *EthAPIBackend) GetPeer() int {
-	return b.eth.protocolManager.peers.Len()
+	return b.eth.handler.peers.Len()
 }
 
-// ValidateMasternode checks if node's address is in set of masternodes
-func (b *EthAPIBackend) ValidateMasternode() (bool, error) {
+// ValidateMasternode reports whether the node's etherbase is an authorised signer;
+// known is false while the node is syncing. See Ethereum.ValidateMasternode.
+func (b *EthAPIBackend) ValidateMasternode() (authorised, known bool, err error) {
 	return b.eth.ValidateMasternode()
 }
 

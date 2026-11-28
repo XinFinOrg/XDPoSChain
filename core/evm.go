@@ -25,6 +25,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
+	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/holiman/uint256"
 )
 
@@ -57,6 +58,8 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 	// since xdpos chain do not use difficulty and mixdigest, we use hash of the block number as random
 	// NOTE: random is predictable, do not use it in real business
 	random = crypto.Keccak256Hash(header.Number.Bytes())
+	// EIP-7843: a slot is a block on this chain, so the header number is the
+	// slot number and SLOTNUM needs no header field (docs/adr/0006-define-slot-number-as-block-number.md).
 	return vm.BlockContext{
 		CanTransfer: CanTransfer,
 		Transfer:    Transfer,
@@ -68,6 +71,7 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 		BaseFee:     baseFee,
 		GasLimit:    header.GasLimit,
 		Random:      &random,
+		SlotNum:     header.Number.Uint64(),
 	}
 }
 
@@ -124,9 +128,13 @@ func CanTransfer(db vm.StateDB, addr common.Address, amount *uint256.Int) bool {
 	return amount.CmpBig(db.GetBalance(addr)) <= 0
 }
 
-// Transfer subtracts amount from sender and adds amount to recipient using the given Db
-func Transfer(db vm.StateDB, sender, recipient common.Address, amount *uint256.Int) {
+// Transfer subtracts amount from sender and adds amount to recipient using the given Db,
+// emitting an EIP-7708 transfer log for the moved amount from Amsterdam onwards.
+func Transfer(db vm.StateDB, sender, recipient common.Address, amount *uint256.Int, rules *params.Rules) {
 	amtBig := amount.ToBig()
 	db.SubBalance(sender, amtBig, tracing.BalanceChangeTransfer)
 	db.AddBalance(recipient, amtBig, tracing.BalanceChangeTransfer)
+	if rules.IsAmsterdam && !amount.IsZero() && sender != recipient {
+		db.AddLog(types.EthTransferLog(sender, recipient, amtBig))
+	}
 }

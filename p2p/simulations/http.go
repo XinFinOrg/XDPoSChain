@@ -34,7 +34,6 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/p2p/simulations/adapters"
 	"github.com/XinFinOrg/XDPoSChain/rpc"
 	"github.com/gorilla/websocket"
-	"github.com/julienschmidt/httprouter"
 )
 
 // DefaultClient is the default simulation API client which expects the API
@@ -263,7 +262,8 @@ func (c *Client) Send(method, path string, in, out interface{}) error {
 
 // Server is an HTTP server providing an API to manage a simulation network
 type Server struct {
-	router     *httprouter.Router
+	router     *http.ServeMux
+	options    http.HandlerFunc // handler for OPTIONS requests on any path
 	network    *Network
 	mockerStop chan struct{} // when set, stops the current mocker
 	mockerMtx  sync.Mutex    // synchronises access to the mockerStop field
@@ -272,7 +272,7 @@ type Server struct {
 // NewServer returns a new simulation API server
 func NewServer(network *Network) *Server {
 	s := &Server{
-		router:  httprouter.New(),
+		router:  http.NewServeMux(),
 		network: network,
 	}
 
@@ -378,6 +378,21 @@ func (s *Server) ResetNetwork(w http.ResponseWriter, req *http.Request) {
 
 // StreamNetworkEvents streams network events as a server-sent-events stream
 func (s *Server) StreamNetworkEvents(w http.ResponseWriter, req *http.Request) {
+	// check if filtering has been requested
+	var filters MsgFilters
+	if filterParam := req.URL.Query().Get("filter"); filterParam != "" {
+		var err error
+		filters, err = NewMsgFilters(filterParam)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if req.Method == http.MethodHead {
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	events := make(chan *Event)
 	sub := s.network.events.Subscribe(events)
 	defer sub.Unsubscribe()
@@ -404,17 +419,6 @@ func (s *Server) StreamNetworkEvents(w http.ResponseWriter, req *http.Request) {
 	}
 	writeErr := func(err error) {
 		write("error", err.Error())
-	}
-
-	// check if filtering has been requested
-	var filters MsgFilters
-	if filterParam := req.URL.Query().Get("filter"); filterParam != "" {
-		var err error
-		filters, err = NewMsgFilters(filterParam)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -654,6 +658,10 @@ var wsUpgrade = websocket.Upgrader{
 // NodeRPC forwards RPC requests to a node in the network via a WebSocket
 // connection
 func (s *Server) NodeRPC(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		http.Error(w, "websocket upgrade requires GET", http.StatusMethodNotAllowed)
+		return
+	}
 	conn, err := wsUpgrade.Upgrade(w, req, nil)
 	if err != nil {
 		return
@@ -664,29 +672,61 @@ func (s *Server) NodeRPC(w http.ResponseWriter, req *http.Request) {
 }
 
 // ServeHTTP implements the http.Handler interface by delegating to the
-// underlying httprouter.Router
+// underlying http.ServeMux, with OPTIONS requests handled globally.
 func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method == http.MethodOptions {
+		if s.options != nil {
+			s.wrapHandler(s.options)(w, req)
+		}
+		return
+	}
 	s.router.ServeHTTP(w, req)
 }
 
 // GET registers a handler for GET requests to a particular path
 func (s *Server) GET(path string, handle http.HandlerFunc) {
-	s.router.GET(path, s.wrapHandler(handle))
+	s.router.HandleFunc("GET "+muxPath(path), s.wrapHandler(handle))
 }
 
 // POST registers a handler for POST requests to a particular path
 func (s *Server) POST(path string, handle http.HandlerFunc) {
-	s.router.POST(path, s.wrapHandler(handle))
+	s.router.HandleFunc("POST "+muxPath(path), s.wrapHandler(handle))
 }
 
 // DELETE registers a handler for DELETE requests to a particular path
 func (s *Server) DELETE(path string, handle http.HandlerFunc) {
-	s.router.DELETE(path, s.wrapHandler(handle))
+	s.router.HandleFunc("DELETE "+muxPath(path), s.wrapHandler(handle))
 }
 
-// OPTIONS registers a handler for OPTIONS requests to a particular path
+// OPTIONS registers a handler for OPTIONS requests on any path.
+//
+// The path argument is ignored and only kept for signature compatibility:
+// ServeHTTP answers OPTIONS requests before routing, so that a request to an
+// unknown path is answered instead of being turned into a 405 by the mux.
 func (s *Server) OPTIONS(path string, handle http.HandlerFunc) {
-	s.router.OPTIONS("/*path", s.wrapHandler(handle))
+	s.options = handle
+}
+
+// muxPath converts a path pattern with ":name" parameters into the net/http
+// ServeMux pattern syntax ("{name}") and turns a trailing slash into an exact
+// match ("{$}"), the behaviour httprouter had.
+// The httprouter catch-all syntax ("*name") is rejected, because ServeMux would
+// take it as a literal segment and register a route that never matches.
+func muxPath(path string) string {
+	parts := strings.Split(path, "/")
+	for i, part := range parts {
+		switch {
+		case strings.HasPrefix(part, ":"):
+			parts[i] = "{" + part[1:] + "}"
+		case strings.HasPrefix(part, "*"):
+			panic(fmt.Sprintf("muxPath: catch-all pattern %q is not supported by net/http ServeMux", path))
+		}
+	}
+	pattern := strings.Join(parts, "/")
+	if strings.HasSuffix(path, "/") {
+		pattern += "{$}"
+	}
+	return pattern
 }
 
 // JSON sends "data" as a JSON HTTP response
@@ -696,16 +736,16 @@ func (s *Server) JSON(w http.ResponseWriter, status int, data interface{}) {
 	json.NewEncoder(w).Encode(data)
 }
 
-// wrapHandler returns an httprouter.Handle which wraps an http.HandlerFunc by
-// populating request.Context with any objects from the URL params
-func (s *Server) wrapHandler(handler http.HandlerFunc) httprouter.Handle {
-	return func(w http.ResponseWriter, req *http.Request, params httprouter.Params) {
+// wrapHandler returns an http.HandlerFunc which wraps a handler by populating
+// request.Context with any objects from the URL params
+func (s *Server) wrapHandler(handler http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 
 		ctx := req.Context()
 
-		if id := params.ByName("nodeid"); id != "" {
+		if id := req.PathValue("nodeid"); id != "" {
 			var nodeID enode.ID
 			var node *Node
 			if nodeID.UnmarshalText([]byte(id)) == nil {
@@ -721,7 +761,7 @@ func (s *Server) wrapHandler(handler http.HandlerFunc) httprouter.Handle {
 			ctx = context.WithValue(ctx, "node", node)
 		}
 
-		if id := params.ByName("peerid"); id != "" {
+		if id := req.PathValue("peerid"); id != "" {
 			var peerID enode.ID
 			var peer *Node
 			if peerID.UnmarshalText([]byte(id)) == nil {

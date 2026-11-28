@@ -122,7 +122,8 @@ func (t *VMTest) Run(vmconfig vm.Config) error {
 func (t *VMTest) exec(statedb *state.StateDB, vmconfig vm.Config) ([]byte, uint64, error) {
 	evm := t.newEVM(statedb, vmconfig)
 	e := t.json.Exec
-	return evm.Call(e.Caller, e.Address, e.Data, e.GasLimit, uint256.MustFromBig(e.Value))
+	ret, leftOverGas, err := evm.Call(e.Caller, e.Address, e.Data, vm.NewGasBudget(e.GasLimit), uint256.MustFromBig(e.Value))
+	return ret, leftOverGas.RegularGas, err
 }
 
 func (t *VMTest) newEVM(statedb *state.StateDB, vmconfig vm.Config) *vm.EVM {
@@ -134,7 +135,7 @@ func (t *VMTest) newEVM(statedb *state.StateDB, vmconfig vm.Config) *vm.EVM {
 		}
 		return core.CanTransfer(db, address, amount)
 	}
-	transfer := func(db vm.StateDB, sender, recipient common.Address, amount *uint256.Int) {}
+	transfer := func(db vm.StateDB, sender, recipient common.Address, amount *uint256.Int, rules *params.Rules) {}
 	txContext := vm.TxContext{
 		Origin:   t.json.Exec.Origin,
 		GasPrice: t.json.Exec.GasPrice,
@@ -148,6 +149,7 @@ func (t *VMTest) newEVM(statedb *state.StateDB, vmconfig vm.Config) *vm.EVM {
 		Time:        t.json.Env.Timestamp,
 		GasLimit:    t.json.Env.GasLimit,
 		Difficulty:  t.json.Env.Difficulty,
+		SlotNum:     t.json.Env.Number,
 	}
 	chainConfig := t.chainConfig
 	if chainConfig == nil {

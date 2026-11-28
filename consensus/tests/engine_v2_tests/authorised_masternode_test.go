@@ -13,6 +13,7 @@ import (
 
 // TestIsAuthorisedMNForConsensusV2 tests is authorised mn for consensus v 2.
 func TestIsAuthorisedMNForConsensusV2(t *testing.T) {
+	t.Parallel()
 	// we skip test for v1 since it's hard to make a real genesis block
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 901, params.TestXDPoSMockChainConfig, nil)
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
@@ -34,19 +35,21 @@ func TestIsAuthorisedMNForConsensusV2(t *testing.T) {
 
 // TestIsYourTurnConsensusV2 tests is your turn consensus v 2.
 func TestIsYourTurnConsensusV2(t *testing.T) {
-	skipLongInShortMode(t)
+	t.Parallel()
 	// we skip test for v1 since it's hard to make a real genesis block
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 900, params.TestXDPoSMockChainConfig, nil)
-	minePeriod := params.UnitTestV2Configs[0].MinePeriod
+	minePeriod := blockchain.Config().XDPoS.V2.GetCurrentConfig().MinePeriod
 	adaptor := blockchain.Engine().(*XDPoS.XDPoS)
 	blockNum := 901
 	blockCoinBase := "0x111000000000000000000000000000000123"
 	currentBlock = CreateBlock(blockchain, params.TestXDPoSMockChainConfig, currentBlock, blockNum, 1, blockCoinBase, signer, signFn, nil, nil, "")
 	currentBlockHeader := currentBlock.Header()
-	currentBlockHeader.Time = uint64(time.Now().Unix())
 	err := blockchain.InsertBlock(currentBlock)
 	assert.Nil(t, err)
 	adaptor.Initial(blockchain, currentBlockHeader)
+	now := time.Now()
+	time.Sleep(now.Truncate(time.Second).Add(time.Second).Sub(now))
+	currentBlockHeader.Time = uint64(time.Now().Unix())
 
 	// Less then Mine Period
 	isYourTurn, err := adaptor.YourTurn(blockchain, currentBlockHeader, common.HexToAddress("xdc0D3ab14BBaD3D99F4203bd7a11aCB94882050E7e"))
@@ -87,7 +90,7 @@ func TestIsYourTurnConsensusV2(t *testing.T) {
 
 // TestIsYourTurnConsensusV2CrossConfig tests is your turn consensus v 2 cross config.
 func TestIsYourTurnConsensusV2CrossConfig(t *testing.T) {
-	skipLongInShortMode(t)
+	t.Parallel()
 	// we skip test for v1 since it's hard to make a real genesis block
 	blockchain, _, currentBlock, signer, signFn, _ := PrepareXDCTestBlockChainForV2Engine(t, 909, params.TestXDPoSMockChainConfig, nil)
 	firstMinePeriod := blockchain.Config().XDPoS.V2.CurrentConfig.MinePeriod

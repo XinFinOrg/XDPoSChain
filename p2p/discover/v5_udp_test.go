@@ -25,14 +25,17 @@ import (
 	"net"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/internal/testlog"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p/discover/v5wire"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enr"
+	"github.com/XinFinOrg/XDPoSChain/p2p/netutil"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
@@ -109,7 +112,7 @@ func startLocalhostV5(t *testing.T, cfg Config) *UDPv5 {
 
 // This test checks that incoming PING calls are handled correctly.
 func TestUDPv5_pingHandling(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPV5Test(t)
@@ -128,7 +131,7 @@ func TestUDPv5_pingHandling(t *testing.T) {
 
 // This test checks that incoming 'unknown' packets trigger the handshake.
 func TestUDPv5_unknownPacket(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPV5Test(t)
@@ -166,7 +169,7 @@ func TestUDPv5_unknownPacket(t *testing.T) {
 
 // This test checks that incoming FINDNODE calls are handled correctly.
 func TestUDPv5_findnodeHandling(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPV5Test(t)
@@ -246,7 +249,7 @@ func (test *udpV5Test) expectNodes(wantReqID []byte, wantTotal uint8, wantNodes 
 
 // This test checks that outgoing PING calls work.
 func TestUDPv5_pingCall(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPV5Test(t)
@@ -294,6 +297,7 @@ func TestUDPv5_pingCall(t *testing.T) {
 // This test checks that outgoing FINDNODE calls work and multiple NODES
 // replies are aggregated.
 func TestUDPv5_findnodeCall(t *testing.T) {
+	testshort.Skip(t)
 	t.Parallel()
 	test := newUDPV5Test(t)
 	defer test.close()
@@ -343,6 +347,7 @@ func TestUDPv5_findnodeCall(t *testing.T) {
 
 // This test checks that pending calls are re-sent when a handshake happens.
 func TestUDPv5_callResend(t *testing.T) {
+	testshort.Skip(t)
 	t.Parallel()
 	test := newUDPV5Test(t)
 	defer test.close()
@@ -380,7 +385,7 @@ func TestUDPv5_callResend(t *testing.T) {
 
 // This test ensures we don't allow multiple rounds of WHOAREYOU for a single call.
 func TestUDPv5_multipleHandshakeRounds(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPV5Test(t)
@@ -408,7 +413,7 @@ func TestUDPv5_multipleHandshakeRounds(t *testing.T) {
 
 // This test checks that calls with n replies may take up to n * respTimeout.
 func TestUDPv5_callTimeoutReset(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPV5Test(t)
@@ -449,6 +454,7 @@ func TestUDPv5_callTimeoutReset(t *testing.T) {
 
 // This test checks that TALKREQ calls the registered handler function.
 func TestUDPv5_talkHandling(t *testing.T) {
+	testshort.Skip(t)
 	t.Parallel()
 	test := newUDPV5Test(t)
 	defer test.close()
@@ -499,7 +505,7 @@ func TestUDPv5_talkHandling(t *testing.T) {
 
 // This test checks that outgoing TALKREQ calls work.
 func TestUDPv5_talkRequest(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPV5Test(t)
@@ -542,7 +548,7 @@ func TestUDPv5_talkRequest(t *testing.T) {
 
 // This test checks that lookup works.
 func TestUDPv5_lookup(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPV5Test(t)
@@ -621,7 +627,7 @@ func TestUDPv5_LocalNode(t *testing.T) {
 }
 
 func TestUDPv5_PingWithIPV4MappedAddress(t *testing.T) {
-	skipLongInShortMode(t)
+	testshort.Skip(t)
 	t.Parallel()
 
 	test := newUDPV5Test(t)
@@ -835,5 +841,44 @@ func (test *udpV5Test) close() {
 	}
 	if len(test.pipe.queue) != 0 {
 		test.t.Fatalf("%d unmatched UDP packets in queue", len(test.pipe.queue))
+	}
+}
+
+// This test checks that node records in discovery responses are rejected
+// when they fall outside the netrestrict list.
+func TestUDPv5_verifyResponseNodeNetRestrict(t *testing.T) {
+	restrict, err := netutil.ParseNetlist("10.0.0.0/8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	udp := startLocalhostV5(t, Config{NetRestrict: restrict})
+	defer udp.Close()
+
+	call := &callV5{node: udp.Self()}
+	for _, tt := range []struct {
+		ip      net.IP
+		wantErr bool
+	}{
+		{net.IP{10, 1, 2, 3}, false},
+		{net.IP{192, 168, 1, 1}, true},
+	} {
+		var rec enr.Record
+		rec.Set(enr.IP(tt.ip))
+		rec.Set(enr.UDP(30303))
+		if err := enode.SignV4(&rec, newkey()); err != nil {
+			t.Fatal(err)
+		}
+		got, err := udp.verifyResponseNode(call, &rec, nil, make(map[enode.ID]struct{}))
+		if tt.wantErr {
+			if err == nil {
+				t.Errorf("IP %v: expected netrestrict error, got node %v", tt.ip, got.ID())
+			} else if !strings.Contains(err.Error(), "netrestrict") {
+				t.Errorf("IP %v: unexpected error: %v", tt.ip, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("IP %v: unexpected error: %v", tt.ip, err)
+		}
 	}
 }

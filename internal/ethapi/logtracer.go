@@ -39,13 +39,20 @@ var (
 // - call value
 // - self destructs
 //
-// The log format for a transfer is:
-// - address: 0x0000000000000000000000000000000000000000
+// From Amsterdam onwards the protocol emits these itself (EIP-7708), so the
+// caller turns the synthesis off and the transfer logs arrive through the OnLog
+// hook instead; the list above only describes the pre-fork behaviour.
+//
+// The log format for a synthesized transfer is:
+// - address: 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE (ERC-7528)
 // - data: Value
 // - topics:
 //   - Transfer(address,address,uint256)
 //   - Sender address
 //   - Recipient address
+//
+// The protocol logs that replace the synthesis from Amsterdam onwards carry
+// params.SystemAddress as their emitter instead.
 type tracer struct {
 	// logs keeps logs for all open call frames.
 	// This lets us clear logs for failed calls.
@@ -78,7 +85,7 @@ func (t *tracer) Hooks() *tracing.Hooks {
 
 func (t *tracer) onEnter(depth int, typ byte, from common.Address, to common.Address, input []byte, gas uint64, value *big.Int) {
 	t.logs = append(t.logs, make([]*types.Log, 0))
-	if vm.OpCode(typ) != vm.DELEGATECALL && value != nil && value.Cmp(common.Big0) > 0 {
+	if vm.OpCode(typ) != vm.DELEGATECALL && vm.OpCode(typ) != vm.CALLCODE && value != nil && value.Cmp(common.Big0) > 0 {
 		t.captureTransfer(from, to, value)
 	}
 }
@@ -97,14 +104,17 @@ func (t *tracer) onExit(depth int, output []byte, gasUsed uint64, err error, rev
 	t.logs = t.logs[:size-1]
 	size--
 
-	// Clear logs if call failed.
-	if !reverted {
+	// Clear logs if call failed. They are the latest logs, so their indices are free again.
+	if reverted {
+		t.count -= len(call)
+	} else {
 		t.logs[size-1] = append(t.logs[size-1], call...)
 	}
 }
 
 func (t *tracer) onEnd(reverted bool) {
 	if reverted {
+		t.count -= len(t.logs[0])
 		t.logs[0] = nil
 	}
 }

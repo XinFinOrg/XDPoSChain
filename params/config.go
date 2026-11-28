@@ -577,7 +577,9 @@ var chainConfigMandatoryXDCForkFields = []string{"TIPTRC21FeeBlock", "Gas50xBloc
 // stays open to startup hydration, which refills the slots the backfill source
 // declares, and only an explicit null is authoritative on either path. The
 // re-validation runs without hints, which is also what keeps the hint
-// computation from recursing.
+// computation from recursing. It also skips the XDPoS schedule judgement: the
+// schedule is independent of the fork slots, so an invalid one must not hide
+// the removal a fork-order error names.
 func chainConfigForkOrderSlotCanBeDropped(cfg *ChainConfig, name string) bool {
 	if cfg == nil {
 		return false
@@ -588,19 +590,21 @@ func chainConfigForkOrderSlotCanBeDropped(cfg *ChainConfig, name string) bool {
 	}
 	cleared := cfg.Clone()
 	field.set(cleared, nil)
-	return cleared.checkConfigForkOrder(false) == nil
+	return cleared.checkConfigForkOrder(false, true) == nil
 }
 
 // CheckConfigForkOrder validates that configured forks, required addresses, and
 // XDPoS settings are internally consistent and activate in a supported order.
 func (c *ChainConfig) CheckConfigForkOrder() error {
-	return c.checkConfigForkOrder(true)
+	return c.checkConfigForkOrder(true, false)
 }
 
 // checkConfigForkOrder implements CheckConfigForkOrder. Fork-order errors carry
 // a repair hint only when withHints is set; the droppable-slot check evaluates
-// candidate repairs by calling this with hints off.
-func (c *ChainConfig) checkConfigForkOrder(withHints bool) error {
+// candidate repairs by calling this with hints off. skipXDPoSSchedule drops the
+// schedule judgement for that probe: the schedule is independent of the fork
+// slots, so an invalid one must not hide the removal a fork-order error names.
+func (c *ChainConfig) checkConfigForkOrder(withHints, skipXDPoSSchedule bool) error {
 	type fork struct {
 		name     string
 		block    *big.Int
@@ -780,8 +784,17 @@ func (c *ChainConfig) checkConfigForkOrder(withHints bool) error {
 		if !sameV2RuntimeConfig(currentCfg, c.XDPoS.V2.CurrentConfig) {
 			return fmt.Errorf("invalid chain config: %w: %s", ErrWrongForkSwitchOrder, "XDPoS.V2.CurrentConfig")
 		}
-		if c.XDPoS.Epoch != 0 && c.XDPoS.V2.SwitchBlock.Uint64()%c.XDPoS.Epoch != 0 {
-			return fmt.Errorf("invalid chain config: %w: XDPoS.V2.SwitchBlock %v not aligned to XDPoS.Epoch %d", ErrWrongForkSwitchOrder, c.XDPoS.V2.SwitchBlock, c.XDPoS.Epoch)
+		// The schedule is judged first: the bound proves Epoch >= 2, so the
+		// alignment check below divides by an epoch that cannot be zero. The
+		// droppable-slot probe skips both: a schedule is independent of the fork
+		// slots, so it must not erase the repair a fork-order error names.
+		if !skipXDPoSSchedule {
+			if err := c.XDPoS.CheckSchedule(); err != nil {
+				return fmt.Errorf("invalid chain config: %w", err)
+			}
+			if err := CheckSwitchBlockAlignment(c.XDPoS.V2.SwitchBlock, c.XDPoS.Epoch); err != nil {
+				return fmt.Errorf("invalid chain config: %w", err)
+			}
 		}
 	}
 	return nil
@@ -890,6 +903,9 @@ func (c *ChainConfig) String() string {
 	if c.TIPUpgradePenaltyBlock != nil {
 		result += fmt.Sprintf(", TIPUpgradePenalty: %v", c.TIPUpgradePenaltyBlock)
 	}
+	if c.TIPProportionalRewardBlock != nil {
+		result += fmt.Sprintf(", TIPProportionalReward: %v", c.TIPProportionalRewardBlock)
+	}
 	if c.PragueBlock != nil {
 		result += fmt.Sprintf(", Prague: %v", c.PragueBlock)
 	}
@@ -901,9 +917,6 @@ func (c *ChainConfig) String() string {
 	}
 	if c.TIPEpochHalvingBlock != nil {
 		result += fmt.Sprintf(", TIPEpochHalving: %v", c.TIPEpochHalvingBlock)
-	}
-	if c.TIPProportionalRewardBlock != nil {
-		result += fmt.Sprintf(", TIPProportionalReward: %v", c.TIPProportionalRewardBlock)
 	}
 	if !c.TRC21IssuerSMC.IsZero() {
 		result += fmt.Sprintf(", TRC21IssuerSMC: %s", c.TRC21IssuerSMC.Hex())
@@ -980,11 +993,11 @@ func (c *ChainConfig) Description() string {
 	banner += fmt.Sprintf("  - DynamicGasLimit:             %-8v\n", c.DynamicGasLimitBlock)
 	banner += fmt.Sprintf("  - TIPFixedReward:              %-8v\n", c.TIPFixedRewardBlock)
 	banner += fmt.Sprintf("  - TIPUpgradePenalty:           %-8v\n", c.TIPUpgradePenaltyBlock)
+	banner += fmt.Sprintf("  - TIPProportionalReward:       %-8v\n", c.TIPProportionalRewardBlock)
 	banner += fmt.Sprintf("  - Prague:                      %-8v\n", c.PragueBlock)
 	banner += fmt.Sprintf("  - Osaka:                       %-8v\n", c.OsakaBlock)
 	banner += fmt.Sprintf("  - Amsterdam:                   %-8v\n", c.AmsterdamBlock)
 	banner += fmt.Sprintf("  - TIPEpochHalving:             %-8v\n", c.TIPEpochHalvingBlock)
-	banner += fmt.Sprintf("  - TIPProportionalReward:       %-8v\n", c.TIPProportionalRewardBlock)
 	banner += fmt.Sprintf("  - TRC21IssuerSMC:              %-8s\n", c.TRC21IssuerSMC)
 	banner += fmt.Sprintf("  - XDCXListingSMC:              %-8s\n", c.XDCXListingSMC)
 	banner += fmt.Sprintf("  - RelayerRegistrationSMC:      %-8s\n", c.RelayerRegistrationSMC)

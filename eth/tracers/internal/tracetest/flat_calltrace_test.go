@@ -90,6 +90,7 @@ func flatCallTracerTestRunner(tracerName string, filename string, dirPath string
 		Transfer:    core.Transfer,
 		Coinbase:    test.Context.Miner,
 		BlockNumber: new(big.Int).SetUint64(uint64(test.Context.Number)),
+		SlotNum:     uint64(test.Context.Number),
 		Time:        uint64(test.Context.Time),
 		Difficulty:  (*big.Int)(test.Context.Difficulty),
 		GasLimit:    uint64(test.Context.GasLimit),

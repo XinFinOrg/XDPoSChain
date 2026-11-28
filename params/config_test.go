@@ -19,9 +19,11 @@ package params
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"math/big"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -532,6 +534,30 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			t.Fatalf("unexpected error string: %v", err)
 		}
 	})
+	t.Run("fork order hint survives an invalid schedule", func(t *testing.T) {
+		// Both errors are present. The hint belongs to the fork-order error, so
+		// the schedule - which no fork slot can repair - must not remove it.
+		cfg := &ChainConfig{
+			ChainID:                  big.NewInt(1234),
+			TIPTRC21FeeBlock:         big.NewInt(0),
+			Gas50xBlock:              big.NewInt(20),
+			TIPXDCXMinerDisableBlock: big.NewInt(10),
+			TRC21IssuerSMC:           TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:           TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC:   TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC:   TestnetChainConfig.LendingRegistrationSMC,
+			XDPoS:                    TestXDPoSMockChainConfig.XDPoS.Clone(),
+		}
+		cfg.XDPoS.Gap = 0
+
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if err == nil || !strings.Contains(err.Error(), `, or set "tipXDCXMinerDisableBlock" to null in the chain config`) {
+			t.Fatalf("fork-order hint missing: %v", err)
+		}
+	})
 	t.Run("gas2500x block requires gas50x block", func(t *testing.T) {
 		cfg := &ChainConfig{
 			ChainID:                big.NewInt(1234),
@@ -849,9 +875,9 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 				V2: &V2{
 					SwitchEpoch:   1,
 					SwitchBlock:   big.NewInt(900),
-					CurrentConfig: &V2Config{SwitchRound: 0, MinePeriod: 3, TimeoutPeriod: 10},
+					CurrentConfig: &V2Config{SwitchRound: 0, MinePeriod: 3, TimeoutPeriod: 10, ExpTimeoutConfig: ExpTimeoutConfig{Base: 1}},
 					AllConfigs: map[uint64]*V2Config{
-						0: {SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10},
+						0: {SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10, ExpTimeoutConfig: ExpTimeoutConfig{Base: 1}},
 					},
 				},
 			},
@@ -875,14 +901,15 @@ func TestChainConfigValidateForStartup(t *testing.T) {
 			LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
 			XDPoS: &XDPoSConfig{
 				Epoch:                900,
+				Gap:                  450,
 				FoundationWalletAddr: TestnetChainConfig.XDPoS.FoundationWalletAddr,
 				MaxMasternodesV2:     108,
 				V2: &V2{
 					SwitchEpoch:   1,
 					SwitchBlock:   big.NewInt(901),
-					CurrentConfig: &V2Config{SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10},
+					CurrentConfig: &V2Config{SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10, ExpTimeoutConfig: ExpTimeoutConfig{Base: 1}},
 					AllConfigs: map[uint64]*V2Config{
-						0: {SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10},
+						0: {SwitchRound: 0, MinePeriod: 2, TimeoutPeriod: 10, ExpTimeoutConfig: ExpTimeoutConfig{Base: 1}},
 					},
 				},
 			},
@@ -1391,7 +1418,7 @@ func TestXDCNetworkConfigsGatherForks(t *testing.T) {
 		{
 			name:   "DevnetChainConfig",
 			config: DevnetChainConfig,
-			want:   []uint64{2700, 25000, 50000},
+			want:   []uint64{2700, 25000, 50000, 1218600},
 		},
 	}
 
@@ -1829,10 +1856,11 @@ func TestChainConfigStringIncludesAllFields(t *testing.T) {
 // plus TIP2019 and DAOFork - along with the Constantinople/Petersburg/Istanbul
 // trio that #2777 moved after TIPXDCXCancellationFee, that anchor slot (without
 // which the trio's position relative to it is not pinned), the TIPTRC21Fee slot
-// that follows the trio, TIPEpochHalving, and TIPProportionalReward, the last
-// pinned field in fork order. The expected order is read off
-// chainConfigForkOrderFields, so a later renumbering carries the expectation
-// with it instead of leaving the renderings behind.
+// that follows the trio, and TIPEpochHalving, the last pinned field in fork
+// order. TIPProportionalRewardBlock is not pinned: it sits outside the linear
+// order, so no fork position constrains where it renders. The expected order is
+// read off chainConfigForkOrderFields, so a later renumbering carries the
+// expectation with it instead of leaving the renderings behind.
 func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
 	pinned := map[string]struct{}{
 		"TIP2019Block":                {},
@@ -1849,7 +1877,6 @@ func TestChainConfigRenderingFollowsForkOrder(t *testing.T) {
 		"OsakaBlock":                  {},
 		"AmsterdamBlock":              {},
 		"TIPEpochHalvingBlock":        {},
-		"TIPProportionalRewardBlock":  {},
 	}
 	var want []string
 	for _, field := range chainConfigForkOrderFields {
@@ -2068,4 +2095,167 @@ func TestActiveSystemContractsTracksXDCActivationBlocks(t *testing.T) {
 			assert.Equal(t, test.want, config.ActiveSystemContracts(test.block))
 		})
 	}
+}
+
+// expTimeoutTestChainConfig builds an XDC chain config that satisfies every
+// CheckConfigForkOrder requirement except the exponential timeout bounds under
+// test, so the validation reaches the checks this test targets.
+func expTimeoutTestChainConfig(timeoutPeriod int, base float64, maxExponent uint8) *ChainConfig {
+	newV2Config := func() *V2Config {
+		return &V2Config{
+			SwitchRound:   0,
+			MinePeriod:    2,
+			TimeoutPeriod: timeoutPeriod,
+			ExpTimeoutConfig: ExpTimeoutConfig{
+				Base:        base,
+				MaxExponent: maxExponent,
+			},
+		}
+	}
+	return &ChainConfig{
+		ChainID:                big.NewInt(1234),
+		TIPTRC21FeeBlock:       big.NewInt(0),
+		Gas50xBlock:            big.NewInt(0),
+		TRC21IssuerSMC:         TestnetChainConfig.TRC21IssuerSMC,
+		XDCXListingSMC:         TestnetChainConfig.XDCXListingSMC,
+		RelayerRegistrationSMC: TestnetChainConfig.RelayerRegistrationSMC,
+		LendingRegistrationSMC: TestnetChainConfig.LendingRegistrationSMC,
+		XDPoS: &XDPoSConfig{
+			Epoch:                900,
+			Gap:                  450,
+			FoundationWalletAddr: TestnetChainConfig.XDPoS.FoundationWalletAddr,
+			MaxMasternodesV2:     108,
+			V2: &V2{
+				SwitchEpoch:   1,
+				SwitchBlock:   big.NewInt(900),
+				CurrentConfig: newV2Config(),
+				AllConfigs: map[uint64]*V2Config{
+					0: newV2Config(),
+				},
+			},
+		},
+	}
+}
+
+// TestValidateV2ExpTimeoutConfigDurationRange checks the bounds of the
+// exponential timeout: a product outside time.Duration is rejected because the
+// countdown would otherwise saturate at math.MaxInt64 and never fire, and a
+// non-positive period or a shrinking base is rejected because the timer would
+// otherwise fire immediately and retrigger itself.
+func TestValidateV2ExpTimeoutConfigDurationRange(t *testing.T) {
+	const (
+		v2ConfigPath   = "XDPoS.V2.CurrentConfig"
+		expTimeoutPath = v2ConfigPath + ".ExpTimeoutConfig"
+	)
+	tests := []struct {
+		name        string
+		timeout     int64
+		base        float64
+		maxExponent uint8
+		wantErr     bool
+		wantErrMsg  string
+		wantPath    string
+	}{
+		{name: "built-in network shape", timeout: 30, base: 1, maxExponent: 0},
+		{name: "base above one at zero exponent", timeout: 30, base: 1.5, maxExponent: 0},
+		// A base below one never reaches the multiplier while maxExponent is
+		// zero, so legacy custom configs that omit expTimeoutConfig keep
+		// validating.
+		{name: "zero base at zero exponent", timeout: 30, base: 0, maxExponent: 0},
+		{name: "fractional base at zero exponent", timeout: 30, base: 0.5, maxExponent: 0},
+		{name: "largest timeout still fits", timeout: 59, base: 2, maxExponent: 27},
+		// At the exact product boundary the timeout is representable and must
+		// be accepted: 3e9 ns * 3074457345 == 9223372035000000000 <= MaxInt64.
+		{name: "largest product fits at the exact boundary", timeout: 3, base: 3074457345, maxExponent: 1},
+		{name: "largest timeout overflows", timeout: 59, base: 2, maxExponent: 28, wantErr: true, wantErrMsg: "time.Duration range", wantPath: expTimeoutPath},
+		{name: "long period with large exponent", timeout: 30, base: 2, maxExponent: 30, wantErr: true, wantErrMsg: "time.Duration range", wantPath: expTimeoutPath},
+		// A non-positive period makes the timer fire immediately; a base below
+		// one truncates the multiplier to zero once an exponent can occur.
+		// Either way the timer retriggers itself after every timeout.
+		{name: "zero timeout period", timeout: 0, base: 1, maxExponent: 0, wantErr: true, wantErrMsg: "must be positive", wantPath: v2ConfigPath},
+		{name: "negative timeout period", timeout: -5, base: 1, maxExponent: 0, wantErr: true, wantErrMsg: "must be positive", wantPath: v2ConfigPath},
+		{name: "zero base", timeout: 30, base: 0, maxExponent: 1, wantErr: true, wantErrMsg: "must be at least 1 when max_exponent is", wantPath: expTimeoutPath},
+		{name: "fractional base", timeout: 30, base: 0.5, maxExponent: 3, wantErr: true, wantErrMsg: "must be at least 1 when max_exponent is", wantPath: expTimeoutPath},
+		{name: "negative base", timeout: 30, base: -2, maxExponent: 1, wantErr: true, wantErrMsg: "must be at least 1 when max_exponent is", wantPath: expTimeoutPath},
+		// The engine converts the period to nanoseconds before applying
+		// base^exp, so the conversion can overflow on its own.
+		{name: "period conversion overflows", timeout: 18_000_000_000, base: 1, maxExponent: 0, wantErr: true, wantErrMsg: "time.Duration range", wantPath: v2ConfigPath},
+		{name: "period conversion boundary still fits", timeout: 9_223_372_036, base: 1, maxExponent: 0},
+		{name: "period conversion boundary overflows", timeout: 9_223_372_037, base: 1, maxExponent: 0, wantErr: true, wantErrMsg: "time.Duration range", wantPath: v2ConfigPath},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.timeout > math.MaxInt32 && strconv.IntSize == 32 {
+				t.Skip("timeout_period exceeds the 32-bit int range")
+			}
+			cfg := expTimeoutTestChainConfig(int(test.timeout), test.base, test.maxExponent)
+			err := cfg.CheckConfigForkOrder()
+			if !test.wantErr {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrWrongForkSwitchOrder) {
+				t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+			}
+			if test.wantErrMsg == "" {
+				t.Fatalf("case %q sets wantErr without wantErrMsg", test.name)
+			}
+			if !strings.Contains(err.Error(), test.wantPath) {
+				t.Fatalf("error does not name the field: %v", err)
+			}
+			// v2ConfigPath is a prefix of expTimeoutPath, so a period-only
+			// error must also be checked against the longer path.
+			if test.wantPath == v2ConfigPath && strings.Contains(err.Error(), expTimeoutPath) {
+				t.Fatalf("period-only error names the timeout object: %v", err)
+			}
+			if !strings.Contains(err.Error(), test.wantErrMsg) {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+	t.Run("all configs entry is validated", func(t *testing.T) {
+		cfg := expTimeoutTestChainConfig(30, 1, 0)
+		cfg.XDPoS.V2.AllConfigs[10] = &V2Config{
+			SwitchRound:   10,
+			MinePeriod:    2,
+			TimeoutPeriod: 59,
+			ExpTimeoutConfig: ExpTimeoutConfig{
+				Base:        2,
+				MaxExponent: 28,
+			},
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if !strings.Contains(err.Error(), "XDPoS.V2.AllConfigs[10].ExpTimeoutConfig") {
+			t.Fatalf("error does not name the all-configs entry: %v", err)
+		}
+		if !strings.Contains(err.Error(), "time.Duration range") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+	t.Run("all configs entry rejects non-positive timeout", func(t *testing.T) {
+		cfg := expTimeoutTestChainConfig(30, 1, 0)
+		cfg.XDPoS.V2.AllConfigs[10] = &V2Config{
+			SwitchRound:   10,
+			MinePeriod:    2,
+			TimeoutPeriod: -5,
+			ExpTimeoutConfig: ExpTimeoutConfig{
+				Base: 1,
+			},
+		}
+		err := cfg.CheckConfigForkOrder()
+		if !errors.Is(err, ErrWrongForkSwitchOrder) {
+			t.Fatalf("unexpected error: have %v want %v", err, ErrWrongForkSwitchOrder)
+		}
+		if !strings.Contains(err.Error(), "XDPoS.V2.AllConfigs[10]: timeout_period") {
+			t.Fatalf("error does not name the all-configs entry: %v", err)
+		}
+		if !strings.Contains(err.Error(), "must be positive") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
 }

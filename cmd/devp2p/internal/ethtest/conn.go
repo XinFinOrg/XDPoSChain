@@ -9,21 +9,30 @@ import (
 	"time"
 
 	"github.com/XinFinOrg/XDPoSChain/common"
+	"github.com/XinFinOrg/XDPoSChain/core/forkid"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/crypto"
-	"github.com/XinFinOrg/XDPoSChain/eth"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/rlpx"
 	"github.com/XinFinOrg/XDPoSChain/rlp"
 )
 
 const (
-	ethProtoVersionXDpos2 uint = 100
+	// Local copy of the wire version the node states in eth/protocols/eth, kept
+	// here on purpose (see protocol.go)
+	ethProtoVersionXDpos2   uint = 100
+	ethProtoVersionXDpos164 uint = 164
+	ethProtoVersionXDpos166 uint = 166
 )
 
 const connTimeout = 2 * time.Second
 
-const statusMsgCode = eth.StatusMsg
+// A peer that keeps sending relay or ping frames must not keep the status
+// exchange alive forever
+const statusExchangeTimeout = 30 * time.Second
+
+const statusMsgCode = ethproto.StatusMsg
 
 var errDisc = errors.New("disconnect")
 
@@ -35,6 +44,17 @@ type statusPacket struct {
 	GenesisBlock    common.Hash
 }
 
+// Sixth fork-id field the node validates from xdc/164 on; xdc/100 keeps the
+// five-field shape
+type statusPacketFork struct {
+	ProtocolVersion uint32
+	NetworkId       uint64
+	TD              *big.Int
+	CurrentBlock    common.Hash
+	GenesisBlock    common.Hash
+	ForkID          forkid.ID
+}
+
 // Conn represents an individual RLPx connection used by ethtest.
 type Conn struct {
 	*rlpx.Conn
@@ -42,6 +62,10 @@ type Conn struct {
 	negotiatedProtoVersion uint
 	ourHighestProtoVersion uint
 	caps                   []p2p.Cap
+	// Reported by the node in status; live cases anchor on these instead of the
+	// fixture chain
+	remoteHead common.Hash
+	remoteTD   *big.Int
 }
 
 func (s *Suite) dial() (*Conn, error) {
@@ -108,7 +132,22 @@ func (c *Conn) negotiateEthProtocol(caps []p2p.Cap) {
 	c.negotiatedProtoVersion = highest
 }
 
-func (s *Suite) dialAndPeer(status *statusPacket) (*Conn, error) {
+// dialXdc166 appends xdc/166 after the RLPx handshake; caps feed the devp2p hello
+func (s *Suite) dialXdc166() (*Conn, error) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		return nil, err
+	}
+	conn, err := s.dialAs(key)
+	if err != nil {
+		return nil, err
+	}
+	conn.caps = append(conn.caps, p2p.Cap{Name: "eth", Version: ethProtoVersionXDpos166})
+	conn.ourHighestProtoVersion = ethProtoVersionXDpos166
+	return conn, nil
+}
+
+func (s *Suite) dialAndPeer(status interface{}) (*Conn, error) {
 	c, err := s.dial()
 	if err != nil {
 		return nil, err
@@ -120,7 +159,7 @@ func (s *Suite) dialAndPeer(status *statusPacket) (*Conn, error) {
 	return c, nil
 }
 
-func (c *Conn) peer(chain *Chain, status *statusPacket) error {
+func (c *Conn) peer(chain *Chain, status interface{}) error {
 	if err := c.handshake(); err != nil {
 		return fmt.Errorf("handshake failed: %v", err)
 	}
@@ -161,32 +200,64 @@ func (c *Conn) handshake() error {
 	return nil
 }
 
-func makeStatusPacket(chain *Chain, version uint) *statusPacket {
-	return &statusPacket{
+// From xdc/164 on the node validates the fork id, so the packet gains the
+// sixth field, derived from the same chain config the node runs
+func makeStatusPacket(chain *Chain, version uint) interface{} {
+	base := statusPacketFork{
 		ProtocolVersion: uint32(version),
 		NetworkId:       chain.config.ChainID.Uint64(),
 		TD:              chain.TD(),
 		CurrentBlock:    chain.Head().Hash(),
 		GenesisBlock:    chain.blocks[0].Hash(),
 	}
+	if version >= ethProtoVersionXDpos164 {
+		base.ForkID = forkid.NewID(chain.config, chain.blocks[0], chain.Head().NumberU64())
+		return &base
+	}
+	return &statusPacket{
+		ProtocolVersion: base.ProtocolVersion,
+		NetworkId:       base.NetworkId,
+		TD:              base.TD,
+		CurrentBlock:    base.CurrentBlock,
+		GenesisBlock:    base.GenesisBlock,
+	}
 }
 
-func (c *Conn) statusExchange(chain *Chain, status *statusPacket) error {
+func (c *Conn) statusExchange(chain *Chain, status interface{}) error {
 	statusCode := protoOffset(ethProto) + statusMsgCode
+	deadline := time.Now().Add(statusExchangeTimeout)
 forRead:
 	for {
+		if time.Now().After(deadline) {
+			return fmt.Errorf("status exchange did not complete within %s", statusExchangeTimeout)
+		}
 		code, data, err := c.Read()
 		if err != nil {
 			return fmt.Errorf("failed to read from connection: %w", err)
 		}
 		switch code {
 		case statusCode:
-			msg := new(statusPacket)
-			if err := rlp.DecodeBytes(data, msg); err != nil {
-				return fmt.Errorf("error decoding status packet: %w", err)
+			// The six-field payload fails the five-field shape
+			var genesisBlock common.Hash
+			if c.negotiatedProtoVersion >= ethProtoVersionXDpos164 {
+				msg := new(statusPacketFork)
+				if err := rlp.DecodeBytes(data, msg); err != nil {
+					return fmt.Errorf("error decoding status packet: %w", err)
+				}
+				genesisBlock = msg.GenesisBlock
+				c.remoteHead = msg.CurrentBlock
+				c.remoteTD = msg.TD
+			} else {
+				msg := new(statusPacket)
+				if err := rlp.DecodeBytes(data, msg); err != nil {
+					return fmt.Errorf("error decoding status packet: %w", err)
+				}
+				genesisBlock = msg.GenesisBlock
+				c.remoteHead = msg.CurrentBlock
+				c.remoteTD = msg.TD
 			}
-			if msg.GenesisBlock != chain.blocks[0].Hash() {
-				return fmt.Errorf("wrong genesis block in status: have %#x want %#x", msg.GenesisBlock, chain.blocks[0].Hash())
+			if genesisBlock != chain.blocks[0].Hash() {
+				return fmt.Errorf("wrong genesis block in status: have %#x want %#x", genesisBlock, chain.blocks[0].Hash())
 			}
 			break forRead
 		case discMsg:
@@ -196,7 +267,7 @@ forRead:
 				return fmt.Errorf("failed to reply pong: %w", err)
 			}
 		default:
-			if getProto(code) == baseProto {
+			if proto := getProto(code); proto == baseProto || proto == unknownProto {
 				continue
 			}
 			return fmt.Errorf("bad status message: code %d", code)
@@ -238,42 +309,81 @@ func (c *Conn) ReadEth() (interface{}, error) {
 	}
 }
 
+// isXdc166MsgCode admits only codes decodeXdc166Payload decodes
+func isXdc166MsgCode(code uint64) bool {
+	if code < protoOffset(ethProto) {
+		return false
+	}
+	ethCode := code - protoOffset(ethProto)
+	if ethCode > ethproto.LendingTxMsg && ethCode < ethproto.GetNodeDataMsg {
+		return false
+	}
+	return ethCode <= ethproto.ReceiptsMsg || (ethCode >= ethproto.VoteMsg && ethCode <= ethproto.PooledTransactionsMsg)
+}
+
+// ReadXdc166 must only be used on connections that negotiated xdc/166
+func (c *Conn) ReadXdc166() (uint64, interface{}, error) {
+	for {
+		code, data, err := c.Read()
+		if err != nil {
+			return 0, nil, err
+		}
+		if code == discMsg {
+			return 0, nil, errDisc
+		}
+		if code == pingMsg {
+			if err := c.Write(baseProto, pongMsg, []byte{}); err != nil {
+				return 0, nil, fmt.Errorf("failed to reply pong: %w", err)
+			}
+			continue
+		}
+		if !isXdc166MsgCode(code) {
+			continue
+		}
+		return decodeXdc166Payload(code-protoOffset(ethProto), data)
+	}
+}
+
 func decodeEthPayload(code uint64, data []byte) (interface{}, error) {
 	var msg interface{}
 	switch code {
-	case eth.StatusMsg:
+	case ethproto.StatusMsg:
 		msg = new(statusPacket)
-	case eth.NewBlockHashesMsg:
+	case ethproto.NewBlockHashesMsg:
 		msg = new(rlp.RawValue)
-	case eth.NewBlockMsg:
+	case ethproto.NewBlockMsg:
 		msg = new(rlp.RawValue)
-	case eth.GetBlockHeadersMsg:
+	case ethproto.GetBlockHeadersMsg:
 		msg = new(getBlockHeadersData)
-	case eth.BlockHeadersMsg:
+	case ethproto.BlockHeadersMsg:
 		msg = new(blockHeadersData)
-	case eth.GetBlockBodiesMsg:
+	case ethproto.GetBlockBodiesMsg:
 		msg = new(getBlockBodiesData)
-	case eth.BlockBodiesMsg:
+	case ethproto.BlockBodiesMsg:
 		msg = new(blockBodiesData)
-	case eth.GetNodeDataMsg:
+	case ethproto.GetNodeDataMsg:
 		msg = new(rlp.RawValue)
-	case eth.NodeDataMsg:
+	case ethproto.NodeDataMsg:
 		msg = new(rlp.RawValue)
-	case eth.GetReceiptsMsg:
+	case ethproto.GetReceiptsMsg:
 		msg = new(getReceiptsData)
-	case eth.ReceiptsMsg:
+	case ethproto.ReceiptsMsg:
 		msg = new(receiptsData)
-	case eth.TransactionMsg:
+	case ethproto.TransactionMsg:
 		msg = new(types.Transactions)
-	case eth.OrderTxMsg:
+	case ethproto.NewPooledTransactionHashesMsg:
+		// Broadcasts reach every peer; response waiters must be able to skip
+		// them
+		msg = new(ethproto.NewPooledTransactionHashesPacket)
+	case ethproto.OrderTxMsg:
 		msg = new([]rlp.RawValue)
-	case eth.LendingTxMsg:
+	case ethproto.LendingTxMsg:
 		msg = new([]rlp.RawValue)
-	case eth.VoteMsg:
+	case ethproto.VoteMsg:
 		msg = new(rlp.RawValue)
-	case eth.TimeoutMsg:
+	case ethproto.TimeoutMsg:
 		msg = new(rlp.RawValue)
-	case eth.SyncInfoMsg:
+	case ethproto.SyncInfoMsg:
 		msg = new(rlp.RawValue)
 	default:
 		return nil, fmt.Errorf("unhandled eth msg code %d", code)
@@ -282,4 +392,80 @@ func decodeEthPayload(code uint64, data []byte) (interface{}, error) {
 		return nil, fmt.Errorf("unable to decode eth msg: %v", err)
 	}
 	return msg, nil
+}
+
+// decodeXdc166Payload returns a zero request id for codes outside the five 66 pairs
+func decodeXdc166Payload(code uint64, data []byte) (uint64, interface{}, error) {
+	switch code {
+	case ethproto.GetBlockHeadersMsg:
+		wrapped := new(getBlockHeadersPacket166)
+		if err := rlp.DecodeBytes(data, wrapped); err != nil {
+			return 0, nil, fmt.Errorf("unable to decode eth msg: %v", err)
+		}
+		return wrapped.RequestId, wrapped.Request, nil
+	case ethproto.BlockHeadersMsg:
+		wrapped := new(blockHeadersPacket166)
+		if err := rlp.DecodeBytes(data, wrapped); err != nil {
+			return 0, nil, fmt.Errorf("unable to decode eth msg: %v", err)
+		}
+		return wrapped.RequestId, &wrapped.Headers, nil
+	case ethproto.GetBlockBodiesMsg:
+		wrapped := new(getBlockBodiesPacket166)
+		if err := rlp.DecodeBytes(data, wrapped); err != nil {
+			return 0, nil, fmt.Errorf("unable to decode eth msg: %v", err)
+		}
+		return wrapped.RequestId, &wrapped.Hashes, nil
+	case ethproto.BlockBodiesMsg:
+		wrapped := new(blockBodiesPacket166)
+		if err := rlp.DecodeBytes(data, wrapped); err != nil {
+			return 0, nil, fmt.Errorf("unable to decode eth msg: %v", err)
+		}
+		return wrapped.RequestId, &wrapped.Bodies, nil
+	case ethproto.GetNodeDataMsg:
+		wrapped := new(getNodeDataPacket166)
+		if err := rlp.DecodeBytes(data, wrapped); err != nil {
+			return 0, nil, fmt.Errorf("unable to decode eth msg: %v", err)
+		}
+		return wrapped.RequestId, &wrapped.Hashes, nil
+	case ethproto.NodeDataMsg:
+		wrapped := new(nodeDataPacket166)
+		if err := rlp.DecodeBytes(data, wrapped); err != nil {
+			return 0, nil, fmt.Errorf("unable to decode eth msg: %v", err)
+		}
+		return wrapped.RequestId, &wrapped.Data, nil
+	case ethproto.GetReceiptsMsg:
+		wrapped := new(getReceiptsPacket166)
+		if err := rlp.DecodeBytes(data, wrapped); err != nil {
+			return 0, nil, fmt.Errorf("unable to decode eth msg: %v", err)
+		}
+		return wrapped.RequestId, &wrapped.Hashes, nil
+	case ethproto.ReceiptsMsg:
+		wrapped := new(receiptsPacket166)
+		if err := rlp.DecodeBytes(data, wrapped); err != nil {
+			return 0, nil, fmt.Errorf("unable to decode eth msg: %v", err)
+		}
+		return wrapped.RequestId, &wrapped.Receipts, nil
+	case ethproto.GetPooledTransactionsMsg:
+		wrapped := new(getPooledTransactionsPacket166)
+		if err := rlp.DecodeBytes(data, wrapped); err != nil {
+			return 0, nil, fmt.Errorf("unable to decode eth msg: %v", err)
+		}
+		return wrapped.RequestId, &wrapped.Hashes, nil
+	case ethproto.PooledTransactionsMsg:
+		wrapped := new(pooledTransactionsPacket166)
+		if err := rlp.DecodeBytes(data, wrapped); err != nil {
+			return 0, nil, fmt.Errorf("unable to decode eth msg: %v", err)
+		}
+		return wrapped.RequestId, &wrapped.Txs, nil
+	case ethproto.NewPooledTransactionHashesMsg:
+		// Peers announce pooled tx hashes at any time; keep the frame opaque
+		msg := new(rlp.RawValue)
+		if err := rlp.DecodeBytes(data, msg); err != nil {
+			return 0, nil, fmt.Errorf("unable to decode eth msg: %v", err)
+		}
+		return 0, msg, nil
+	default:
+		msg, err := decodeEthPayload(code, data)
+		return 0, msg, err
+	}
 }

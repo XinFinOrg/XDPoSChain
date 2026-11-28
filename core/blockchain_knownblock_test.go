@@ -24,7 +24,6 @@ import (
 
 	"github.com/XinFinOrg/XDPoSChain/common"
 	"github.com/XinFinOrg/XDPoSChain/consensus"
-	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
@@ -305,11 +304,11 @@ func TestIsGapBlock(t *testing.T) {
 	if noGap.isGapBlock(block(900)) || noGap.isGapBlock(block(1800)) {
 		t.Fatalf("a zero gap must not turn an epoch boundary into a gap block")
 	}
-	// A gap equal to the epoch puts the gap block on the epoch switch block, which is
-	// num%Epoch == Epoch-Gap == 0 for the engine and this predicate alike.
+	// A gap equal to the epoch designates no gap block: the trigger would sit on the
+	// epoch switch block, which has to consume the candidate set it samples.
 	fullGap := &BlockChain{chainConfig: &params.ChainConfig{XDPoS: &params.XDPoSConfig{Epoch: 900, Gap: 900}}}
-	if !fullGap.isGapBlock(block(900)) {
-		t.Fatalf("with Gap == Epoch the epoch switch block is the gap block")
+	if fullGap.isGapBlock(block(900)) {
+		t.Fatalf("with Gap == Epoch the epoch switch block is not a gap block")
 	}
 	if fullGap.isGapBlock(block(450)) {
 		t.Fatalf("with Gap == Epoch no mid-epoch block is a gap block")
@@ -970,26 +969,11 @@ func TestInsertChainAdoptsStoredBodyOfKnownBlock(t *testing.T) {
 // author back out of the seal (processTradingAndLendingStates), so a batch that is adopted
 // rather than executed has to keep the engine able to place it.
 func TestInsertChainAdoptsKnownBatchAheadOfHeadWithXDPoS(t *testing.T) {
-	// Epoch 3 with Gap 0, the fixture of TestReorgSignalsEpochSwitchOnIntermediateBlock: the
-	// epoch switch blocks sit inside the chain, and Gap 0 keeps the masternode-set refresh
-	// (UpdateM1, which needs snapshots) out of the adoption.
-	cfg := params.TestXDPoSMockChainConfig.Clone()
-	xdpos := *cfg.XDPoS
-	xdpos.Epoch = 3
-	xdpos.Gap = 0
-	xdpos.SkipV1Validation = true
-	cfg.XDPoS = &xdpos
-
-	engine := XDPoS.NewFaker(rawdb.NewMemoryDatabase(), cfg)
-	if engine == nil {
-		t.Fatal("failed to create the XDPoS faker engine")
-	}
-	// An XDPoS genesis has to name signers, and the faker engine never reads them.
-	extraData := make([]byte, 32)
-	for _, signer := range []common.Address{{1}, {2}, {3}, {4}} {
-		extraData = append(extraData, signer.Bytes()...)
-	}
-	chain, genesis := newChainOnMockSchedule(t, cfg, engine, extraData)
+	// The fixture of TestReorgSignalsEpochSwitchOnIntermediateBlock: the epoch switch blocks sit
+	// inside the chain, and so do the gap blocks that refresh the masternode set of the next
+	// epoch. The genesis carries that set, so the adoption has to keep the engine able to place
+	// the blocks rather than run them again.
+	chain, genesis, cfg, engine := newShortEpochXDPoSChain(t)
 	defer chain.Stop()
 	signals := observeCheckpointSignals()
 	defer signals.stop() // block 3 switches the epoch and signals the staking loop

@@ -18,10 +18,11 @@ package eth
 
 import (
 	"fmt"
-	"math"
 	"math/big"
 	"math/rand"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -29,415 +30,18 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/ethash"
 	"github.com/XinFinOrg/XDPoSChain/core"
 	"github.com/XinFinOrg/XDPoSChain/core/rawdb"
-	"github.com/XinFinOrg/XDPoSChain/core/state"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 	"github.com/XinFinOrg/XDPoSChain/core/vm"
-	"github.com/XinFinOrg/XDPoSChain/crypto"
 	"github.com/XinFinOrg/XDPoSChain/eth/downloader"
 	"github.com/XinFinOrg/XDPoSChain/eth/ethconfig"
+	ethproto "github.com/XinFinOrg/XDPoSChain/eth/protocols/eth"
+	"github.com/XinFinOrg/XDPoSChain/ethdb"
 	"github.com/XinFinOrg/XDPoSChain/event"
+	"github.com/XinFinOrg/XDPoSChain/log"
 	"github.com/XinFinOrg/XDPoSChain/p2p"
 	"github.com/XinFinOrg/XDPoSChain/p2p/enode"
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
-
-// Tests that block headers can be retrieved from a remote chain based on user queries.
-func TestGetBlockHeaders100(t *testing.T) { testGetBlockHeaders(t, xdc100) }
-func TestGetBlockHeaders164(t *testing.T) { testGetBlockHeaders(t, xdc164) }
-func TestGetBlockHeaders165(t *testing.T) { testGetBlockHeaders(t, xdc165) }
-
-func testGetBlockHeaders(t *testing.T, protocol int) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, downloader.MaxHashFetch+15, nil, nil)
-	peer, _ := newTestPeer("peer", protocol, pm, true)
-	defer peer.close()
-
-	// Create a "random" unknown hash for testing
-	var unknown common.Hash
-	for i := range unknown {
-		unknown[i] = byte(i)
-	}
-	// Create a batch of tests for various scenarios
-	limit := uint64(downloader.MaxHeaderFetch)
-	tests := []struct {
-		query  *getBlockHeadersData // The query to execute for header retrieval
-		expect []common.Hash        // The hashes of the block whose headers are expected
-	}{
-		// A single random block should be retrievable by hash and number too
-		{
-			&getBlockHeadersData{Origin: hashOrNumber{Hash: pm.blockchain.GetBlockByNumber(limit / 2).Hash()}, Amount: 1},
-			[]common.Hash{pm.blockchain.GetBlockByNumber(limit / 2).Hash()},
-		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: limit / 2}, Amount: 1},
-			[]common.Hash{pm.blockchain.GetBlockByNumber(limit / 2).Hash()},
-		},
-		// Multiple headers should be retrievable in both directions
-		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: limit / 2}, Amount: 3},
-			[]common.Hash{
-				pm.blockchain.GetBlockByNumber(limit / 2).Hash(),
-				pm.blockchain.GetBlockByNumber(limit/2 + 1).Hash(),
-				pm.blockchain.GetBlockByNumber(limit/2 + 2).Hash(),
-			},
-		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: limit / 2}, Amount: 3, Reverse: true},
-			[]common.Hash{
-				pm.blockchain.GetBlockByNumber(limit / 2).Hash(),
-				pm.blockchain.GetBlockByNumber(limit/2 - 1).Hash(),
-				pm.blockchain.GetBlockByNumber(limit/2 - 2).Hash(),
-			},
-		},
-		// Multiple headers with skip lists should be retrievable
-		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: limit / 2}, Skip: 3, Amount: 3},
-			[]common.Hash{
-				pm.blockchain.GetBlockByNumber(limit / 2).Hash(),
-				pm.blockchain.GetBlockByNumber(limit/2 + 4).Hash(),
-				pm.blockchain.GetBlockByNumber(limit/2 + 8).Hash(),
-			},
-		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: limit / 2}, Skip: 3, Amount: 3, Reverse: true},
-			[]common.Hash{
-				pm.blockchain.GetBlockByNumber(limit / 2).Hash(),
-				pm.blockchain.GetBlockByNumber(limit/2 - 4).Hash(),
-				pm.blockchain.GetBlockByNumber(limit/2 - 8).Hash(),
-			},
-		},
-		// The chain endpoints should be retrievable
-		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: 0}, Amount: 1},
-			[]common.Hash{pm.blockchain.GetBlockByNumber(0).Hash()},
-		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().Number.Uint64()}, Amount: 1},
-			[]common.Hash{pm.blockchain.CurrentBlock().Hash()},
-		},
-		// Ensure protocol limits are honored
-		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().Number.Uint64() - 1}, Amount: limit + 10, Reverse: true},
-			pm.blockchain.GetBlockHashesFromHash(pm.blockchain.CurrentBlock().Hash(), limit),
-		},
-		// Check that requesting more than available is handled gracefully
-		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().Number.Uint64() - 4}, Skip: 3, Amount: 3},
-			[]common.Hash{
-				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().Number.Uint64() - 4).Hash(),
-				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().Number.Uint64()).Hash(),
-			},
-		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: 4}, Skip: 3, Amount: 3, Reverse: true},
-			[]common.Hash{
-				pm.blockchain.GetBlockByNumber(4).Hash(),
-				pm.blockchain.GetBlockByNumber(0).Hash(),
-			},
-		},
-		// Check that requesting more than available is handled gracefully, even if mid skip
-		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().Number.Uint64() - 4}, Skip: 2, Amount: 3},
-			[]common.Hash{
-				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().Number.Uint64() - 4).Hash(),
-				pm.blockchain.GetBlockByNumber(pm.blockchain.CurrentBlock().Number.Uint64() - 1).Hash(),
-			},
-		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: 4}, Skip: 2, Amount: 3, Reverse: true},
-			[]common.Hash{
-				pm.blockchain.GetBlockByNumber(4).Hash(),
-				pm.blockchain.GetBlockByNumber(1).Hash(),
-			},
-		},
-		// Check a corner case where requesting more can iterate past the endpoints
-		{
-			&getBlockHeadersData{Origin: hashOrNumber{Number: 2}, Amount: 5, Reverse: true},
-			[]common.Hash{
-				pm.blockchain.GetBlockByNumber(2).Hash(),
-				pm.blockchain.GetBlockByNumber(1).Hash(),
-				pm.blockchain.GetBlockByNumber(0).Hash(),
-			},
-		},
-		// Check a corner case where skipping overflow loops back into the chain start
-		{
-			&getBlockHeadersData{Origin: hashOrNumber{Hash: pm.blockchain.GetBlockByNumber(3).Hash()}, Amount: 2, Reverse: false, Skip: math.MaxUint64 - 1},
-			[]common.Hash{
-				pm.blockchain.GetBlockByNumber(3).Hash(),
-			},
-		},
-		// Check a corner case where skipping overflow loops back to the same header
-		{
-			&getBlockHeadersData{Origin: hashOrNumber{Hash: pm.blockchain.GetBlockByNumber(1).Hash()}, Amount: 2, Reverse: false, Skip: math.MaxUint64},
-			[]common.Hash{
-				pm.blockchain.GetBlockByNumber(1).Hash(),
-			},
-		},
-		// Check that non existing headers aren't returned
-		{
-			&getBlockHeadersData{Origin: hashOrNumber{Hash: unknown}, Amount: 1},
-			[]common.Hash{},
-		}, {
-			&getBlockHeadersData{Origin: hashOrNumber{Number: pm.blockchain.CurrentBlock().Number.Uint64() + 1}, Amount: 1},
-			[]common.Hash{},
-		},
-	}
-	// Run each of the tests and verify the results against the chain
-	for i, tt := range tests {
-		// Collect the headers to expect in the response
-		headers := []*types.Header{}
-		for _, hash := range tt.expect {
-			headers = append(headers, pm.blockchain.GetBlockByHash(hash).Header())
-		}
-		// Send the hash request and verify the response
-		p2p.Send(peer.app, 0x03, tt.query)
-		if err := p2p.ExpectMsg(peer.app, 0x04, headers); err != nil {
-			t.Errorf("test %d: headers mismatch: %v", i, err)
-		}
-		// If the test used number origins, repeat with hashes as the too
-		if tt.query.Origin.Hash == (common.Hash{}) {
-			if origin := pm.blockchain.GetBlockByNumber(tt.query.Origin.Number); origin != nil {
-				tt.query.Origin.Hash, tt.query.Origin.Number = origin.Hash(), 0
-
-				p2p.Send(peer.app, 0x03, tt.query)
-				if err := p2p.ExpectMsg(peer.app, 0x04, headers); err != nil {
-					t.Errorf("test %d: headers mismatch: %v", i, err)
-				}
-			}
-		}
-	}
-}
-
-// Tests that block contents can be retrieved from a remote chain based on their hashes.
-func TestGetBlockBodies100(t *testing.T) { testGetBlockBodies(t, xdc100) }
-func TestGetBlockBodies164(t *testing.T) { testGetBlockBodies(t, xdc164) }
-func TestGetBlockBodies165(t *testing.T) { testGetBlockBodies(t, xdc165) }
-
-func testGetBlockBodies(t *testing.T, protocol int) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, downloader.MaxBlockFetch+15, nil, nil)
-	peer, _ := newTestPeer("peer", protocol, pm, true)
-	defer peer.close()
-
-	// Create a batch of tests for various scenarios
-	limit := downloader.MaxBlockFetch
-	tests := []struct {
-		random    int           // Number of blocks to fetch randomly from the chain
-		explicit  []common.Hash // Explicitly requested blocks
-		available []bool        // Availability of explicitly requested blocks
-		expected  int           // Total number of existing blocks to expect
-	}{
-		{1, nil, nil, 1},             // A single random block should be retrievable
-		{10, nil, nil, 10},           // Multiple random blocks should be retrievable
-		{limit, nil, nil, limit},     // The maximum possible blocks should be retrievable
-		{limit + 1, nil, nil, limit}, // No more than the possible block count should be returned
-		{0, []common.Hash{pm.blockchain.Genesis().Hash()}, []bool{true}, 1},      // The genesis block should be retrievable
-		{0, []common.Hash{pm.blockchain.CurrentBlock().Hash()}, []bool{true}, 1}, // The chains head block should be retrievable
-		{0, []common.Hash{{}}, []bool{false}, 0},                                 // A non existent block should not be returned
-
-		// Existing and non-existing blocks interleaved should not cause problems
-		{0, []common.Hash{
-			{},
-			pm.blockchain.GetBlockByNumber(1).Hash(),
-			{},
-			pm.blockchain.GetBlockByNumber(10).Hash(),
-			{},
-			pm.blockchain.GetBlockByNumber(100).Hash(),
-			{},
-		}, []bool{false, true, false, true, false, true, false}, 3},
-	}
-	// Run each of the tests and verify the results against the chain
-	for i, tt := range tests {
-		// Collect the hashes to request, and the response to expect
-		hashes, seen := []common.Hash{}, make(map[int64]bool)
-		bodies := []*blockBody{}
-
-		for j := 0; j < tt.random; j++ {
-			for {
-				num := rand.Int63n(int64(pm.blockchain.CurrentBlock().Number.Uint64()))
-				if !seen[num] {
-					seen[num] = true
-
-					block := pm.blockchain.GetBlockByNumber(uint64(num))
-					hashes = append(hashes, block.Hash())
-					if len(bodies) < tt.expected {
-						bodies = append(bodies, &blockBody{Transactions: block.Transactions(), Uncles: block.Uncles()})
-					}
-					break
-				}
-			}
-		}
-		for j, hash := range tt.explicit {
-			hashes = append(hashes, hash)
-			if tt.available[j] && len(bodies) < tt.expected {
-				block := pm.blockchain.GetBlockByHash(hash)
-				bodies = append(bodies, &blockBody{Transactions: block.Transactions(), Uncles: block.Uncles()})
-			}
-		}
-		// Send the hash request and verify the response
-		p2p.Send(peer.app, 0x05, hashes)
-		if err := p2p.ExpectMsg(peer.app, 0x06, bodies); err != nil {
-			t.Errorf("test %d: bodies mismatch: %v", i, err)
-		}
-	}
-}
-
-// Tests that the node state database can be retrieved based on hashes.
-func TestGetNodeData100(t *testing.T) { testGetNodeData(t, xdc100) }
-func TestGetNodeData164(t *testing.T) { testGetNodeData(t, xdc164) }
-func TestGetNodeData165(t *testing.T) { testGetNodeData(t, xdc165) }
-
-func testGetNodeData(t *testing.T, protocol int) {
-	// Define three accounts to simulate transactions with
-	acc1Key, _ := crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
-	acc2Key, _ := crypto.HexToECDSA("49a7b37aa6f6645917e7b807e9d1c00d4fa71f18343b0d4122a4d2df64dd6fee")
-	acc1Addr := crypto.PubkeyToAddress(acc1Key.PublicKey)
-	acc2Addr := crypto.PubkeyToAddress(acc2Key.PublicKey)
-
-	signer := types.HomesteadSigner{}
-	// Create a chain generator with some simple transactions (blatantly stolen from @fjl/chain_markets_test)
-	generator := func(i int, block *core.BlockGen) {
-		fee := block.BaseFee()
-		if fee == nil {
-			fee = big.NewInt(params.InitialBaseFee)
-		}
-		switch i {
-		case 0:
-			// In block 1, the test bank sends account #1 some ether.
-			tx, _ := types.SignTx(types.NewTransaction(block.TxNonce(testBank), acc1Addr, new(big.Int).SetUint64(1_000_000_000_000_000_000), params.TxGas, fee, nil), signer, testBankKey)
-			block.AddTx(tx)
-		case 1:
-			// In block 2, the test bank sends some more ether to account #1.
-			// acc1Addr passes it on to account #2.
-			tx1, _ := types.SignTx(types.NewTransaction(block.TxNonce(testBank), acc1Addr, new(big.Int).SetUint64(1_000_000_000_000_000_000), params.TxGas, fee, nil), signer, testBankKey)
-			tx2, _ := types.SignTx(types.NewTransaction(block.TxNonce(acc1Addr), acc2Addr, new(big.Int).SetUint64(1_000_000_000_000_000_000), params.TxGas, fee, nil), signer, acc1Key)
-			block.AddTx(tx1)
-			block.AddTx(tx2)
-		case 2:
-			// Block 3 is empty but was mined by account #2.
-			block.SetCoinbase(acc2Addr)
-			block.SetExtra([]byte("yeehaw"))
-		case 3:
-			// Block 4 includes blocks 2 and 3 as uncle headers (with modified extra data).
-			b2 := block.PrevBlock(1).Header()
-			b2.Extra = []byte("foo")
-			block.AddUncle(b2)
-			b3 := block.PrevBlock(2).Header()
-			b3.Extra = []byte("foo")
-			block.AddUncle(b3)
-		}
-	}
-	// Assemble the test environment
-	pm, db := newTestProtocolManagerMust(t, downloader.FullSync, 4, generator, nil)
-	peer, _ := newTestPeer("peer", protocol, pm, true)
-	defer peer.close()
-
-	// Fetch for now the entire chain db
-	hashes := []common.Hash{}
-	it := db.NewIterator(nil, nil)
-	for it.Next() {
-		key := it.Key()
-		if len(key) == len(common.Hash{}) {
-			hashes = append(hashes, common.BytesToHash(key))
-		}
-	}
-	p2p.Send(peer.app, 0x0d, hashes)
-	msg, err := peer.app.ReadMsg()
-	if err != nil {
-		t.Fatalf("failed to read node data response: %v", err)
-	}
-	if msg.Code != 0x0e {
-		t.Fatalf("response packet code mismatch: have %x, want %x", msg.Code, 0x0c)
-	}
-	var data [][]byte
-	if err := msg.Decode(&data); err != nil {
-		t.Fatalf("failed to decode response node data: %v", err)
-	}
-	// Verify that all hashes correspond to the requested data, and reconstruct a state tree
-	for i, want := range hashes {
-		if hash := crypto.Keccak256Hash(data[i]); hash != want {
-			t.Errorf("data hash mismatch: have %x, want %x", hash, want)
-		}
-	}
-	statedb := rawdb.NewMemoryDatabase()
-	for i := 0; i < len(data); i++ {
-		statedb.Put(hashes[i].Bytes(), data[i])
-	}
-	accounts := []common.Address{testBank, acc1Addr, acc2Addr}
-	for i := uint64(0); i <= pm.blockchain.CurrentBlock().Number.Uint64(); i++ {
-		trie, _ := state.New(pm.blockchain.GetBlockByNumber(i).Root(), state.NewDatabase(statedb))
-
-		for j, acc := range accounts {
-			state, _ := pm.blockchain.State()
-			bw := state.GetBalance(acc)
-			bh := trie.GetBalance(acc)
-
-			if (bw != nil && bh == nil) || (bw == nil && bh != nil) {
-				t.Errorf("test %d, account %d: balance mismatch: have %v, want %v", i, j, bh, bw)
-			}
-			if bw != nil && bh != nil && bw.Cmp(bw) != 0 {
-				t.Errorf("test %d, account %d: balance mismatch: have %v, want %v", i, j, bh, bw)
-			}
-		}
-	}
-}
-
-// Tests that the transaction receipts can be retrieved based on hashes.
-func TestGetReceipt100(t *testing.T) { testGetReceipt(t, xdc100) }
-func TestGetReceipt164(t *testing.T) { testGetReceipt(t, xdc164) }
-func TestGetReceipt165(t *testing.T) { testGetReceipt(t, xdc165) }
-
-func testGetReceipt(t *testing.T, protocol int) {
-	// Define three accounts to simulate transactions with
-	acc1Key, _ := crypto.HexToECDSA("8a1f9a8f95be41cd7ccb6168179afb4504aefe388d1e14474d32c45c72ce7b7a")
-	acc2Key, _ := crypto.HexToECDSA("49a7b37aa6f6645917e7b807e9d1c00d4fa71f18343b0d4122a4d2df64dd6fee")
-	acc1Addr := crypto.PubkeyToAddress(acc1Key.PublicKey)
-	acc2Addr := crypto.PubkeyToAddress(acc2Key.PublicKey)
-
-	signer := types.HomesteadSigner{}
-	// Create a chain generator with some simple transactions (blatantly stolen from @fjl/chain_markets_test)
-	generator := func(i int, block *core.BlockGen) {
-		fee := block.BaseFee()
-		if fee == nil {
-			fee = big.NewInt(params.InitialBaseFee)
-		}
-		switch i {
-		case 0:
-			// In block 1, the test bank sends account #1 some ether.
-			tx, _ := types.SignTx(types.NewTransaction(block.TxNonce(testBank), acc1Addr, new(big.Int).SetUint64(1_000_000_000_000_000_000), params.TxGas, fee, nil), signer, testBankKey)
-			block.AddTx(tx)
-		case 1:
-			// In block 2, the test bank sends some more ether to account #1.
-			// acc1Addr passes it on to account #2.
-			tx1, _ := types.SignTx(types.NewTransaction(block.TxNonce(testBank), acc1Addr, new(big.Int).SetUint64(1_000_000_000_000_000_000), params.TxGas, fee, nil), signer, testBankKey)
-			tx2, _ := types.SignTx(types.NewTransaction(block.TxNonce(acc1Addr), acc2Addr, new(big.Int).SetUint64(1_000_000_000_000_000_000), params.TxGas, fee, nil), signer, acc1Key)
-			block.AddTx(tx1)
-			block.AddTx(tx2)
-		case 2:
-			// Block 3 is empty but was mined by account #2.
-			block.SetCoinbase(acc2Addr)
-			block.SetExtra([]byte("yeehaw"))
-		case 3:
-			// Block 4 includes blocks 2 and 3 as uncle headers (with modified extra data).
-			b2 := block.PrevBlock(1).Header()
-			b2.Extra = []byte("foo")
-			block.AddUncle(b2)
-			b3 := block.PrevBlock(2).Header()
-			b3.Extra = []byte("foo")
-			block.AddUncle(b3)
-		}
-	}
-	// Assemble the test environment
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 4, generator, nil)
-	peer, _ := newTestPeer("peer", protocol, pm, true)
-	defer peer.close()
-
-	// Collect the hashes to request, and the response to expect
-	hashes, receipts := []common.Hash{}, []types.Receipts{}
-	for i := uint64(0); i <= pm.blockchain.CurrentBlock().Number.Uint64(); i++ {
-		block := pm.blockchain.GetBlockByNumber(i)
-
-		hashes = append(hashes, block.Hash())
-		receipts = append(receipts, pm.blockchain.GetReceiptsByHash(block.Hash()))
-	}
-	// Send the hash request and verify the response
-	p2p.Send(peer.app, 0x0f, hashes)
-	if err := p2p.ExpectMsg(peer.app, 0x10, receipts); err != nil {
-		t.Errorf("receipts mismatch: %v", err)
-	}
-}
 
 func TestBroadcastBlock(t *testing.T) {
 	var tests = []struct {
@@ -473,20 +77,29 @@ func testBroadcastBlock(t *testing.T, totalPeers, broadcastExpected int) {
 	if err != nil {
 		t.Fatalf("failed to create new blockchain: %v", err)
 	}
-	pm, err := NewProtocolManager(config, downloader.FullSync, ethconfig.Defaults.NetworkId, evmux, &testTxPool{pool: make(map[common.Hash]*types.Transaction)}, pow, blockchain, db)
+	pm, err := newHandler(&handlerConfig{
+		Database:    db,
+		Chain:       blockchain,
+		TxPool:      &testTxPool{pool: make(map[common.Hash]*types.Transaction)},
+		Network:     ethconfig.Defaults.NetworkId,
+		Sync:        downloader.FullSync,
+		EventMux:    evmux,
+		ChainConfig: config,
+		Engine:      pow,
+	})
 	if err != nil {
-		t.Fatalf("failed to start test protocol manager: %v", err)
+		t.Fatalf("failed to start test handler: %v", err)
 	}
 	pm.Start(1000)
 	defer pm.Stop()
 	var peers []*testPeer
 	for i := range totalPeers {
-		peer, _ := newTestPeer(fmt.Sprintf("peer %d", i), xdc100, pm, true)
+		peer, _ := newTestPeer(fmt.Sprintf("peer %d", i), int(ethproto.XDC100), pm, true)
 		defer peer.close()
 		peers = append(peers, peer)
 	}
 	// Peers are registered asynchronously once the handshake completes on the
-	// protocol manager side, wait for the peer set to catch up before broadcasting.
+	// handler side, wait for the peer set to catch up before broadcasting.
 	for deadline := time.Now().Add(10 * time.Second); pm.peers.Len() < totalPeers; {
 		if time.Now().After(deadline) {
 			t.Fatalf("timeout waiting for peer registration: have %d, want %d", pm.peers.Len(), totalPeers)
@@ -494,7 +107,7 @@ func testBroadcastBlock(t *testing.T, totalPeers, broadcastExpected int) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	chain, _ := core.GenerateChain(gspec.Config, genesis, ethash.NewFaker(), db, 1, func(i int, gen *core.BlockGen) {})
-	expectedTD := new(big.Int).Add(chain[0].Difficulty(), pm.blockchain.GetTd(chain[0].ParentHash(), chain[0].NumberU64()-1))
+	expectedTD := new(big.Int).Add(chain[0].Difficulty(), pm.chain.GetTd(chain[0].ParentHash(), chain[0].NumberU64()-1))
 
 	errCh := make(chan error, totalPeers)
 	doneCh := make(chan struct{}, totalPeers)
@@ -504,7 +117,7 @@ func testBroadcastBlock(t *testing.T, totalPeers, broadcastExpected int) {
 			for {
 				select {
 				case <-deadline:
-					errCh <- fmt.Errorf("timeout waiting for NewBlockMsg")
+					errCh <- fmt.Errorf("timeout waiting for ethproto.NewBlockMsg")
 					return
 				default:
 				}
@@ -514,18 +127,18 @@ func testBroadcastBlock(t *testing.T, totalPeers, broadcastExpected int) {
 					errCh <- err
 					return
 				}
-				if msg.Code != NewBlockMsg {
+				if msg.Code != ethproto.NewBlockMsg {
 					_ = msg.Discard()
 					continue
 				}
 
-				var got newBlockData
+				var got ethproto.NewBlockPacket
 				if err := msg.Decode(&got); err != nil {
 					errCh <- err
 					return
 				}
 				if got.Block == nil {
-					errCh <- fmt.Errorf("unexpected nil block in NewBlockMsg")
+					errCh <- fmt.Errorf("unexpected nil block in ethproto.NewBlockMsg")
 					return
 				}
 				if got.Block.Hash() != chain[0].Hash() {
@@ -571,8 +184,12 @@ outer:
 
 // Tests that a propagated malformed block (uncles or transactions don't match
 // with the hashes in the header) gets discarded and not broadcast forward.
-func TestBroadcastMalformedBlock164(t *testing.T) { testBroadcastMalformedBlock(t, xdc164) }
-func TestBroadcastMalformedBlock165(t *testing.T) { testBroadcastMalformedBlock(t, xdc165) }
+func TestBroadcastMalformedBlock164(t *testing.T) {
+	testBroadcastMalformedBlock(t, int(ethproto.XDC164))
+}
+func TestBroadcastMalformedBlock165(t *testing.T) {
+	testBroadcastMalformedBlock(t, int(ethproto.XDC165))
+}
 
 func testBroadcastMalformedBlock(t *testing.T, protocol int) {
 	t.Parallel()
@@ -589,9 +206,18 @@ func testBroadcastMalformedBlock(t *testing.T, protocol int) {
 	if err != nil {
 		t.Fatalf("failed to create new blockchain: %v", err)
 	}
-	pm, err := NewProtocolManager(config, downloader.FullSync, ethconfig.Defaults.NetworkId, new(event.TypeMux), new(testTxPool), engine, blockchain, db)
+	pm, err := newHandler(&handlerConfig{
+		Database:    db,
+		Chain:       blockchain,
+		TxPool:      new(testTxPool),
+		Network:     ethconfig.Defaults.NetworkId,
+		Sync:        downloader.FullSync,
+		EventMux:    new(event.TypeMux),
+		ChainConfig: config,
+		Engine:      engine,
+	})
 	if err != nil {
-		t.Fatalf("failed to start test protocol manager: %v", err)
+		t.Fatalf("failed to start test handler: %v", err)
 	}
 	pm.Start(2)
 	defer pm.Stop()
@@ -623,7 +249,7 @@ func testBroadcastMalformedBlock(t *testing.T, protocol int) {
 			if err != nil {
 				return
 			}
-			if msg.Code == NewBlockMsg || msg.Code == NewBlockHashesMsg {
+			if msg.Code == ethproto.NewBlockMsg || msg.Code == ethproto.NewBlockHashesMsg {
 				select {
 				case notify <- msg.Code:
 				default:
@@ -634,7 +260,7 @@ func testBroadcastMalformedBlock(t *testing.T, protocol int) {
 	// Try to broadcast all malformations and ensure they all get discarded
 	for _, header := range []*types.Header{malformedUncles, malformedTransactions, malformedEverything} {
 		block := types.NewBlockWithHeader(header).WithBody(types.Body{Transactions: chain[0].Transactions(), Uncles: chain[0].Uncles()})
-		if err := p2p.Send(source.app, NewBlockMsg, []any{block, big.NewInt(131136)}); err != nil {
+		if err := p2p.Send(source.app, ethproto.NewBlockMsg, []any{block, big.NewInt(131136)}); err != nil {
 			t.Fatalf("failed to broadcast block: %v", err)
 		}
 		select {
@@ -645,141 +271,39 @@ func testBroadcastMalformedBlock(t *testing.T, protocol int) {
 	}
 }
 
-// Tests that post eth protocol handshake, DAO fork-enabled clients also execute
-// a DAO "challenge" verifying each others' DAO fork headers to ensure they're on
-// compatible chains.
-func TestDAOChallengeNoVsNo(t *testing.T) { testDAOChallenge(t, false, false, false) }
-
-// TestDAOChallengeNoVsPro tests dao challenge no vs pro.
-func TestDAOChallengeNoVsPro(t *testing.T) { testDAOChallenge(t, false, true, false) }
-
-// TestDAOChallengeProVsNo tests dao challenge pro vs no.
-func TestDAOChallengeProVsNo(t *testing.T) { testDAOChallenge(t, true, false, false) }
-
-// TestDAOChallengeProVsPro tests dao challenge pro vs pro.
-func TestDAOChallengeProVsPro(t *testing.T) { testDAOChallenge(t, true, true, false) }
-
-// TestDAOChallengeNoVsTimeout tests dao challenge no vs timeout.
-func TestDAOChallengeNoVsTimeout(t *testing.T) { testDAOChallenge(t, false, false, true) }
-
-// TestDAOChallengeProVsTimeout tests dao challenge pro vs timeout.
-func TestDAOChallengeProVsTimeout(t *testing.T) { testDAOChallenge(t, true, true, true) }
-
-func testDAOChallenge(t *testing.T, localForked, remoteForked bool, timeout bool) {
-	// Reduce the DAO handshake challenge timeout
-	if timeout {
-		defer func(old time.Duration) { syncChallengeTimeout = old }(syncChallengeTimeout)
-		syncChallengeTimeout = 500 * time.Millisecond
-	}
-	// Create a DAO aware protocol manager
-	var (
-		evmux = new(event.TypeMux)
-		pow   = ethash.NewFaker()
-		db    = rawdb.NewMemoryDatabase()
-		gspec = &core.Genesis{
-			Config: daoChallengeChainConfig(localForked),
-		}
-		blockchain, _ = core.NewBlockChain(db, nil, gspec, pow, vm.Config{})
-	)
-	pm, err := NewProtocolManager(gspec.Config, downloader.FullSync, ethconfig.Defaults.NetworkId, evmux, &testTxPool{pool: make(map[common.Hash]*types.Transaction)}, pow, blockchain, db)
-	if err != nil {
-		t.Fatalf("failed to start test protocol manager: %v", err)
-	}
-	pm.Start(1000)
+// Tests that a propagated block is still queued into the block fetcher by the
+// node layer: the fetcher imports it, so the local chain advances onto it.
+func TestPropagatedBlockQueuedIntoFetcher(t *testing.T) {
+	pm, db := newTestHandlerMust(t, downloader.FullSync, 8, nil, nil)
 	defer pm.Stop()
 
-	// Connect a new peer and check that we receive the DAO challenge
-	peer, _ := newTestPeer("peer", xdc100, pm, true)
-	defer peer.close()
+	tp, _ := newTestPeer("propagate", int(ethproto.XDC165), pm, true)
+	defer tp.close()
 
-	challenge := &getBlockHeadersData{
-		Origin:  hashOrNumber{Number: gspec.Config.DAOForkBlock.Uint64()},
-		Amount:  1,
-		Skip:    0,
-		Reverse: false,
+	// Build a block on top of our head that we do not have ourselves yet.
+	head := pm.chain.CurrentBlock()
+	chain, _ := core.GenerateChain(pm.chain.Config(), pm.chain.GetBlockByHash(head.Hash()), ethash.NewFaker(), db, 1, nil)
+	block := chain[0]
+
+	if err := p2p.Send(tp.app, ethproto.NewBlockMsg, []any{block, big.NewInt(131136)}); err != nil {
+		t.Fatalf("failed to send ethproto.NewBlockMsg: %v", err)
 	}
-	if err := p2p.ExpectMsg(peer.app, GetBlockHeadersMsg, challenge); err != nil {
-		t.Fatalf("challenge mismatch: %v", err)
-	}
-	// Create a block to reply to the challenge if no timeout is simulated
-	if !timeout {
-		_, blocks, _ := core.GenerateChainWithGenesis(gspec, ethash.NewFaker(), 1, func(i int, block *core.BlockGen) {
-			if remoteForked {
-				block.SetExtra(params.DAOForkBlockExtra)
-			} else {
-				// Override the auto-injected DAO extra-data from GenerateChain when
-				// the local config supports the fork but the remote peer should not.
-				block.SetExtra([]byte{})
-			}
-		})
-		if err := p2p.Send(peer.app, BlockHeadersMsg, []*types.Header{blocks[0].Header()}); err != nil {
-			t.Fatalf("failed to answer challenge: %v", err)
-		}
-		time.Sleep(100 * time.Millisecond) // Sleep to avoid the verification racing with the drops
-	} else {
-		// Otherwise wait until the test timeout passes
-		time.Sleep(syncChallengeTimeout + 500*time.Millisecond)
-	}
-	// Verify that depending on fork side, the remote peer is maintained or dropped
-	if localForked == remoteForked && !timeout {
-		if peers := pm.peers.Len(); peers != 1 {
-			t.Fatalf("peer count mismatch: have %d, want %d", peers, 1)
-		}
-	} else {
-		if peers := pm.peers.Len(); peers != 0 {
-			t.Fatalf("peer count mismatch: have %d, want %d", peers, 0)
+	deadline := time.After(5 * time.Second)
+	for pm.chain.CurrentBlock().Number.Cmp(head.Number) <= 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("propagated block was not queued into the fetcher, head still at %d", pm.chain.CurrentBlock().Number.Uint64())
+		case <-time.After(10 * time.Millisecond):
 		}
 	}
-}
-
-// daoChallengeChainConfig builds a chain config that activates the DAO fork
-// challenge while pushing later forks into the future.
-func daoChallengeChainConfig(daoForkSupport bool) *params.ChainConfig {
-	config := params.TestChainConfig.Clone()
-	futureForkBlock := big.NewInt(1_000_000_000)
-
-	config.ChainID = big.NewInt(1337)
-	config.DAOForkBlock = big.NewInt(1)
-	config.DAOForkSupport = daoForkSupport
-	config.EIP150Block = new(big.Int).Set(futureForkBlock)
-	config.EIP155Block = new(big.Int).Set(futureForkBlock)
-	config.EIP158Block = new(big.Int).Set(futureForkBlock)
-	config.ByzantiumBlock = new(big.Int).Set(futureForkBlock)
-	config.ConstantinopleBlock = new(big.Int).Set(futureForkBlock)
-	config.PetersburgBlock = new(big.Int).Set(futureForkBlock)
-	config.IstanbulBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPSigningBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPRandomizeBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPIncreaseMasternodesBlock = new(big.Int).Set(futureForkBlock)
-	config.DenylistBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPNoHalvingMNRewardBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPXDCXBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPXDCXLendingBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPXDCXCancellationFeeBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPTRC21FeeBlock = new(big.Int).Set(futureForkBlock)
-	config.Gas50xBlock = new(big.Int).Set(futureForkBlock)
-	config.BerlinBlock = new(big.Int).Set(futureForkBlock)
-	config.LondonBlock = new(big.Int).Set(futureForkBlock)
-	config.MergeBlock = new(big.Int).Set(futureForkBlock)
-	config.ShanghaiBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPXDCXMinerDisableBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPXDCXReceiverDisableBlock = new(big.Int).Set(futureForkBlock)
-	config.EIP1559Block = new(big.Int).Set(futureForkBlock)
-	config.CancunBlock = new(big.Int).Set(futureForkBlock)
-	config.PragueBlock = new(big.Int).Set(futureForkBlock)
-	config.OsakaBlock = new(big.Int).Set(futureForkBlock)
-	config.AmsterdamBlock = new(big.Int).Set(futureForkBlock)
-	config.DynamicGasLimitBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPFixedRewardBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPUpgradePenaltyBlock = new(big.Int).Set(futureForkBlock)
-	config.TIPEpochHalvingBlock = new(big.Int).Set(futureForkBlock)
-
-	return config
+	if got := pm.chain.CurrentBlock().Hash(); got != block.Hash() {
+		t.Errorf("chain advanced to the wrong block: have %v, want %v", got, block.Hash())
+	}
 }
 
 // waitForPeerRegistration blocks until the peer with the given id has been
-// registered by the protocol manager's handle goroutine.
-func waitForPeerRegistration(t *testing.T, pm *ProtocolManager, id string) {
+// registered by the handler's handle goroutine.
+func waitForPeerRegistration(t *testing.T, pm *handler, id string) {
 	t.Helper()
 	deadline := time.After(2 * time.Second)
 	for pm.peers.Peer(id) == nil {
@@ -791,17 +315,17 @@ func waitForPeerRegistration(t *testing.T, pm *ProtocolManager, id string) {
 	}
 }
 
-// TestProtocolManagerRemovePeerIdempotent verifies that removing an already
+// TestHandlerRemovePeerIdempotent verifies that removing an already
 // removed peer is a silent no-op.
-func TestProtocolManagerRemovePeerIdempotent(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+func TestHandlerRemovePeerIdempotent(t *testing.T) {
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
 	defer pm.Stop()
 
 	// Register a peer through the normal protocol handshake path.
-	tp, errc := newTestPeer("test-peer", xdc165, pm, true)
+	tp, errc := newTestPeer("test-peer", int(ethproto.XDC165), pm, true)
 	// Ensure broadcaster goroutines stop if the test exits before removePeer
 	// reaches peerSet.Unregister.
-	defer tp.peer.close()
+	defer tp.peer.Close()
 	defer tp.close()
 	defer tp.app.Close()
 	defer func() {
@@ -810,14 +334,14 @@ func TestProtocolManagerRemovePeerIdempotent(t *testing.T) {
 		default:
 		}
 	}()
-	waitForPeerRegistration(t, pm, tp.id)
+	waitForPeerRegistration(t, pm, tp.ID())
 
 	if pm.peers.Len() != 1 {
 		t.Fatalf("peer set size mismatch: got %d want 1", pm.peers.Len())
 	}
 	// The first removal performs the full unregister sequence.
-	pm.removePeer(tp.id)
-	if pm.peers.Peer(tp.id) != nil {
+	pm.removePeer(tp.ID())
+	if pm.peers.Peer(tp.ID()) != nil {
 		t.Fatal("peer still registered after first removePeer")
 	}
 	if pm.peers.Len() != 0 {
@@ -825,46 +349,46 @@ func TestProtocolManagerRemovePeerIdempotent(t *testing.T) {
 	}
 	// A duplicate removal must be a silent no-op. Note it is short-circuited by
 	// the peer == nil lookup above, so markRemoved's atomic branch is covered
-	// by TestPeerMarkRemovedOnce and TestProtocolManagerRemovePeerConcurrent.
-	pm.removePeer(tp.id)
+	// by TestPeerMarkRemovedOnce and TestHandlerRemovePeerConcurrent.
+	pm.removePeer(tp.ID())
 	if pm.peers.Len() != 0 {
 		t.Fatalf("peer set size mismatch after second removePeer: got %d want 0", pm.peers.Len())
 	}
 }
 
-// TestProtocolManagerRemovePeerConcurrent verifies that concurrent removePeer
+// TestHandlerRemovePeerConcurrent verifies that concurrent removePeer
 // calls for the same peer remove it exactly once, without panicking or racing
 // on the removal flag.
-func TestProtocolManagerRemovePeerConcurrent(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+func TestHandlerRemovePeerConcurrent(t *testing.T) {
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
 	defer pm.Stop()
 
 	// Register a peer through the normal protocol handshake path.
-	tp, errc := newTestPeer("test-peer", xdc165, pm, true)
-	// Stop the broadcast goroutines started by peers.Register; nothing in the
-	// production teardown path closes the peer's term channel.
-	defer tp.peer.close()
+	tp, errc := newTestPeer("test-peer", int(ethproto.XDC165), pm, true)
+	// Stop the broadcast goroutines NewPeer started and tear down the pipe. This
+	// test drives pm.handle directly instead of going through MakeProtocols.Run,
+	// so the production defer peer.Close() never runs and tp.close() has to do
+	// both jobs.
 	defer tp.close()
-	defer tp.app.Close()
 	defer func() {
 		select {
 		case <-errc:
 		default:
 		}
 	}()
-	waitForPeerRegistration(t, pm, tp.id)
+	waitForPeerRegistration(t, pm, tp.ID())
 
 	var wg sync.WaitGroup
 	for i := 0; i < 16; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			pm.removePeer(tp.id)
+			pm.removePeer(tp.ID())
 		}()
 	}
 	wg.Wait()
 
-	if pm.peers.Peer(tp.id) != nil {
+	if pm.peers.Peer(tp.ID()) != nil {
 		t.Fatal("peer still registered after concurrent removePeer calls")
 	}
 	if pm.peers.Len() != 0 {
@@ -874,7 +398,7 @@ func TestProtocolManagerRemovePeerConcurrent(t *testing.T) {
 	// Poll briefly in case handle() is still undoing its registration.
 	deadline := time.After(2 * time.Second)
 	for {
-		if err := pm.downloader.RegisterPeer(tp.id, tp.version, tp); err == nil {
+		if err := pm.downloader.RegisterPeer(tp.ID(), tp.Version(), tp); err == nil {
 			break
 		}
 		select {
@@ -884,7 +408,7 @@ func TestProtocolManagerRemovePeerConcurrent(t *testing.T) {
 		}
 	}
 	// Undo the test's own registration.
-	pm.downloader.UnregisterPeer(tp.id)
+	pm.downloader.UnregisterPeer(tp.ID())
 }
 
 // TestRegisterDownloaderPeerUndoesRacedRemoval reproduces the window in handle()
@@ -893,7 +417,7 @@ func TestProtocolManagerRemovePeerConcurrent(t *testing.T) {
 // registerDownloaderPeer, the downloader would keep a stale entry that blocks
 // a reconnect of the same node id.
 func TestRegisterDownloaderPeerUndoesRacedRemoval(t *testing.T) {
-	pm, _ := newTestProtocolManagerMust(t, downloader.FullSync, 0, nil, nil)
+	pm, _ := newTestHandlerMust(t, downloader.FullSync, 0, nil, nil)
 	defer pm.Stop()
 
 	// Register the peer in pm.peers only — the state handle() is in mid-window.
@@ -901,10 +425,12 @@ func TestRegisterDownloaderPeerUndoesRacedRemoval(t *testing.T) {
 	defer app.Close()
 	var id enode.ID
 	rand.Read(id[:])
-	p := pm.newPeer(xdc165, p2p.NewPeer(id, "race-peer", nil), net, pm.txpool.Get)
-	// peers.Register starts the peer's broadcast goroutines; close the term
-	// channel so they terminate when the test ends.
-	defer p.close()
+	p := &peer{
+		Peer: ethproto.NewPeer(ethproto.XDC165, p2p.NewPeer(id, "race-peer", nil), net, pm.txpool.Get),
+	}
+	// NewPeer has already started the peer's broadcast goroutines; close the
+	// term channel so they terminate when the test ends.
+	defer p.Close()
 	if err := pm.peers.Register(p); err != nil {
 		t.Fatalf("failed to register test peer: %v", err)
 	}
@@ -912,8 +438,8 @@ func TestRegisterDownloaderPeerUndoesRacedRemoval(t *testing.T) {
 		t.Fatalf("peer set size mismatch: got %d want 1", pm.peers.Len())
 	}
 	// A BFT broadcaster's failing send removes the peer inside the window.
-	pm.removePeer(p.id)
-	if pm.peers.Peer(p.id) != nil {
+	pm.removePeer(p.ID())
+	if pm.peers.Peer(p.ID()) != nil {
 		t.Fatal("peer still present after removePeer")
 	}
 	// The recheck must undo the registration and abort the handshake.
@@ -921,8 +447,188 @@ func TestRegisterDownloaderPeerUndoesRacedRemoval(t *testing.T) {
 		t.Fatalf("registerDownloaderPeer should abort with DiscUselessPeer a handshake whose removal was already claimed, got: %v", err)
 	}
 	// A reconnect of the same node id must not be blocked by a stale entry.
-	if err := pm.downloader.RegisterPeer(p.id, p.version, p); err != nil {
+	if err := pm.downloader.RegisterPeer(p.ID(), p.Version(), p); err != nil {
 		t.Fatalf("reconnect blocked by stale downloader entry: %v", err)
 	}
-	pm.downloader.UnregisterPeer(p.id)
+	pm.downloader.UnregisterPeer(p.ID())
+}
+
+// newTestProposedBlockHandler builds an ethash handler, whose chain has no
+// consensus engine, so newHandler wires the no-op callback.
+func newTestProposedBlockHandler(t *testing.T, mode downloader.SyncMode) (*handler, ethdb.Database) {
+	t.Helper()
+	var (
+		evmux  = new(event.TypeMux)
+		pow    = ethash.NewFaker()
+		db     = rawdb.NewMemoryDatabase()
+		config = params.TestChainConfig.Clone()
+		gspec  = &core.Genesis{Config: config}
+	)
+	gspec.MustCommit(db)
+	blockchain, err := core.NewBlockChain(db, nil, gspec, pow, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create new blockchain: %v", err)
+	}
+	pm, err := newHandler(&handlerConfig{
+		Database:    db,
+		Chain:       blockchain,
+		TxPool:      &testTxPool{pool: make(map[common.Hash]*types.Transaction)},
+		Network:     ethconfig.Defaults.NetworkId,
+		Sync:        mode,
+		EventMux:    evmux,
+		ChainConfig: config,
+		Engine:      pow,
+	})
+	if err != nil {
+		t.Fatalf("failed to start test handler: %v", err)
+	}
+	pm.Start(1000)
+	return pm, db
+}
+
+// TestFetcherWiresNoopHandlerWithoutConsensus pins the non-XDPoS wiring: no
+// consensus engine means an explicit no-op, silent in either sync mode.
+func TestFetcherWiresNoopHandlerWithoutConsensus(t *testing.T) {
+	logBuf := new(lockedBuffer)
+	prevLog := log.Root()
+	glog := log.NewGlogHandler(log.NewTerminalHandlerWithLevel(logBuf, log.LevelDebug, false))
+	glog.Verbosity(log.LevelDebug)
+	log.SetDefault(log.NewLogger(glog))
+	defer log.SetDefault(prevLog)
+
+	for _, mode := range []downloader.SyncMode{downloader.FastSync, downloader.FullSync} {
+		pm, _ := newTestProposedBlockHandler(t, mode)
+		defer pm.Stop()
+		if pm.fetcherHandleProposedBlock == nil {
+			t.Fatal("fetcher must be wired with a proposed-block handler")
+		}
+		if err := pm.fetcherHandleProposedBlock(pm.chain.CurrentBlock()); err != nil {
+			t.Fatalf("no-op fetcher handler returned error: %v", err)
+		}
+		if strings.Contains(logBuf.String(), "skipped proposed block handler") {
+			t.Fatalf("non-XDPoS manager must wire a no-op without gate logs, have %q", logBuf.String())
+		}
+		logBuf.Reset()
+	}
+}
+
+// TestFetcherProposedBlockHandlerGates exercises the closure directly: fast
+// sync skips, full sync passes an executed block through, unexecuted state is
+// skipped with a Warn and counted independent of the flag, and a nil header
+// fails the SkipNilHeader guard without panicking.
+func TestFetcherProposedBlockHandlerGates(t *testing.T) {
+	logBuf := new(lockedBuffer)
+	prevLog := log.Root()
+	glog := log.NewGlogHandler(log.NewTerminalHandlerWithLevel(logBuf, log.LevelDebug, false))
+	glog.Verbosity(log.LevelDebug)
+	log.SetDefault(log.NewLogger(glog))
+	defer log.SetDefault(prevLog)
+
+	pm, db := newTestProposedBlockHandler(t, downloader.FullSync)
+	defer pm.Stop()
+	called := false
+	gated := newFetcherProposedBlockHandler(pm, func(*types.Header) error {
+		called = true
+		return nil
+	})
+
+	// During fast sync the closure must skip before reaching the handler.
+	atomic.StoreUint32(&pm.snapSync, 1)
+	if err := gated(pm.chain.CurrentBlock()); err != nil {
+		t.Fatalf("gated handler returned error in fast sync: %v", err)
+	}
+	if called {
+		t.Fatal("fast sync call must not reach the consensus handler")
+	}
+	if !strings.Contains(logBuf.String(), "skipped proposed block handler during fast sync") {
+		t.Fatalf("fast sync skip not logged, have %q", logBuf.String())
+	}
+	logBuf.Reset()
+
+	// With fast sync off, the same call reaches the handler.
+	atomic.StoreUint32(&pm.snapSync, 0)
+	if err := gated(pm.chain.CurrentBlock()); err != nil {
+		t.Fatalf("gated handler returned error in full sync: %v", err)
+	}
+	if !called {
+		t.Fatal("full sync call must reach the consensus handler")
+	}
+	if strings.Contains(logBuf.String(), "skipped proposed block handler") {
+		t.Fatalf("executed genesis block must pass both gates, have %q", logBuf.String())
+	}
+	logBuf.Reset()
+
+	// The flag alone is read too late: Synchronise can clear it between the
+	// insert and this callback. Forge a block whose header and body are stored
+	// (so GetBlock finds it) but whose root exists nowhere in the state database,
+	// so the OpenTrie half is what fails — mutating the current header's root
+	// would change its hash and fail at GetBlock instead.
+	current := pm.chain.CurrentBlock()
+	unexecuted := types.CopyHeader(current)
+	unexecuted.Root = common.HexToHash("0xdeadbeef")
+	unexecuted.Number = new(big.Int).Add(current.Number, big.NewInt(1))
+	rawdb.WriteBlock(db, types.NewBlockWithHeader(unexecuted))
+	called = false
+	before := skippedProposedBlockState.Snapshot().Count()
+	if err := gated(unexecuted); err != nil {
+		t.Fatalf("gated handler returned error for unexecuted state: %v", err)
+	}
+	if called {
+		t.Fatal("unexecuted-state call must not reach the consensus handler")
+	}
+	if !strings.Contains(logBuf.String(), "state not executed") {
+		t.Fatalf("state guard skip not logged, have %q", logBuf.String())
+	}
+	if got := skippedProposedBlockState.Snapshot().Count(); got != before+1 {
+		t.Fatalf("state guard skip not counted, before = %d, after = %d", before, got)
+	}
+	if strings.Contains(logBuf.String(), "skipped proposed block handler during fast sync") {
+		t.Fatalf("state guard must be independent of the snapSync flag, have %q", logBuf.String())
+	}
+	logBuf.Reset()
+	called = false
+
+	// A nil header or nil number fails the SkipNilHeader guard instead of
+	// panicking, without reaching the handler or moving the counter.
+	skippedBefore := skippedProposedBlockState.Snapshot().Count()
+	for _, nilCase := range []*types.Header{nil, {}} {
+		if err := gated(nilCase); err != nil {
+			t.Fatalf("gated handler returned error for nil header: %v", err)
+		}
+	}
+	if called {
+		t.Fatal("nil header must not reach the consensus handler")
+	}
+	if !strings.Contains(logBuf.String(), "nil header") {
+		t.Fatalf("nil header skip not logged, have %q", logBuf.String())
+	}
+	if got := skippedProposedBlockState.Snapshot().Count(); got != skippedBefore {
+		t.Fatalf("nil header must not move the state counter, before = %d, after = %d", skippedBefore, got)
+	}
+}
+
+// TestProposedBlockStateReady pins the state predicate the fetcher gate and the
+// sign hook share: a block this node cannot open the state for is neither voted
+// for nor signed, so both callers must get the same answer.
+func TestProposedBlockStateReady(t *testing.T) {
+	pm, db := newTestProposedBlockHandler(t, downloader.FullSync)
+	defer pm.Stop()
+
+	if !pm.proposedBlockStateReady(pm.chain.CurrentBlock()) {
+		t.Fatal("an executed head must be ready")
+	}
+	// Same forge as the gate test above: the block is stored with a body, so the
+	// block half passes and only the state half can refuse it.
+	current := pm.chain.CurrentBlock()
+	unexecuted := types.CopyHeader(current)
+	unexecuted.Root = common.HexToHash("0xdeadbeef")
+	unexecuted.Number = new(big.Int).Add(current.Number, big.NewInt(1))
+	rawdb.WriteBlock(db, types.NewBlockWithHeader(unexecuted))
+	if pm.proposedBlockStateReady(unexecuted) {
+		t.Fatal("a block whose state root does not open must not be ready")
+	}
+	// The sign hook passes block.Header(), but neither nil shape may panic.
+	if pm.proposedBlockStateReady(nil) || pm.proposedBlockStateReady(&types.Header{}) {
+		t.Fatal("a nil header or a header without a number must not be ready")
+	}
 }

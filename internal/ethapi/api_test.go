@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"strings"
 	"testing"
@@ -1353,6 +1354,93 @@ func TestSimulateV1(t *testing.T) {
 	require.ErrorContains(t, err, "too many blocks")
 }
 
+// TestSimulateV1TransferLogs verifies that traceTransfers reports each ether
+// transfer exactly once across the Amsterdam boundary: before the fork the
+// tracer synthesizes an ERC-20 style log from the ERC-7528 sentinel address,
+// after it only the protocol-emitted EIP-7708 log remains.
+func TestSimulateV1TransferLogs(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sender    = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+		recipient = common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+		value     = big.NewInt(1000)
+	)
+	run := func(t *testing.T, amsterdam bool, wantAddr common.Address) {
+		t.Helper()
+
+		// The genesis config only has to be valid; the simulator takes the fork
+		// rules from the backend config, so Amsterdam is scheduled there.
+		genesis := &core.Genesis{
+			Config: params.MergedTestChainConfig,
+			Alloc:  types.GenesisAlloc{sender: {Balance: big.NewInt(params.Ether)}},
+		}
+		db := rawdb.NewMemoryDatabase()
+		block := genesis.MustCommit(db)
+		stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+		require.NoError(t, err)
+
+		backend := &simulateBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: newBackendMock(),
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			gasCap: 30_000_000,
+		}
+		if amsterdam {
+			backend.config.AmsterdamBlock = big.NewInt(0)
+		} else {
+			backend.config.AmsterdamBlock = nil
+		}
+		api := NewBlockChainAPI(backend, nil)
+		result, err := api.SimulateV1(context.Background(), simOpts{
+			TraceTransfers: true,
+			BlockStateCalls: []simBlock{{Calls: []TransactionArgs{{
+				From:  &sender,
+				To:    &recipient,
+				Value: (*hexutil.Big)(value),
+			}}}},
+		}, nil)
+		require.NoError(t, err)
+
+		type transferLog struct {
+			Address common.Address `json:"address"`
+			Topics  []common.Hash  `json:"topics"`
+			Data    hexutil.Bytes  `json:"data"`
+		}
+		type callSummary struct {
+			Logs []transferLog `json:"logs"`
+		}
+		type blockSummary struct {
+			Calls []callSummary `json:"calls"`
+		}
+		encoded, err := json.Marshal(result)
+		require.NoError(t, err)
+		var summary []blockSummary
+		require.NoError(t, json.Unmarshal(encoded, &summary))
+		require.Len(t, summary, 1)
+		require.Len(t, summary[0].Calls, 1)
+		require.Len(t, summary[0].Calls[0].Logs, 1, "transfer must be reported exactly once")
+
+		log := summary[0].Calls[0].Logs[0]
+		require.Equal(t, wantAddr, log.Address)
+		require.Equal(t, []common.Hash{
+			transferTopic,
+			common.BytesToHash(sender.Bytes()),
+			common.BytesToHash(recipient.Bytes()),
+		}, log.Topics)
+		require.Equal(t, common.BigToHash(value).Bytes(), []byte(log.Data))
+	}
+	t.Run("pre-amsterdam", func(t *testing.T) {
+		run(t, false, transferAddress)
+	})
+	t.Run("post-amsterdam", func(t *testing.T) {
+		run(t, true, params.SystemAddress)
+	})
+}
+
 // TestSimulateV1Multicall3StateOverride covers the account the Prague install owns. The
 // install runs after the caller's state overrides, so an override of its code would either
 // trip the consensus panic that guards a diverging contract or be undone by the install.
@@ -1434,6 +1522,153 @@ func TestSimulateV1Multicall3StateOverride(t *testing.T) {
 	require.NoError(t, simulate(t, override.StateOverride{
 		recipient: override.OverrideAccount{Code: &nonCanonicalCode},
 	}))
+}
+
+// TestSimulateV1DeterministicFactoryStateOverride covers the account the Amsterdam
+// EIP-7997 install owns. The install runs after the caller's state overrides, so an
+// override of its code would either trip the consensus panic that guards a diverging
+// contract or be undone by the install, and an override of its nonce would be replaced
+// by the nonce 1 the install writes. The fields the install does not touch stay
+// overridable.
+func TestSimulateV1DeterministicFactoryStateOverride(t *testing.T) {
+	t.Parallel()
+
+	sender := common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+	newAPI := func(t *testing.T, amsterdamBlock *big.Int, extraAlloc types.GenesisAlloc) (*BlockChainAPI, *params.ChainConfig, *big.Int) {
+		t.Helper()
+		alloc := types.GenesisAlloc{sender: {Balance: big.NewInt(params.Ether)}}
+		for addr, account := range extraAlloc {
+			alloc[addr] = account
+		}
+		genesis := &core.Genesis{
+			Config: params.MergedTestChainConfig,
+			Alloc:  alloc,
+		}
+		db := rawdb.NewMemoryDatabase()
+		block := genesis.MustCommit(db)
+		stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+		require.NoError(t, err)
+		backend := &simulateBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: newBackendMock(),
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			gasCap: 30_000_000,
+		}
+		// The mock backend carries its own chain config, so the forks have to be
+		// scheduled there too for the simulated blocks to take their state changes.
+		backend.config.PragueBlock = big.NewInt(0)
+		backend.config.OsakaBlock = big.NewInt(0)
+		backend.config.AmsterdamBlock = amsterdamBlock
+		return NewBlockChainAPI(backend, nil), backend.config, block.Number()
+	}
+	recipient := common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	calls := []TransactionArgs{{From: &sender, To: &recipient, Value: (*hexutil.Big)(big.NewInt(1))}}
+	simulate := func(t *testing.T, api *BlockChainAPI, overrides override.StateOverride, extra ...simBlock) error {
+		t.Helper()
+		req := append([]simBlock{{StateOverrides: &overrides, Calls: calls}}, extra...)
+		_, err := api.SimulateV1(context.Background(), simOpts{BlockStateCalls: req}, nil)
+		return err
+	}
+	assertRefused := func(t *testing.T, err error, want string, msgAndArgs ...interface{}) {
+		t.Helper()
+		var invalidReqErr *invalidParamsError
+		require.ErrorAs(t, err, &invalidReqErr, msgAndArgs...)
+		require.Contains(t, invalidReqErr.message, want, msgAndArgs...)
+	}
+
+	nonCanonicalCode := hexutil.Bytes(common.FromHex("0x60006000fd"))
+	canonicalCode := hexutil.Bytes(params.DeterministicFactoryCode)
+	emptyCode := hexutil.Bytes{}
+	zeroNonce := (*hexutil.Uint64)(new(uint64))
+	foreignNonce := (*hexutil.Uint64)(new(uint64))
+	*foreignNonce = 5
+	for _, tc := range []struct {
+		name     string
+		override override.OverrideAccount
+	}{
+		{"code diverging from the canonical runtime code", override.OverrideAccount{Code: &nonCanonicalCode}},
+		{"empty code", override.OverrideAccount{Code: &emptyCode}},
+		{"canonical code", override.OverrideAccount{Code: &canonicalCode}},
+		{"zero nonce of an account the install will create", override.OverrideAccount{Nonce: zeroNonce}},
+	} {
+		api, config, base := newAPI(t, big.NewInt(0), nil)
+		require.True(t, config.IsAmsterdam(new(big.Int).Add(base, big.NewInt(1))),
+			"the test chain must activate Amsterdam at the first simulated block")
+		assertRefused(t, simulate(t, api, override.StateOverride{params.DeterministicFactoryAddress: tc.override}), "EIP-7997", tc.name)
+	}
+	// The request shares one state, so an override planted before the activation still
+	// reaches the first Amsterdam-active block and its install.
+	api, config, base := newAPI(t, big.NewInt(3), nil)
+	require.False(t, config.IsAmsterdam(new(big.Int).Add(base, big.NewInt(1))),
+		"the test chain must activate Amsterdam after the block the override lands on")
+	err := simulate(t, api, override.StateOverride{
+		params.DeterministicFactoryAddress: override.OverrideAccount{Code: &nonCanonicalCode},
+	}, simBlock{Calls: calls}, simBlock{Calls: calls})
+	assertRefused(t, err, "block 3 of the request writes it")
+
+	// The install leaves the balance and the storage of the account alone, so they stay
+	// overridable, and so does every account it does not own.
+	api, _, _ = newAPI(t, big.NewInt(0), nil)
+	require.NoError(t, simulate(t, api, override.StateOverride{
+		params.DeterministicFactoryAddress: override.OverrideAccount{Balance: (*hexutil.Big)(big.NewInt(1))},
+	}))
+	// A storage override survives the install the same way: the install writes the code
+	// and the nonce only. A fresh backend is needed for the same reason as below.
+	api, _, _ = newAPI(t, big.NewInt(0), nil)
+	require.NoError(t, simulate(t, api, override.StateOverride{
+		params.DeterministicFactoryAddress: override.OverrideAccount{State: map[common.Hash]common.Hash{{0x01}: {0x02}}},
+	}), "a storage override survives the install")
+	// The install raises a zero nonce to 1 and preserves any other, so a nonzero
+	// override survives on the account the install builds. A fresh backend is needed:
+	// the mock hands out one state, which the call above already installed into.
+	api, _, _ = newAPI(t, big.NewInt(0), nil)
+	require.NoError(t, simulate(t, api, override.StateOverride{
+		params.DeterministicFactoryAddress: override.OverrideAccount{Nonce: foreignNonce},
+	}), "a nonzero nonce override survives the install")
+	// A chain that already carries the canonical code (the upstream genesis way, or
+	// any block after the install) keeps the nonce overridable: the install skips an
+	// account whose code is present and never writes the nonce.
+	api, _, _ = newAPI(t, big.NewInt(0), types.GenesisAlloc{
+		params.DeterministicFactoryAddress: {Nonce: 1, Code: params.DeterministicFactoryCode, Balance: big.NewInt(0)},
+	})
+	require.NoError(t, simulate(t, api, override.StateOverride{
+		params.DeterministicFactoryAddress: override.OverrideAccount{Nonce: zeroNonce},
+	}), "a nonce override stays allowed once the canonical code is installed")
+	require.NoError(t, simulate(t, api, override.StateOverride{
+		recipient: override.OverrideAccount{Code: &nonCanonicalCode},
+	}))
+	// A move onto the account stays allowed, as the install is a state write the move
+	// does not undo. The move is issued on the precompile's address, so the guard looks
+	// at the target.
+	movedToFactory := params.DeterministicFactoryAddress
+	require.NoError(t, simulate(t, api, override.StateOverride{
+		common.BytesToAddress([]byte{1}): {MovePrecompileTo: &movedToFactory},
+	}), "a precompile moved onto the factory account stays overridable")
+
+	// The install judges the state the request produced, not only the overrides: a block
+	// before the activation can create a contract at the keyless address the factory was
+	// deployed from (0x3fab... at nonce 0), which the first Amsterdam block would refuse
+	// by panicking, so the guard reports a validation error instead.
+	keyless := common.HexToAddress("0x3fab184622dc19b6109349b94811493bf2a45362")
+	init := hexutil.Bytes(common.FromHex("0x60016000f3")) // returns the runtime code 0x00
+	nonce, gas := hexutil.Uint64(0), hexutil.Uint64(100_000)
+	create := TransactionArgs{From: &keyless, Nonce: &nonce, Input: &init, Gas: &gas}
+
+	api, config, base = newAPI(t, big.NewInt(3), nil)
+	require.False(t, config.IsAmsterdam(new(big.Int).Add(base, big.NewInt(1))),
+		"the test chain must activate Amsterdam after the block that runs the create")
+	err = simulate(t, api, override.StateOverride{}, simBlock{Calls: []TransactionArgs{create}}, simBlock{Calls: calls})
+	assertRefused(t, err, "EIP-7997", "a cross-fork create at the factory address")
+
+	// A block before the activation does not run the install, so it judges no code.
+	api, _, _ = newAPI(t, big.NewInt(3), types.GenesisAlloc{
+		params.DeterministicFactoryAddress: {Nonce: 1, Code: nonCanonicalCode},
+	})
+	require.NoError(t, simulate(t, api, override.StateOverride{}, simBlock{Calls: calls}),
+		"a block before the activation does not judge the factory code")
 }
 
 // TestSimulateV1ChainLinkage tests simulate v 1 chain linkage.
@@ -1530,6 +1765,181 @@ func TestSimulateV1TxSender(t *testing.T) {
 	require.Equal(t, common.Address{}, summary[0].Transactions[2].From)
 	require.Len(t, summary[1].Transactions, 1)
 	require.Equal(t, common.Address{}, summary[1].Transactions[0].From)
+}
+
+// TestSimulateV1ZeroGasCap tests that a zero RPC gas cap, documented as
+// unlimited, does not leave the simulator gas pool empty. The pool used to hold
+// no gas, so buyGas rejected every call before the EVM ran.
+func TestSimulateV1ZeroGasCap(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sender    = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+		recipient = common.HexToAddress("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+	)
+	// Each subtest gets its own backend: SimulateV1 mutates the state, so a
+	// shared one would leak nonces and balances between the cases.
+	newAPI := func(t *testing.T, gasCap uint64) *BlockChainAPI {
+		t.Helper()
+		base := newBackendMock()
+		// newBackendMock schedules EIP-1559 at block 1000 while the request starts
+		// at block 1. Schedule London and EIP-1559 at genesis, as the genesis
+		// config does, so validation mode runs the fee checks instead of skipping
+		// them. The genesis keeps MergedTestChainConfig: the mock's reduced config
+		// carries no XDPoS fork switch, so the genesis commit rejects it.
+		base.config.LondonBlock = big.NewInt(0)
+		base.config.EIP1559Block = big.NewInt(0)
+		genesis := &core.Genesis{
+			Config: params.MergedTestChainConfig,
+			Alloc: types.GenesisAlloc{
+				sender: {Balance: big.NewInt(params.Ether)},
+			},
+		}
+		db := rawdb.NewMemoryDatabase()
+		block := genesis.MustCommit(db)
+		stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+		require.NoError(t, err)
+		mock := &simulateBackendMock{
+			estimateBackendMock: &estimateBackendMock{
+				backendMock: base,
+				stateDB:     stateDB,
+				header:      block.Header(),
+				engine:      ethash.NewFaker(),
+			},
+			gasCap: gasCap,
+		}
+		// simulateBackendMock maps a zero gasCap field to the 30M default, so only
+		// the wrapper can report the zero cap that the flag documents as unlimited.
+		var backend Backend = mock
+		if gasCap == 0 {
+			backend = &zeroGasCapSimulateBackendMock{simulateBackendMock: mock}
+		}
+		return NewBlockChainAPI(backend, nil)
+	}
+	// callStatuses flattens the response to one status list per simulated block.
+	callStatuses := func(t *testing.T, results []map[string]interface{}) [][]string {
+		t.Helper()
+		enc, err := json.Marshal(results)
+		require.NoError(t, err)
+		var summary []struct {
+			Calls []struct {
+				Status string `json:"status"`
+			} `json:"calls"`
+		}
+		require.NoError(t, json.Unmarshal(enc, &summary))
+		statuses := make([][]string, len(summary))
+		for i, block := range summary {
+			for _, call := range block.Calls {
+				statuses[i] = append(statuses[i], call.Status)
+			}
+		}
+		return statuses
+	}
+	transfer := func(value int64) TransactionArgs {
+		return TransactionArgs{From: &sender, To: &recipient, Value: (*hexutil.Big)(big.NewInt(value))}
+	}
+
+	t.Run("default gas", func(t *testing.T) {
+		results, err := newAPI(t, 0).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{transfer(1)},
+		}}}, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]string{{"0x1"}}, callStatuses(t, results))
+	})
+
+	t.Run("explicit gas", func(t *testing.T) {
+		gas := hexutil.Uint64(25_000)
+		call := transfer(1)
+		call.Gas = &gas
+		results, err := newAPI(t, 0).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{call},
+		}}}, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]string{{"0x1"}}, callStatuses(t, results))
+	})
+
+	t.Run("multiple blocks", func(t *testing.T) {
+		results, err := newAPI(t, 0).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{
+			{Calls: []TransactionArgs{transfer(1)}},
+			{Calls: []TransactionArgs{transfer(2)}},
+		}}, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]string{{"0x1"}, {"0x1"}}, callStatuses(t, results))
+	})
+
+	t.Run("block gas limit still applies", func(t *testing.T) {
+		limit := hexutil.Uint64(100_000)
+		firstGas, secondGas := hexutil.Uint64(100_000), hexutil.Uint64(100_000)
+		first, second := transfer(1), transfer(2)
+		first.Gas, second.Gas = &firstGas, &secondGas
+		_, err := newAPI(t, 0).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			BlockOverrides: &override.BlockOverrides{GasLimit: &limit},
+			Calls:          []TransactionArgs{first, second},
+		}}}, nil)
+		require.ErrorContains(t, err, "block gas limit reached")
+	})
+
+	t.Run("explicit gas over the block limit", func(t *testing.T) {
+		// A call gas near MaxUint64 must not wrap the block limit check below the
+		// limit: the first call has already used gas, so a sum would overflow.
+		first := transfer(1)
+		huge := hexutil.Uint64(math.MaxUint64)
+		second := transfer(2)
+		second.Gas = &huge
+		_, err := newAPI(t, 0).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{first, second},
+		}}}, nil)
+		require.ErrorContains(t, err, "block gas limit reached")
+	})
+
+	t.Run("non-zero cap still applies", func(t *testing.T) {
+		// Both calls fit the block gas limit but not the 21k request wide cap:
+		// the first one drains the pool, the second is rejected by buyGas.
+		firstGas, secondGas := hexutil.Uint64(21_000), hexutil.Uint64(21_000)
+		first, second := transfer(1), transfer(2)
+		first.Gas, second.Gas = &firstGas, &secondGas
+		_, err := newAPI(t, 21_000).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{first, second},
+		}}}, nil)
+		require.ErrorContains(t, err, "gas limit reached")
+	})
+
+	t.Run("tiny non-zero cap still applies", func(t *testing.T) {
+		// The cap is a limit even at one gas: CallDefaults squeezes the call gas
+		// down to the pool, so the EVM rejects it for intrinsic gas. Treating
+		// small caps as unlimited would run the call instead.
+		_, err := newAPI(t, 1).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{transfer(1)},
+		}}}, nil)
+		require.ErrorContains(t, err, "intrinsic gas too low")
+	})
+
+	t.Run("cap funds one call", func(t *testing.T) {
+		// A pool stuck at zero would also error the two-call case above, so
+		// verify that a call fitting under the cap still runs.
+		gas := hexutil.Uint64(21_000)
+		call := transfer(1)
+		call.Gas = &gas
+		results, err := newAPI(t, 21_000).SimulateV1(context.Background(), simOpts{BlockStateCalls: []simBlock{{
+			Calls: []TransactionArgs{call},
+		}}}, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]string{{"0x1"}}, callStatuses(t, results))
+	})
+
+	t.Run("validation", func(t *testing.T) {
+		// Validation mode keeps the base fee, so the call carries explicit fee caps
+		// at least as high as the overridden base fee.
+		call := transfer(1)
+		call.MaxFeePerGas = (*hexutil.Big)(big.NewInt(2))
+		call.MaxPriorityFeePerGas = (*hexutil.Big)(big.NewInt(1))
+		results, err := newAPI(t, 0).SimulateV1(context.Background(), simOpts{Validation: true, BlockStateCalls: []simBlock{{
+			BlockOverrides: &override.BlockOverrides{BaseFeePerGas: (*hexutil.Big)(big.NewInt(1))},
+			Calls:          []TransactionArgs{call},
+		}}}, nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]string{{"0x1"}}, callStatuses(t, results))
+	})
 }
 
 // TestSignTransaction tests sign transaction.
@@ -2410,6 +2820,10 @@ func (b *blockLookupBackendMock) GetTd(ctx context.Context, hash common.Hash) *b
 
 func (b *receiptBackendMock) ChainDb() ethdb.Database {
 	return b.db
+}
+
+func (b *receiptBackendMock) ReadTransaction(hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+	return rawdb.ReadTransaction(b.db, hash)
 }
 
 func (b *receiptBackendMock) GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error) {
@@ -3396,6 +3810,10 @@ func (b *txLookupBackendMock) ChainDb() ethdb.Database {
 	return b.db
 }
 
+func (b *txLookupBackendMock) ReadTransaction(hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+	return rawdb.ReadTransaction(b.db, hash)
+}
+
 func (b *txLookupBackendMock) HeaderByHash(ctx context.Context, hash common.Hash) (*types.Header, error) {
 	if b.headerErr != nil {
 		return nil, b.headerErr
@@ -3538,6 +3956,10 @@ func (b *ethereumAPIBackendMock) Downloader() *downloader.Downloader {
 
 func (b *proofBackendMock) ChainDb() ethdb.Database {
 	return b.db
+}
+
+func (b *proofBackendMock) ReadTransaction(hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+	return rawdb.ReadTransaction(b.db, hash)
 }
 
 func (b *proofBackendMock) GetBlock(ctx context.Context, hash common.Hash) (*types.Block, error) {
@@ -4810,6 +5232,15 @@ type simulateBackendMock struct {
 	*estimateBackendMock
 	gasCap uint64
 }
+
+// zeroGasCapSimulateBackendMock reports a zero RPC gas cap, which the flag
+// documents as unlimited. simulateBackendMock cannot express it: its zero gasCap
+// field means the 30M default.
+type zeroGasCapSimulateBackendMock struct {
+	*simulateBackendMock
+}
+
+func (b *zeroGasCapSimulateBackendMock) RPCGasCap() uint64 { return 0 }
 
 // TestSignTransactionSetCodeBasic tests sign transaction set code basic.
 func TestSignTransactionSetCodeBasic(t *testing.T) {
@@ -6284,6 +6715,79 @@ func TestDoCallInvalidStateOverride(t *testing.T) {
 	require.ErrorContains(t, err, "has both 'state' and 'stateDiff'")
 }
 
+// zeroGasCapBackendMock adds the XDCx service and EVM plumbing that
+// applyMessage needs on top of callBackendMock.
+type zeroGasCapBackendMock struct {
+	*callBackendMock
+}
+
+func (b *zeroGasCapBackendMock) ChainConfig() *params.ChainConfig {
+	return params.MergedTestChainConfig
+}
+
+func (b *zeroGasCapBackendMock) XDCxService() *XDCx.XDCX {
+	return &XDCx.XDCX{StateCache: tradingstate.NewDatabase(rawdb.NewMemoryDatabase())}
+}
+
+func (b *zeroGasCapBackendMock) GetEVM(ctx context.Context, state *state.StateDB, XDCxState *tradingstate.TradingStateDB, header *types.Header, vmConfig *vm.Config, blockContext *vm.BlockContext) (*vm.EVM, func() error, error) {
+	return vm.NewEVM(*blockContext, state, XDCxState, b.ChainConfig(), *vmConfig), func() error { return nil }, nil
+}
+
+// TestDoCallZeroGasCap checks that a zero RPC gas cap leaves the call with an
+// effectively unlimited pool rather than an empty one.
+func TestDoCallZeroGasCap(t *testing.T) {
+	t.Parallel()
+
+	db := rawdb.NewMemoryDatabase()
+	genesis := (&core.Genesis{Config: params.MergedTestChainConfig}).MustCommit(db)
+	stateDB, err := state.New(genesis.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	block := types.NewBlock(genesis.Header(), &types.Body{}, nil, newHasher())
+	from := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	to := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	backend := &zeroGasCapBackendMock{
+		callBackendMock: &callBackendMock{
+			backendMock: newBackendMock(),
+			stateDB:     stateDB,
+			header:      genesis.Header(),
+			block:       block,
+		},
+	}
+	latest := rpc.BlockNumberOrHashWithNumber(rpc.LatestBlockNumber)
+
+	// GAS; PUSH1 0; MSTORE; PUSH1 32; PUSH1 0; RETURN returns the gas left at
+	// entry as a 32-byte word, so a finite cap cannot pass for an unbounded pool.
+	code := hexutil.Bytes{0x5a, 0x60, 0x00, 0x52, 0x60, 0x20, 0x60, 0x00, 0xf3}
+	overrides := override.StateOverride{to: override.OverrideAccount{Code: &code}}
+
+	tests := []struct {
+		name      string
+		gasCap    uint64
+		unbounded bool
+	}{
+		{"zero cap is unlimited", 0, true},
+		{"finite cap still bounds the call", 50_000, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := DoCall(context.Background(), backend, TransactionArgs{From: &from, To: &to}, latest, &overrides, nil, 0, tt.gasCap)
+			require.NoError(t, err)
+			require.NotNil(t, result)
+			require.Len(t, result.ReturnData, 32)
+
+			gasLeft := new(big.Int).SetBytes(result.ReturnData).Uint64()
+			if tt.unbounded {
+				require.Greater(t, gasLeft, uint64(math.MaxUint64)-1_000_000)
+			} else {
+				require.Less(t, gasLeft, tt.gasCap)
+			}
+			// The contract returns immediately; the unbounded pool must not be spent.
+			require.Less(t, result.UsedGas, uint64(100_000))
+		})
+	}
+}
+
 // TestRPCMarshalHeaderBaseFeeField tests rpc marshal header base fee field.
 func TestRPCMarshalHeaderBaseFeeField(t *testing.T) {
 	t.Parallel()
@@ -7587,5 +8091,233 @@ func TestFindNearestSignedBlockWhenEngineIsNotXDPoS(t *testing.T) {
 	block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(1100)})
 	if got := api.findNearestSignedBlock(context.Background(), block); got != nil {
 		t.Fatalf("findNearestSignedBlock with a non-XDPoS engine: have %v, want nil", got)
+	}
+}
+
+// newSimulateTracerTestAPI builds a BlockChainAPI over a fresh in-memory chain
+// that holds alloc and funds sender with one ether. Every fork up to Amsterdam
+// is enabled.
+func newSimulateTracerTestAPI(t *testing.T, sender common.Address, alloc types.GenesisAlloc) *BlockChainAPI {
+	t.Helper()
+
+	config := *params.AllEthashProtocolChanges
+	funded := types.GenesisAlloc{sender: {Balance: big.NewInt(params.Ether)}}
+	for addr, account := range alloc {
+		funded[addr] = account
+	}
+	genesis := &core.Genesis{Config: &config, Alloc: funded}
+	db := rawdb.NewMemoryDatabase()
+	block := genesis.MustCommit(db)
+	stateDB, err := state.New(block.Root(), state.NewDatabase(db))
+	require.NoError(t, err)
+
+	backend := &simulateBackendMock{
+		estimateBackendMock: &estimateBackendMock{
+			backendMock: newBackendMock(),
+			stateDB:     stateDB,
+			header:      block.Header(),
+			engine:      ethash.NewFaker(),
+		},
+		gasCap: 30_000_000,
+	}
+	backend.config = &config
+	return NewBlockChainAPI(backend, nil)
+}
+
+// simulateLogs runs one simulated block and returns the log index of every
+// reported log, in call order.
+func simulateLogs(t *testing.T, api *BlockChainAPI, calls []TransactionArgs) []uint64 {
+	t.Helper()
+
+	result, err := api.SimulateV1(context.Background(), simOpts{
+		BlockStateCalls: []simBlock{{Calls: calls}},
+	}, nil)
+	require.NoError(t, err)
+
+	type logSummary struct {
+		Index hexutil.Uint64 `json:"logIndex"`
+	}
+	type callSummary struct {
+		Status hexutil.Uint64 `json:"status"`
+		Logs   []logSummary   `json:"logs"`
+	}
+	type blockSummary struct {
+		Calls []callSummary `json:"calls"`
+	}
+	encoded, err := json.Marshal(result)
+	require.NoError(t, err)
+	var summary []blockSummary
+	require.NoError(t, json.Unmarshal(encoded, &summary))
+	require.Len(t, summary, 1)
+
+	var indexes []uint64
+	for _, call := range summary[0].Calls {
+		for _, log := range call.Logs {
+			indexes = append(indexes, uint64(log.Index))
+		}
+	}
+	return indexes
+}
+
+// TestSimulateV1LogIndex checks that logs dropped because their call or an inner
+// call frame failed do not consume a log index, so the reported indices match the
+// numbering in receipts (geth #35841).
+func TestSimulateV1LogIndex(t *testing.T) {
+	t.Parallel()
+
+	var (
+		sender   = common.HexToAddress("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1")
+		reverter = common.HexToAddress("0xc0de000000000000000000000000000000000001")
+		emitter  = common.HexToAddress("0xc0de000000000000000000000000000000000002")
+		outer    = common.HexToAddress("0xc0de000000000000000000000000000000000003")
+		invalid  = common.HexToAddress("0xc0de000000000000000000000000000000000004")
+		// PUSH1 0, PUSH1 0, LOG0, PUSH1 0, PUSH1 0, LOG0, PUSH1 0, PUSH1 0, REVERT
+		// Two logs, so a rollback that releases a single index instead of the
+		// frame's real count cannot pass the index assertions below.
+		reverterCode = hexutil.Bytes{0x60, 0x00, 0x60, 0x00, 0xa0, 0x60, 0x00, 0x60, 0x00, 0xa0, 0x60, 0x00, 0x60, 0x00, 0xfd}
+		// PUSH1 0, PUSH1 0, LOG0, STOP
+		emitterCode = hexutil.Bytes{0x60, 0x00, 0x60, 0x00, 0xa0, 0x00}
+		// PUSH1 0, PUSH1 0, LOG0, INVALID
+		invalidCode = hexutil.Bytes{0x60, 0x00, 0x60, 0x00, 0xa0, 0xfe}
+		// INVALID uses all the gas of its call.
+		invalidGas = hexutil.Uint64(100_000)
+		// LOG0, CALL(gas, reverter, 0, 0, 0, 0, 0) POP, LOG0, STOP
+		outerCode = append(append(
+			hexutil.Bytes{0x60, 0x00, 0x60, 0x00, 0xa0, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x73},
+			reverter.Bytes()...),
+			0x5a, 0xf1, 0x50, 0x60, 0x00, 0x60, 0x00, 0xa0, 0x00,
+		)
+		alloc = types.GenesisAlloc{
+			reverter: {Code: reverterCode},
+			emitter:  {Code: emitterCode},
+			outer:    {Code: outerCode},
+			invalid:  {Code: invalidCode},
+		}
+	)
+	for _, tc := range []struct {
+		name  string
+		calls []TransactionArgs
+		want  []uint64
+	}{
+		{
+			name:  "failed call before a successful one",
+			calls: []TransactionArgs{{From: &sender, To: &reverter}, {From: &sender, To: &emitter}},
+			want:  []uint64{0},
+		},
+		{
+			name:  "failed call without revert",
+			calls: []TransactionArgs{{From: &sender, To: &invalid, Gas: &invalidGas}, {From: &sender, To: &emitter}},
+			want:  []uint64{0},
+		},
+		{
+			name:  "reverted inner frame",
+			calls: []TransactionArgs{{From: &sender, To: &outer}},
+			want:  []uint64{0, 1},
+		},
+		{
+			name:  "indices continue across calls",
+			calls: []TransactionArgs{{From: &sender, To: &emitter}, {From: &sender, To: &reverter}, {From: &sender, To: &emitter}},
+			want:  []uint64{0, 1},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := newSimulateTracerTestAPI(t, sender, alloc)
+			require.Equal(t, tc.want, simulateLogs(t, api, tc.calls))
+		})
+	}
+}
+
+// TestTransferTracerSkipsCallCode pins that the synthetic transfer log is skipped
+// for CALLCODE frames, which move no value, while a plain CALL still captures one
+// (geth #35248).
+func TestTransferTracerSkipsCallCode(t *testing.T) {
+	t.Parallel()
+
+	var (
+		from       = common.HexToAddress("0x00000000000000000000000000000000000000a1")
+		toCall     = common.HexToAddress("0x00000000000000000000000000000000000000a2")
+		toCallCode = common.HexToAddress("0x00000000000000000000000000000000000000a3")
+	)
+	tr := newTracer(true, 1, common.Hash{}, common.Hash{}, 0)
+	tr.reset(common.HexToHash("0x01"), 0)
+	hooks := tr.Hooks()
+
+	// Distinct recipients: the synthesized log only carries from/to, so equal
+	// addresses would hide which frame actually produced it.
+	hooks.OnEnter(0, byte(vm.CALL), from, toCall, nil, 100_000, big.NewInt(1))
+	hooks.OnEnter(1, byte(vm.CALLCODE), from, toCallCode, nil, 100_000, big.NewInt(1))
+	hooks.OnExit(1, nil, 0, nil, false)
+	hooks.OnExit(0, nil, 0, nil, false)
+
+	logs := tr.Logs()
+	require.Len(t, logs, 1, "only the CALL frame moves value")
+	require.Equal(t, transferAddress, logs[0].Address)
+	require.Equal(t, common.BytesToHash(toCall.Bytes()), logs[0].Topics[2], "the CALL frame is the one captured")
+}
+
+// TestTransferTracerReleasesRevertedIndexes pins that a reverted frame releases
+// the log indices it consumed, so the next log reuses them (geth #35841).
+func TestTransferTracerReleasesRevertedIndexes(t *testing.T) {
+	t.Parallel()
+
+	var (
+		from = common.HexToAddress("0x00000000000000000000000000000000000000b1")
+		to   = common.HexToAddress("0x00000000000000000000000000000000000000b2")
+	)
+	tr := newTracer(true, 1, common.Hash{}, common.Hash{}, 0)
+	tr.reset(common.HexToHash("0x02"), 0)
+	hooks := tr.Hooks()
+
+	// The reverted frame holds a synthesized transfer log and a plain one, so the
+	// rollback has to release both indices and to cover transfer logs too.
+	hooks.OnEnter(0, byte(vm.CALL), from, to, nil, 100_000, nil)
+	hooks.OnLog(&types.Log{Address: from})
+	hooks.OnEnter(1, byte(vm.CALL), from, to, nil, 100_000, big.NewInt(1))
+	hooks.OnLog(&types.Log{Address: to})
+	hooks.OnExit(1, nil, 0, nil, true)
+	hooks.OnLog(&types.Log{Address: from})
+	hooks.OnExit(0, nil, 0, nil, false)
+
+	logs := tr.Logs()
+	require.Len(t, logs, 2, "the reverted frame's logs are dropped")
+	require.Equal(t, uint(0), logs[0].Index)
+	require.Equal(t, uint(1), logs[1].Index, "the dropped indices are reused")
+	require.Equal(t, from, logs[1].Address, "the surviving log is the outer one")
+}
+
+// TestXDPoSOnlyRPCsRejectMissingXDPoSConfig pins the guards of the XDC-only
+// RPCs: a chain whose config has no XDPoS section must answer with an error
+// instead of dereferencing the missing config.
+func TestXDPoSOnlyRPCsRejectMissingXDPoSConfig(t *testing.T) {
+	t.Parallel()
+
+	backend := newBackendMock()
+	api := NewBlockChainAPI(backend, nil)
+	ctx := context.Background()
+
+	if _, err := api.GetCandidateStatus(ctx, common.Address{}, 1); !errors.Is(err, errXDPoSConfigMissing) {
+		t.Fatalf("GetCandidateStatus: have %v, want %v", err, errXDPoSConfigMissing)
+	}
+	if _, err := api.GetCandidates(ctx, 1); !errors.Is(err, errXDPoSConfigMissing) {
+		t.Fatalf("GetCandidates: have %v, want %v", err, errXDPoSConfigMissing)
+	}
+	if _, err := api.GetStakerROI(); !errors.Is(err, errXDPoSConfigMissing) {
+		t.Fatalf("GetStakerROI: have %v, want %v", err, errXDPoSConfigMissing)
+	}
+	if _, err := api.GetStakerROIMasternode(common.Address{}); !errors.Is(err, errXDPoSConfigMissing) {
+		t.Fatalf("GetStakerROIMasternode: have %v, want %v", err, errXDPoSConfigMissing)
+	}
+	if _, err := api.GetTokenStats(ctx, 1); !errors.Is(err, errXDPoSConfigMissing) {
+		t.Fatalf("GetTokenStats: have %v, want %v", err, errXDPoSConfigMissing)
+	}
+	if block, epoch, err := api.GetCheckpointFromEpoch(ctx, 2); block != 0 || epoch != 2 || !errors.Is(err, errXDPoSConfigMissing) {
+		t.Fatalf("GetCheckpointFromEpoch: have (%d, %d, %v), want (0, 2, %v)", block, epoch, err, errXDPoSConfigMissing)
+	}
+
+	// A config that names XDPoS keeps the helper usable: the guard must not
+	// reject it, and a non-latest epoch resolves against the configured length.
+	backend.config.XDPoS = &params.XDPoSConfig{Epoch: 900, Gap: 450}
+	if block, epoch, err := api.GetCheckpointFromEpoch(ctx, 2); block != 900 || epoch != 2 || err != nil {
+		t.Fatalf("GetCheckpointFromEpoch with XDPoS config: have (%d, %d, %v), want (900, 2, nil)", block, epoch, err)
 	}
 }

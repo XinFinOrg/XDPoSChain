@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"sync"
@@ -313,6 +314,147 @@ func testHTTPServer(t *testing.T) (*Network, *httptest.Server) {
 	return network, httptest.NewServer(NewServer(network))
 }
 
+// TestStreamNetworkEventsHead checks that HEAD requests return headers without
+// subscribing to the event stream.
+func TestStreamNetworkEventsHead(t *testing.T) {
+	adapter := adapters.NewSimAdapter(testServices)
+	network := NewNetwork(adapter, &NetworkConfig{
+		DefaultService: "test",
+	})
+	srv := NewServer(network)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req := httptest.NewRequest(http.MethodHead, "/events", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		srv.ServeHTTP(rec, req)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("HEAD /events did not return; handler must not subscribe")
+	}
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status code: got %d, want %d", rec.Code, http.StatusOK)
+	}
+	if got, want := rec.Header().Get("Content-Type"), "text/event-stream; charset=utf-8"; got != want {
+		t.Fatalf("unexpected Content-Type: got %q, want %q", got, want)
+	}
+
+	// HEAD must answer like GET does, including the invalid filter case.
+	filterCtx, filterCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer filterCancel()
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, httptest.NewRequest(http.MethodHead, "/events?filter=foo:", nil).WithContext(filterCtx))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("HEAD /events with an invalid filter: got status %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+// TestServerRouting pins the routing contract of the ServeMux based server: the
+// root route only matches "/", so unknown paths must not fall through to it,
+// OPTIONS requests are answered on any path, paths with a trailing slash are
+// not redirected (httprouter answered those with 301), and non-canonical paths
+// are redirected to their cleaned form (httprouter answered those with 404).
+func TestServerRouting(t *testing.T) {
+	adapter := adapters.NewSimAdapter(testServices)
+	network := NewNetwork(adapter, &NetworkConfig{
+		DefaultService: "test",
+	})
+	srv := NewServer(network)
+
+	serve := func(method, path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest(method, path, nil))
+		return rec
+	}
+
+	for _, path := range []string{"/", "/nodes"} {
+		if rec := serve(http.MethodGet, path); rec.Code != http.StatusOK {
+			t.Fatalf("GET %s: got status %d, want %d", path, rec.Code, http.StatusOK)
+		}
+	}
+	for _, path := range []string{"/nope", "/nope/deeper", "/nodes/", "/nodes/abc/", "/events/"} {
+		rec := serve(http.MethodGet, path)
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("GET %s: got status %d, want %d", path, rec.Code, http.StatusNotFound)
+		}
+		if got := rec.Header().Get("Content-Type"); got == "application/json" {
+			t.Fatalf("GET %s: got a JSON payload, want the 404 page", path)
+		}
+	}
+	// ServeMux redirects non-canonical paths (repeated slashes, "." and ".."
+	// elements) to the cleaned path where httprouter answered 404; pin the
+	// redirect so the delta stays deliberate.
+	for _, tt := range []struct{ path, location string }{
+		{"//nodes", "/nodes"},
+		{"/nodes/x/../y", "/nodes/y"},
+	} {
+		rec := serve(http.MethodGet, tt.path)
+		if rec.Code != http.StatusMovedPermanently {
+			t.Fatalf("GET %s: got status %d, want %d", tt.path, rec.Code, http.StatusMovedPermanently)
+		}
+		if got := rec.Header().Get("Location"); got != tt.location {
+			t.Fatalf("GET %s: got Location %q, want %q", tt.path, got, tt.location)
+		}
+	}
+	for _, path := range []string{"/", "/nope"} {
+		rec := serve(http.MethodOptions, path)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("OPTIONS %s: got status %d, want %d", path, rec.Code, http.StatusOK)
+		}
+		if got, want := rec.Header().Get("Access-Control-Allow-Origin"), "*"; got != want {
+			t.Fatalf("OPTIONS %s: got Access-Control-Allow-Origin %q, want %q", path, got, want)
+		}
+		if got, want := rec.Header().Get("Access-Control-Allow-Headers"), "Content-Type"; got != want {
+			t.Fatalf("OPTIONS %s: got Access-Control-Allow-Headers %q, want %q", path, got, want)
+		}
+	}
+}
+
+// TestMuxPathRejectsCatchAll checks that the httprouter catch-all syntax is
+// rejected instead of being registered as a route that never matches.
+func TestMuxPathRejectsCatchAll(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("muxPath accepted a catch-all pattern")
+		}
+	}()
+	muxPath("/nodes/*path")
+}
+
+// TestMuxPathTrailingSlash checks that a registered path with a trailing slash
+// stays an exact match instead of becoming a ServeMux subtree.
+func TestMuxPathTrailingSlash(t *testing.T) {
+	srv := NewServer(NewNetwork(adapters.NewSimAdapter(testServices), &NetworkConfig{
+		DefaultService: "test",
+	}))
+	srv.GET("/foo/", func(http.ResponseWriter, *http.Request) {})
+
+	for _, tt := range []struct {
+		path string
+		want int
+	}{
+		{"/foo/", http.StatusOK},
+		{"/foo", http.StatusMovedPermanently},
+		{"/foo/bar", http.StatusNotFound},
+	} {
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+		if rec.Code != tt.want {
+			t.Fatalf("GET %s: got status %d, want %d", tt.path, rec.Code, tt.want)
+		}
+	}
+}
+
 // TestHTTPNetwork tests interacting with a simulation network using the HTTP
 // API
 func TestHTTPNetwork(t *testing.T) {
@@ -563,6 +705,15 @@ func TestHTTPNodeRPC(t *testing.T) {
 	}
 	if err := client.StartNode(node.ID); err != nil {
 		t.Fatalf("error starting node: %s", err)
+	}
+
+	resp, err := http.Head(s.URL + "/nodes/" + node.ID + "/rpc")
+	if err != nil {
+		t.Fatalf("error sending HEAD to node RPC: %s", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("HEAD node RPC: got status %d, want %d", resp.StatusCode, http.StatusMethodNotAllowed)
 	}
 
 	// create two RPC clients

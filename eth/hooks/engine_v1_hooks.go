@@ -22,6 +22,13 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/params"
 )
 
+// missingEpochBlock names a historical block the penalty scan needs but this node does not
+// hold. It carries consensus.ErrMissingPenaltyBlock, so the checkpoint verifier stops before
+// falling back to the contract signers and core classifies the failure as this node's own.
+func missingEpochBlock(kind string, number uint64) error {
+	return fmt.Errorf("%w: %s %d", consensus.ErrMissingPenaltyBlock, kind, number)
+}
+
 func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConfig *params.ChainConfig) {
 	// Hook scans for bad masternodes and decide to penalty them
 	adaptor.EngineV1.HookPenalty = func(chain consensus.ChainReader, blockNumberEpoc uint64) ([]common.Address, error) {
@@ -33,32 +40,41 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 
 		start := time.Now()
 		prevHeader := chain.GetHeaderByNumber(prevEpoc)
+		if prevHeader == nil {
+			return nil, missingEpochBlock("previous epoch header", prevEpoc)
+		}
 		penSigners := adaptor.GetMasternodes(chain, prevHeader)
 		if len(penSigners) > 0 {
 			// Loop for each block to check missing sign.
 			for i := prevEpoc; i < blockNumberEpoc; i++ {
+				// Every masternode has signed, so the set is final: the rest of the epoch
+				// cannot change it, and a record missing there is not this node's answer.
+				if len(penSigners) == 0 {
+					break
+				}
 				if i%common.MergeSignRange == 0 || !chainConfig.IsTIP2019(big.NewInt(int64(i))) {
 					bheader := chain.GetHeaderByNumber(i)
-					bhash := bheader.Hash()
-					block := chain.GetBlock(bhash, i)
-					if len(penSigners) > 0 {
-						signedMasternodes, err := contracts.GetSignersFromContract(canonicalState, block)
-						if err != nil {
-							return nil, err
-						}
-						if len(signedMasternodes) > 0 {
-							// Check signer signed?
-							for _, signed := range signedMasternodes {
-								for j, addr := range penSigners {
-									if signed == addr {
-										// Remove it from dupSigners.
-										penSigners = append(penSigners[:j], penSigners[j+1:]...)
-									}
+					if bheader == nil {
+						return nil, missingEpochBlock("header", i)
+					}
+					block := chain.GetBlock(bheader.Hash(), i)
+					if block == nil {
+						return nil, missingEpochBlock("block", i)
+					}
+					signedMasternodes, err := contracts.GetSignersFromContract(canonicalState, block)
+					if err != nil {
+						return nil, err
+					}
+					if len(signedMasternodes) > 0 {
+						// Check signer signed?
+						for _, signed := range signedMasternodes {
+							for j, addr := range penSigners {
+								if signed == addr {
+									// Remove it from dupSigners.
+									penSigners = append(penSigners[:j], penSigners[j+1:]...)
 								}
 							}
 						}
-					} else {
-						break
 					}
 				}
 			}
@@ -87,6 +103,9 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		parentHash := header.ParentHash
 		for i := uint64(1); i < chain.Config().XDPoS.Epoch; i++ {
 			parentHeader := chain.GetHeader(parentHash, parentnumber)
+			if parentHeader == nil {
+				return nil, missingEpochBlock("parent header", parentnumber)
+			}
 			miner, _ := adaptor.RecoverSigner(parentHeader)
 			value, exist := statMiners[miner]
 			if exist {
@@ -102,6 +121,9 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 
 		// add list not miner to penalties
 		prevHeader := chain.GetHeaderByNumber(prevEpoc)
+		if prevHeader == nil {
+			return nil, missingEpochBlock("previous epoch header", prevEpoc)
+		}
 		preMasternodes := adaptor.GetMasternodes(chain, prevHeader)
 		penalties := []common.Address{}
 		for miner, total := range statMiners {
@@ -121,6 +143,9 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 		penComebacks := []common.Address{}
 		if combackEpoch > 0 {
 			combackHeader := chain.GetHeaderByNumber(combackEpoch)
+			if combackHeader == nil {
+				return nil, missingEpochBlock("comeback epoch header", combackEpoch)
+			}
 			penalties := common.ExtractAddressFromBytes(combackHeader.Penalties)
 			for _, penaltie := range penalties {
 				for _, addr := range candidates {
@@ -143,6 +168,9 @@ func AttachConsensusV1Hooks(adaptor *XDPoS.XDPoS, bc *core.BlockChain, chainConf
 				signingTxs, ok := adaptor.GetCachedSigningTxs(bhash)
 				if !ok {
 					block := chain.GetBlock(bhash, blockNumber)
+					if block == nil {
+						return nil, missingEpochBlock("block", blockNumber)
+					}
 					txs := block.Transactions()
 					signingTxs = adaptor.CacheSigningTxs(bhash, txs)
 				}

@@ -41,6 +41,82 @@ test: all
 quick-test: all
 	go run build/ci.go test -short -failfast
 
+# The CI job runs these, so the carve-out, the package list (test files only) and
+# the shard split live here. -p 4 is why rpc stands alone: its 32 MiB websocket
+# test trips the codec's 30s pong timeout. -failfast is left out so one run
+# reports every race. pkgs is assigned before use and checked non-empty, since
+# /bin/sh has no pipefail and an empty slice would fall back to ./... with rpc.
+#? race-test: Run tests under the race detector (short mode).
+race-test: all race-test-bulk race-test-rpc
+
+#? race-test-full: Run the full (non-short) suite under the race detector.
+race-test-full: all race-test-full-bulk race-test-full-groups race-test-full-rpc
+
+# One slice per shard, two in CI; the default is the whole pass. Shard is
+# cksum(import path) % total (build/shard.sh).
+RACE_SHARDS ?= 1
+RACE_SHARD ?= 1
+RACE_PKGS = go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... | grep -v "XDPoSChain/rpc$$"
+
+# Heavy packages run as test-name slices (race-test-full-group) and are excluded
+# from the bulk pool; everything else is split by import path.
+RACE_HEAVY = consensus/tests/engine_v2_tests core cmd/XDC
+
+# rpc and RACE_HEAVY never appear in a bulk slice; one grep keeps them out.
+empty :=
+space := $(empty) $(empty)
+RACE_ABSENT = rpc $(RACE_HEAVY)
+RACE_REST_PKGS = go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... \
+	| grep -vE "XDPoSChain/($(subst $(space),|,$(RACE_ABSENT)))$$"
+
+race-test-bulk:
+	set -e; pkgs=$$($(RACE_PKGS) | build/shard.sh $(RACE_SHARD) $(RACE_SHARDS)); \
+	[ -n "$$pkgs" ]; go run build/ci.go test -race -short -p 4 $$pkgs
+
+race-test-rpc:
+	go run build/ci.go test -race -short ./rpc/
+
+# -timeout stays below the step watchdog: ci.go defaults to 45m, which outlives
+# the 20m lane and would leave no goroutine dump.
+race-test-full-bulk:
+	set -e; pkgs=$$($(RACE_REST_PKGS) | build/shard.sh $(RACE_SHARD) $(RACE_SHARDS)); \
+	[ -n "$$pkgs" ]; go run build/ci.go test -race -timeout 10m -p 4 $$pkgs
+
+# Tests, examples and fuzz targets are enumerated per lane and sliced by
+# position, so a case added later runs in exactly one lane. `-run` selects all
+# three kinds, and a fuzz target runs its seed corpus in normal mode.
+GROUP_PKG ?=
+GROUP_I ?= 1
+GROUP_N ?= 1
+race-test-full-group:
+	set -e; tests=$$(go test -tags=integrationtests -list '^(Test|Example|Fuzz)' $(GROUP_PKG) \
+		| grep -E '^(Test|Example|Fuzz)[A-Za-z0-9_]*$$' | sort \
+		| awk -v i=$(GROUP_I) -v n=$(GROUP_N) 'NR % n == i - 1'); \
+	[ -n "$$tests" ]; \
+	pattern=$$(printf '%s\n' "$$tests" | paste -sd '|' -); \
+	go run build/ci.go test -race -timeout 10m -run "^($$pattern)$$" $(GROUP_PKG)
+
+# The whole of each heavy package, for a local full pass.
+race-test-full-groups:
+	set -e; for p in $(RACE_HEAVY); do go run build/ci.go test -race -p 4 ./$$p || exit 1; done
+
+race-test-full-rpc:
+	go run build/ci.go test -race -timeout 4m ./rpc/
+
+#? check-shards: Verify the detector's shard split covers its package list.
+# The bulk lane count is read back from the workflow (unless the caller passes
+# RACE_SHARDS); --check-groups verifies every package in RACE_HEAVY declares
+# lanes 1..n and no lane names a package outside it. CI runs this in `static`.
+check-shards:
+	@set -e; \
+	lanes=$$(grep -cE 'name: "bulk [0-9]+/[0-9]+"' .github/workflows/ci.yml || true); \
+	[ "$$lanes" -ge 1 ] || { echo "error: no bulk lanes in ci.yml" >&2; exit 1; }; \
+	if [ "$(origin RACE_SHARDS)" != "file" ] && [ "$$lanes" != "$(RACE_SHARDS)" ]; then \
+		echo "error: ci.yml has $$lanes bulk lanes, RACE_SHARDS is $(RACE_SHARDS)" >&2; exit 1; \
+	fi; \
+	$(RACE_REST_PKGS) | build/shard.sh --check $$lanes; \
+	build/shard.sh --check-groups .github/workflows/ci.yml $(RACE_HEAVY)
+
 #? lint: Run certain pre-selected linters.
 lint: ## Run linters.
 	$(GORUN) build/ci.go lint
@@ -58,8 +134,11 @@ baddeps:
 	$(GORUN) build/ci.go baddeps
 
 #? fmt: Ensure consistent code formatting.
+# Enumerate the Go files of this checkout with git instead of find: the repo root
+# may contain nested checkouts (e.g. .worktrees/), which both blows up the
+# argument list and makes fmt rewrite files that belong to other checkouts.
 fmt:
-	gofmt -s -w $(shell find . -name "*.go")
+	git ls-files -z --cached --others --exclude-standard -- '*.go' | xargs -0r gofmt -s -w
 
 #? clean: Clean go cache, built executables, and the auto generated folder.
 clean:
@@ -72,10 +151,20 @@ clean:
 # You need to put $GOBIN (or $GOPATH/bin) in your PATH to use 'go generate'.
 
 #? devtools: Install recommended developer tools.
+# The versions are the ones the checked-in generated files were produced with.
+# Most `go:generate` directives are `go run <pkg>` and resolve their version
+# through go.mod, so keep stringer and gencodec in step with those requirements.
+# protoc is the exception: it shells out to protoc-gen-go on $PATH, whose
+# version is echoed into the headers of accounts/usbwallet/trezor.
+# TODO: protoc-gen-go is pinned here to v1.34.2, the release recorded in
+# build/checksums.txt, while go.mod's `tool` requirement still resolves it to
+# google.golang.org/protobuf v1.31.0. Align them once that runtime is raised.
+# protoc itself is installed outside this target: keep it at 27.1
+# (build/checksums.txt), otherwise those trezor headers move with it.
 devtools:
-	env GOBIN= go install golang.org/x/tools/cmd/stringer@latest
-	env GOBIN= go install github.com/fjl/gencodec@latest
-	env GOBIN= go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	env GOBIN= go install golang.org/x/tools/cmd/stringer@v0.49.0
+	env GOBIN= go install github.com/fjl/gencodec@v0.1.2
+	env GOBIN= go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.34.2
 	env GOBIN= go install ./cmd/abigen
 	@type "solc" 2> /dev/null || echo 'Please install solc'
 	@type "protoc" 2> /dev/null || echo 'Please install protoc'

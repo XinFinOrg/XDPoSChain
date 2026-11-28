@@ -14,6 +14,7 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS"
 	"github.com/XinFinOrg/XDPoSChain/consensus/XDPoS/utils"
 	"github.com/XinFinOrg/XDPoSChain/core/types"
+	"github.com/XinFinOrg/XDPoSChain/internal/testshort"
 	"github.com/XinFinOrg/XDPoSChain/params"
 	"github.com/stretchr/testify/assert"
 )
@@ -33,6 +34,7 @@ func (m *maskingChainReader) GetHeader(hash common.Hash, number uint64) *types.H
 
 // TestShouldVerifyBlock tests should verify block.
 func TestShouldVerifyBlock(t *testing.T) {
+	t.Parallel()
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -183,6 +185,7 @@ func TestShouldVerifyBlock(t *testing.T) {
 
 // TestConfigSwitchOnDifferentCertThreshold tests config switch on different cert threshold.
 func TestConfigSwitchOnDifferentCertThreshold(t *testing.T) {
+	t.Parallel()
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -280,7 +283,7 @@ func TestConfigSwitchOnDifferentCertThreshold(t *testing.T) {
 */
 // TestConfigSwitchOnDifferentMasternodeCount tests config switch on different masternode count.
 func TestConfigSwitchOnDifferentMasternodeCount(t *testing.T) {
-	skipLongInShortMode(t)
+	t.Parallel()
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -318,6 +321,7 @@ func TestConfigSwitchOnDifferentMasternodeCount(t *testing.T) {
 
 // TestConfigSwitchOnDifferentMindPeriod tests config switch on different mind period.
 func TestConfigSwitchOnDifferentMindPeriod(t *testing.T) {
+	t.Parallel()
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -362,7 +366,8 @@ func TestConfigSwitchOnDifferentMindPeriod(t *testing.T) {
 	// after 910 require 5 signs, but we only give 3 signs
 	block911 := blockchain.GetBlockByNumber(911).Header()
 	block911.Extra = extraInBytes
-	block911.Time = blockchain.GetBlockByNumber(910).Time() + 2 // 2 is previous config, should get the right config from round
+	// 1s is the previous config's period; round 12 requires the switched-to 2s.
+	block911.Time = blockchain.GetBlockByNumber(910).Time() + 1
 	err = adaptor.VerifyHeader(blockchain, block911, true)
 
 	assert.Equal(t, utils.ErrInvalidTimestamp, err)
@@ -370,6 +375,7 @@ func TestConfigSwitchOnDifferentMindPeriod(t *testing.T) {
 
 // TestShouldFailIfNotEnoughQCSignatures tests should fail if not enough qc signatures.
 func TestShouldFailIfNotEnoughQCSignatures(t *testing.T) {
+	t.Parallel()
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -419,7 +425,8 @@ func TestShouldFailIfNotEnoughQCSignatures(t *testing.T) {
 
 // TestShouldVerifyHeaders tests should verify headers.
 func TestShouldVerifyHeaders(t *testing.T) {
-	skipLongInShortMode(t)
+	t.Parallel()
+	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -458,7 +465,8 @@ func TestShouldVerifyHeaders(t *testing.T) {
 
 // TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB tests should verify headers even if parents not yet written into db.
 func TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB(t *testing.T) {
-	skipLongInShortMode(t)
+	t.Parallel()
+	testshort.Skip(t)
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -508,7 +516,7 @@ func TestShouldVerifyHeadersEvenIfParentsNotYetWrittenIntoDB(t *testing.T) {
 
 // TestShouldVerifyMixedHeadersWhenParentLookupByHashIsMasked tests should verify mixed headers when parent lookup by hash is masked.
 func TestShouldVerifyMixedHeadersWhenParentLookupByHashIsMasked(t *testing.T) {
-	skipLongInShortMode(t)
+	t.Parallel()
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 
@@ -545,7 +553,7 @@ func TestShouldVerifyMixedHeadersWhenParentLookupByHashIsMasked(t *testing.T) {
 
 // TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB tests should verify pure v 2 epoch switch headers even if parent not yet written into db.
 func TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB(t *testing.T) {
-	skipLongInShortMode(t)
+	t.Parallel()
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 
@@ -615,7 +623,7 @@ func TestShouldVerifyPureV2EpochSwitchHeadersEvenIfParentNotYetWrittenIntoDB(t *
 
 // TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty tests verify headers does not fabricate batch blocks for hook penalty.
 func TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty(t *testing.T) {
-	skipLongInShortMode(t)
+	t.Parallel()
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 
@@ -696,7 +704,7 @@ func TestVerifyHeadersDoesNotFabricateBatchBlocksForHookPenalty(t *testing.T) {
 // block stop being classified as future blocks and insertChain treats a valid
 // delivery as an invalid chain, which makes the downloader drop the peer.
 func TestFutureTimestampCheckPrecedesParentLookup(t *testing.T) {
-	skipLongInShortMode(t)
+	t.Parallel()
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 	configString := string(b)
@@ -774,6 +782,7 @@ func TestFutureTimestampCheckPrecedesParentLookup(t *testing.T) {
 // reduced call and rejected by the full one - unless the reduced result was remembered, in
 // which case the full call answers nil from the cache and the timestamp is never looked at.
 func TestVerifiedHeadersOnlyRemembersFullVerification(t *testing.T) {
+	t.Parallel()
 	b, err := json.Marshal(params.TestXDPoSMockChainConfig)
 	assert.Nil(t, err)
 

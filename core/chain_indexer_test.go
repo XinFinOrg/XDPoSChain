@@ -30,8 +30,13 @@ import (
 	"github.com/XinFinOrg/XDPoSChain/core/types"
 )
 
+// indexerPollInterval trades extra wakeups for less waiting on the indexer's commit goroutine
+const indexerPollInterval = time.Millisecond
+
 // Runs multiple tests with randomized parameters.
 func TestChainIndexerSingle(t *testing.T) {
+	t.Parallel()
+
 	for i := 0; i < 10; i++ {
 		testChainIndexer(t, 1)
 	}
@@ -40,6 +45,8 @@ func TestChainIndexerSingle(t *testing.T) {
 // Runs multiple tests with randomized parameters and different number of
 // chain backends.
 func TestChainIndexerWithChildren(t *testing.T) {
+	t.Parallel()
+
 	for i := 2; i < 8; i++ {
 		testChainIndexer(t, i)
 	}
@@ -144,14 +151,12 @@ type testChainIndexBackend struct {
 
 // assertSections verifies if a chain indexer has the correct number of section.
 func (b *testChainIndexBackend) assertSections() {
-	// Keep trying for 3 seconds if it does not match
 	var sections uint64
-	for i := 0; i < 300; i++ {
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(indexerPollInterval) {
 		sections, _, _ = b.indexer.Sections()
 		if sections == b.stored {
 			return
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
 	b.t.Fatalf("Canonical section count mismatch: have %v, want %v", sections, b.stored)
 }
@@ -170,14 +175,13 @@ func (b *testChainIndexBackend) assertBlocks(headNum, failNum uint64) (uint64, b
 					// rolled back after processing started, no more process calls expected
 					// wait until updating is done to make sure that processing actually fails
 					var updating bool
-					for i := 0; i < 300; i++ {
+					for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(indexerPollInterval) {
 						b.indexer.lock.Lock()
 						updating = b.indexer.knownSections > b.indexer.storedSections
 						b.indexer.lock.Unlock()
 						if !updating {
 							break
 						}
-						time.Sleep(10 * time.Millisecond)
 					}
 					if updating {
 						b.t.Fatalf("update did not finish")

@@ -30,6 +30,8 @@ const (
 )
 
 // Unexported devp2p protocol lengths from p2p package.
+//
+// These windows cover only the codes the suites read, not the full XDC message space.
 const (
 	baseProtoLen = 16
 	ethProtoLen  = 18
@@ -59,10 +61,12 @@ const (
 	baseProto Proto = iota
 	ethProto
 	snapProto
+	unknownProto
 )
 
 // getProto returns the protocol a certain message code is associated with
-// (assuming the negotiated capabilities are exactly {eth,snap})
+// (assuming the negotiated capabilities are exactly {eth,snap}), or unknownProto
+// for codes outside those windows.
 func getProto(code uint64) Proto {
 	switch {
 	case code < baseProtoLen:
@@ -72,7 +76,7 @@ func getProto(code uint64) Proto {
 	case code < baseProtoLen+ethProtoLen+snapProtoLen:
 		return snapProto
 	default:
-		panic("unhandled msg code beyond last protocol")
+		return unknownProto
 	}
 }
 
