@@ -29,8 +29,7 @@ import (
 // path: the fresh entry must carry the skip backoff, or the ticker retries the
 // hook on its next tick instead of after parkedSkipBackoff.
 func TestImportedBlockSignatureSkippedParksWithBackoff(t *testing.T) {
-	tester := newTesterWithGate(func() bool { return true })
-	defer tester.fetcher.Stop()
+	tester := newTesterWithGate(t, func() bool { return true })
 
 	block := newParkedTestBlock(0x50)
 	tester.lock.Lock()
@@ -91,8 +90,7 @@ func TestImportedBlockSignatureSkippedParksWithBackoff(t *testing.T) {
 // held claim marker of an entry-less skip is released when the admission is
 // refused, instead of blocking every later attempt for the hash.
 func TestParkedSignatureSkippedAdmissionReleasesHeldClaimWhenFull(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	full := blockParkedFullMeter.Snapshot().Count()
@@ -128,8 +126,7 @@ func TestParkedSignatureSkippedAdmissionReleasesHeldClaimWhenFull(t *testing.T) 
 // for a stored admission frees a stored entry when both budgets are closed: a
 // non-stored entry cannot reopen the stored subset, so it must keep its slot.
 func TestParkedSignatureReclaimBindsStoredGateWhenBothClose(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	var (
@@ -175,11 +172,10 @@ func TestParkedSignatureReclaimBindsStoredGateWhenBothClose(t *testing.T) {
 // entry can be reclaimed: a non-stored one cannot reopen the stored subset.
 func TestParkedSignatureBothClosedRefusesStoredWithoutGate(t *testing.T) {
 	var gateCalls atomic.Int32
-	tester := newTesterWithGate(func() bool {
+	tester := newTesterWithGate(t, func() bool {
 		gateCalls.Add(1)
 		return true
 	})
-	defer tester.fetcher.Stop()
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	full := blockParkedFullMeter.Snapshot().Count()
@@ -231,8 +227,7 @@ func TestParkedSignatureReclaimSkipsDueEntry(t *testing.T) {
 		{"past its backoff", -time.Minute, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			tester := newTester()
-			defer tester.fetcher.Stop()
+			tester := newTester(t)
 			tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 			skipped := common.BytesToHash([]byte{0x0c, 0x01})
@@ -295,8 +290,7 @@ func TestParkedSignatureReclaimKeepsUnimportedShareWhenTotalBinds(t *testing.T) 
 		{"a stored skipped entry", 1, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			tester := newTester()
-			defer tester.fetcher.Stop()
+			tester := newTester(t)
 			tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 			unimportedSkipped := common.BytesToHash([]byte{0x0a, 0x01})
@@ -368,8 +362,7 @@ func TestParkedSignatureRefusedClaimKeepsUnimportedShare(t *testing.T) {
 		{"a stored skipped entry", 1, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			tester := newTester()
-			defer tester.fetcher.Stop()
+			tester := newTester(t)
 			tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 			unimportedSkipped := common.BytesToHash([]byte{0x0f, 0x01})
@@ -440,8 +433,7 @@ func TestParkedSignatureRefusedClaimKeepsUnimportedShare(t *testing.T) {
 // unimported admission may drop a stored skipped entry: freeing a stored slot
 // only widens the reserve, so the pick is not restricted to its own bucket.
 func TestParkedSignatureUnimportedAdmissionReclaimsStoredSkipped(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	storedSkipped := common.BytesToHash([]byte{0x12, 0x01})

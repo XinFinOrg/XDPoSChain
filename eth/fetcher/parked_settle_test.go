@@ -26,7 +26,7 @@ import (
 // settleRefusedClaim: a stop that lands while the gate runs must release the
 // claim marker and the reserved slot instead of parking the block.
 func TestSettleRefusedClaimReleasesBookingOnStopDuringGate(t *testing.T) {
-	tester := newTester()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	block := newParkedTestBlock(0x60)
@@ -56,8 +56,7 @@ func TestSettleRefusedClaimReleasesBookingOnStopDuringGate(t *testing.T) {
 // parked again. No production path clears it there; the test clears it under
 // parkedMu to exercise the guard.
 func TestSettleRefusedClaimBookingClearedWhileWaitingOnGate(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	tester.fetcher.signHook = func(*types.Block) error { return nil }
 
 	block := newParkedTestBlock(0x61)

@@ -22,8 +22,7 @@ import (
 )
 
 func TestDeliveryClaimRespectsSkipBackoff(t *testing.T) {
-	tester := newTester()
-	defer tester.fetcher.Stop()
+	tester := newTester(t)
 	block := newParkedTestBlock(0x62)
 	hash := block.Hash()
 	tester.fetcher.parkedMu.Lock()

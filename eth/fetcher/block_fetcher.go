@@ -203,8 +203,10 @@ type BlockFetcher struct {
 	headerFilter chan chan *headerFilterTask
 	bodyFilter   chan chan *bodyFilterTask
 
-	done chan common.Hash
-	quit chan struct{}
+	done     chan common.Hash
+	quit     chan struct{}
+	loopDone chan struct{} // closed when the loop returns; never closed for a fetcher that was never started
+	stopOnce sync.Once
 
 	// Announce states
 	announces  map[string]int                   // Per peer blockAnnounce counts to prevent memory exhaustion
@@ -259,6 +261,7 @@ func NewBlockFetcher(getBlock blockRetrievalFn, verifyHeader headerVerifierFn, h
 		bodyFilter:          make(chan chan *bodyFilterTask),
 		done:                make(chan common.Hash),
 		quit:                make(chan struct{}),
+		loopDone:            make(chan struct{}),
 		announces:           make(map[string]int),
 		announced:           make(map[common.Hash][]*blockAnnounce),
 		fetching:            make(map[common.Hash]*blockAnnounce),
@@ -292,9 +295,9 @@ func (f *BlockFetcher) Start() {
 }
 
 // Stop terminates the announcement based synchroniser, canceling all pending
-// operations.
+// operations. It is safe to call more than once.
 func (f *BlockFetcher) Stop() {
-	close(f.quit)
+	f.stopOnce.Do(func() { close(f.quit) })
 }
 
 // Notify announces the fetcher of the potential availability of a new block in
@@ -390,6 +393,8 @@ func (f *BlockFetcher) FilterBodies(peer string, transactions [][]*types.Transac
 // Loop is the main fetcher loop, checking and processing various notification
 // events.
 func (f *BlockFetcher) loop() {
+	defer close(f.loopDone)
+
 	// Iterate the block fetching until a quit is requested
 	fetchTimer := time.NewTimer(0)
 	completeTimer := time.NewTimer(0)
@@ -760,6 +765,16 @@ func (f *BlockFetcher) enqueue(peer string, block *types.Block) {
 	}
 }
 
+// finishImport hands the import result back to the loop. The loop returns on quit
+// without draining done, so a stopped fetcher drops the result instead of leaving
+// this goroutine blocked on the unbuffered channel.
+func (f *BlockFetcher) finishImport(hash common.Hash) {
+	select {
+	case f.done <- hash:
+	case <-f.quit:
+	}
+}
+
 // insert spawns a new goroutine to run a block insertion into the chain. If the
 // block's number is at the same height as the current import phase, it updates
 // the phase states accordingly.
@@ -769,7 +784,7 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 	// Run the import on a new thread
 	log.Debug("Importing propagated block", "peer", peer, "number", block.Number(), "hash", hash)
 	go func() {
-		defer func() { f.done <- hash }()
+		defer f.finishImport(hash)
 
 		// If the parent's unknown, abort insertion
 		parent := f.getBlock(block.ParentHash())
