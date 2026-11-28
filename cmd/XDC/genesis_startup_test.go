@@ -274,6 +274,31 @@ func overwriteStoredBerlinBlock(t *testing.T, datadir string, block *big.Int) co
 	return genesisHash
 }
 
+// overwriteStoredPragueBlock updates the stored Prague activation block in the
+// test chain config.
+func overwriteStoredPragueBlock(t *testing.T, datadir string, block *big.Int) common.Hash {
+	t.Helper()
+
+	path := filepath.Join(datadir, "XDC", "chaindata")
+	db := openTestChainDB(t, path)
+	defer db.Close()
+
+	genesisHash := rawdb.ReadCanonicalHash(db, 0)
+	if genesisHash == (common.Hash{}) {
+		t.Fatal("expected canonical genesis hash")
+	}
+	config, err := rawdb.ReadChainConfig(db, genesisHash)
+	if err != nil {
+		t.Fatalf("failed to read chain config: %v", err)
+	}
+	if config == nil {
+		t.Fatal("expected stored chain config")
+	}
+	config.PragueBlock = common.CloneBigInt(block)
+	rawdb.WriteChainConfig(db, genesisHash, config)
+	return genesisHash
+}
+
 // overwriteStoredEIP150Block updates the stored EIP150 activation block in the
 // test chain config.
 func overwriteStoredEIP150Block(t *testing.T, datadir string, block *big.Int) common.Hash {
@@ -1101,5 +1126,123 @@ func TestStartupRewindsStoredBuiltInConfigDriftToZero(t *testing.T) {
 	}
 	if got := rawdb.ReadHeadBlockHash(db); got != genesisHash {
 		t.Fatalf("expected rewind-to-zero startup to reset head to genesis: have %s want %s", got.Hex(), genesisHash.Hex())
+	}
+}
+
+// TestStartupAdoptsStoredBuiltInFutureForkDrift tests that a testnet datadir
+// whose stored config carries a stale bundled fork schedule starts again under
+// update-config-only, and that the bundled config is persisted without moving
+// the head.
+func TestStartupAdoptsStoredBuiltInFutureForkDrift(t *testing.T) {
+	datadir := t.TempDir()
+
+	startTestnetConsole(t, datadir)
+
+	genesisHash := overwriteStoredPragueBlock(t, datadir, big.NewInt(99999999))
+	injectedHeadHash := injectCanonicalHeadBlock(t, datadir, genesisHash, 1)
+
+	startTestnetConsole(t, datadir, "--chain-config-mismatch-policy", "update-config-only")
+
+	_, config := readStoredChainConfig(t, datadir)
+	if config.PragueBlock == nil || config.PragueBlock.Cmp(params.TestnetChainConfig.PragueBlock) != 0 {
+		t.Fatalf("expected PragueBlock to be adopted as the bundled value %v, have %v", params.TestnetChainConfig.PragueBlock, config.PragueBlock)
+	}
+
+	path := filepath.Join(datadir, "XDC", "chaindata")
+	db := openTestChainDB(t, path)
+	defer db.Close()
+
+	if got := rawdb.ReadHeadBlockHash(db); got != injectedHeadHash {
+		t.Fatalf("expected the head to stay at %s, have %s", injectedHeadHash.Hex(), got.Hex())
+	}
+}
+
+// TestInitAdoptsStoredBuiltInFutureForkDrift tests that XDC init threads the
+// startup policy too, so the repair remains available from that entry point.
+func TestInitAdoptsStoredBuiltInFutureForkDrift(t *testing.T) {
+	datadir := t.TempDir()
+
+	startTestnetConsole(t, datadir)
+
+	genesisHash := overwriteStoredPragueBlock(t, datadir, big.NewInt(99999999))
+	injectedHeadHash := injectCanonicalHeadBlock(t, datadir, genesisHash, 1)
+
+	initCmd := runXDC(t,
+		"--chain-config-mismatch-policy", "update-config-only",
+		"init", "--datadir", datadir, "testnet",
+	)
+	assertCommandSucceeds(t, initCmd)
+
+	_, config := readStoredChainConfig(t, datadir)
+	if config.PragueBlock == nil || config.PragueBlock.Cmp(params.TestnetChainConfig.PragueBlock) != 0 {
+		t.Fatalf("expected init to adopt the bundled PragueBlock %v, have %v", params.TestnetChainConfig.PragueBlock, config.PragueBlock)
+	}
+
+	path := filepath.Join(datadir, "XDC", "chaindata")
+	db := openTestChainDB(t, path)
+	defer db.Close()
+
+	if got := rawdb.ReadHeadBlockHash(db); got != injectedHeadHash {
+		t.Fatalf("expected init to leave the head at %s, have %s", injectedHeadHash.Hex(), got.Hex())
+	}
+}
+
+// TestStartupKeepsStoredBuiltInFutureForkDriftConflictByDefault pins the
+// default policy on the same fixture and checks the conflict names the policy.
+func TestStartupKeepsStoredBuiltInFutureForkDriftConflictByDefault(t *testing.T) {
+	datadir := t.TempDir()
+
+	startTestnetConsole(t, datadir)
+
+	genesisHash := overwriteStoredPragueBlock(t, datadir, big.NewInt(99999999))
+	injectCanonicalHeadBlock(t, datadir, genesisHash, 1)
+
+	startupCmd := runXDC(t,
+		"--testnet", "console", "--port", "0", "--maxpeers", "0", "--nodiscover", "--nat", "none", "--ipcdisable",
+		"--datadir", datadir, "--exec", "2+2",
+	)
+	assertCommandFailsWithChainConfigErrors(
+		t,
+		startupCmd,
+		"provided genesis config conflicts with built-in chain config",
+		"--chain-config-mismatch-policy=update-config-only",
+	)
+}
+
+// TestOfflineExportAdoptsStoredBuiltInFutureForkDrift tests that the readonly
+// export path adopts the bundled config under update-config-only without
+// writing it back.
+func TestOfflineExportAdoptsStoredBuiltInFutureForkDrift(t *testing.T) {
+	datadir := t.TempDir()
+	exportFile := filepath.Join(datadir, "chain.rlp")
+
+	startTestnetConsole(t, datadir)
+
+	genesisHash := overwriteStoredPragueBlock(t, datadir, big.NewInt(99999999))
+	injectedHeadHash := injectCanonicalHeadBlock(t, datadir, genesisHash, 1)
+
+	exportCmd := runXDC(t,
+		"--datadir", datadir, "--testnet",
+		"--chain-config-mismatch-policy", "update-config-only",
+		"export", exportFile,
+	)
+	assertCommandSucceeds(t, exportCmd)
+
+	path := filepath.Join(datadir, "XDC", "chaindata")
+	db := openTestChainDB(t, path)
+	defer db.Close()
+
+	config, err := rawdb.ReadChainConfig(db, genesisHash)
+	if err != nil {
+		t.Fatalf("failed to read stored chain config: %v", err)
+	}
+	if config == nil {
+		t.Fatal("expected stored chain config")
+	}
+	if config.PragueBlock == nil || config.PragueBlock.Cmp(big.NewInt(99999999)) != 0 {
+		t.Fatalf("expected readonly export to leave the drifted PragueBlock unchanged, have %v", config.PragueBlock)
+	}
+	if got := rawdb.ReadHeadBlockHash(db); got != injectedHeadHash {
+		t.Fatalf("expected readonly export to leave the head at %s, have %s", injectedHeadHash.Hex(), got.Hex())
 	}
 }

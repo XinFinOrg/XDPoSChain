@@ -999,7 +999,7 @@ func TestLoadChainConfigInternalMatchesCompatWrapperWhenNoCompatError(t *testing
 		t.Fatalf("SetupGenesisBlock failed: %v", err)
 	}
 
-	plainCfg, plainHash, plainCompatErr, err := loadChainConfigInternal(db, provided, false, false)
+	plainCfg, plainHash, plainCompatErr, err := loadChainConfigInternal(db, provided, false, false, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		t.Fatalf("loadChainConfigInternal without compat failed: %v", err)
 	}
@@ -1007,7 +1007,7 @@ func TestLoadChainConfigInternalMatchesCompatWrapperWhenNoCompatError(t *testing
 		t.Fatalf("expected nil compatErr from plain path, got %v", plainCompatErr)
 	}
 
-	compatCfg, compatHash, compatErr, err := loadChainConfigInternal(db, provided, true, false)
+	compatCfg, compatHash, compatErr, err := loadChainConfigInternal(db, provided, true, false, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		t.Fatalf("loadChainConfigInternal with compat failed: %v", err)
 	}

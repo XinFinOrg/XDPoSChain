@@ -55,9 +55,9 @@ func normalizeProvidedGenesisForStoredConfig(stored common.Hash, storedCfg *para
 }
 
 // resolveLoadStoredConfigResult finalizes readonly stored-config resolution.
-func resolveLoadStoredConfigResult(db ethdb.Database, stored common.Hash, storedCfg, newCfg *params.ChainConfig, state loadStoredConfigState, genesis *Genesis, returnCompat bool) (cfg *params.ChainConfig, compatErr *params.ConfigCompatError, err error) {
+func resolveLoadStoredConfigResult(db ethdb.Database, stored common.Hash, storedCfg, newCfg *params.ChainConfig, state loadStoredConfigState, genesis *Genesis, returnCompat bool, policy ChainConfigMismatchPolicy) (cfg *params.ChainConfig, compatErr *params.ConfigCompatError, err error) {
 	if returnCompat {
-		resolvedCfg, compatErr, err := resolveHeadCompatibleChainConfig(db, storedCfg, newCfg, state.trustedOverride, state.builtin)
+		resolvedCfg, compatErr, err := resolveHeadCompatibleChainConfig(db, storedCfg, newCfg, state.trustedOverride, state.builtin, policy)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -85,17 +85,26 @@ func resolveLoadStoredConfigResult(db ethdb.Database, stored common.Hash, stored
 	if err != nil {
 		return nil, nil, err
 	}
-	if !storedEqual {
-		return nil, nil, builtInGenesisConfigConflictError(stored)
-	}
 	newEqual, err := chainConfigJSONEqual(newCfg, state.builtin)
 	if err != nil {
 		return nil, nil, err
 	}
-	if !newEqual {
+	action := decideBuiltInChainConfigAction(builtInChainConfigFacts{
+		hasBuiltInConfig:        true,
+		storedMatchesBuiltIn:    storedEqual,
+		candidateMatchesBuiltIn: newEqual,
+		driftPolicy:             builtInDriftPolicyFor(policy),
+	})
+	if errors.Is(action.terminalError, startup.ErrGenesisConfigConflict) {
+		if newEqual {
+			return nil, nil, builtInStoredDriftConflictError(stored)
+		}
 		return nil, nil, builtInGenesisConfigConflictError(stored)
 	}
-	return state.builtin.Clone(), nil, nil
+	if action.canonicalizeToBuiltIn {
+		return state.builtin.Clone(), nil, nil
+	}
+	return newCfg, nil, nil
 }
 
 // resolveLoadStoredMissingConfigNoProvidedGenesis handles readonly missing-config recovery.
@@ -207,11 +216,11 @@ func LoadChainConfig(db ethdb.Database, genesis *Genesis) (cfg *params.ChainConf
 }
 
 func loadChainConfig(db ethdb.Database, genesis *Genesis) (cfg *params.ChainConfig, ghash common.Hash, err error) {
-	cfg, ghash, _, err = loadChainConfigInternal(db, genesis, false, false)
+	cfg, ghash, _, err = loadChainConfigInternal(db, genesis, false, false, DefaultChainConfigMismatchPolicy)
 	return cfg, ghash, err
 }
 
-func loadChainConfigInternal(db ethdb.Database, genesis *Genesis, returnCompat, allowBuiltInCustomRecovery bool) (cfg *params.ChainConfig, ghash common.Hash, compatErr *params.ConfigCompatError, err error) {
+func loadChainConfigInternal(db ethdb.Database, genesis *Genesis, returnCompat, allowBuiltInCustomRecovery bool, policy ChainConfigMismatchPolicy) (cfg *params.ChainConfig, ghash common.Hash, compatErr *params.ConfigCompatError, err error) {
 	defer func() {
 		if err == nil {
 			// A rejected schedule is the only error worth reporting: the config
@@ -256,7 +265,7 @@ func loadChainConfigInternal(db ethdb.Database, genesis *Genesis, returnCompat, 
 		}
 
 		newCfg := genesis.chainConfigOrDefault(stored, cfg, state.trustedOverride)
-		resolvedCfg, resolvedCompatErr, err := resolveLoadStoredConfigResult(db, stored, cfg, newCfg, state, genesis, returnCompat)
+		resolvedCfg, resolvedCompatErr, err := resolveLoadStoredConfigResult(db, stored, cfg, newCfg, state, genesis, returnCompat, policy)
 		if err != nil {
 			return nil, stored, nil, err
 		}
@@ -292,15 +301,23 @@ func loadChainConfigInternal(db ethdb.Database, genesis *Genesis, returnCompat, 
 // normalization rules, including same-hash custom override handling, and
 // surfaces any compatibility rewind that writable startup would need to apply.
 func LoadChainConfigWithCompat(db ethdb.Database, genesis *Genesis) (cfg *params.ChainConfig, ghash common.Hash, compatErr *params.ConfigCompatError, err error) {
-	return LoadChainConfigWithCompatWithOverride(db, genesis, false)
+	return LoadChainConfigWithCompatWithPolicy(db, genesis, false, DefaultChainConfigMismatchPolicy)
 }
 
 func LoadChainConfigWithCompatWithOverride(db ethdb.Database, genesis *Genesis, allowBuiltInCustomRecovery bool) (cfg *params.ChainConfig, ghash common.Hash, compatErr *params.ConfigCompatError, err error) {
-	return loadChainConfigInternal(db, genesis, true, allowBuiltInCustomRecovery)
+	return LoadChainConfigWithCompatWithPolicy(db, genesis, allowBuiltInCustomRecovery, DefaultChainConfigMismatchPolicy)
+}
+
+// LoadChainConfigWithCompatWithPolicy is LoadChainConfigWithCompatWithOverride
+// with an explicit startup policy, so the readonly path can adopt a stored
+// built-in config that differs from the bundled one when no fork crosses the
+// head. Readonly startup never persists the adopted config.
+func LoadChainConfigWithCompatWithPolicy(db ethdb.Database, genesis *Genesis, allowBuiltInCustomRecovery bool, policy ChainConfigMismatchPolicy) (cfg *params.ChainConfig, ghash common.Hash, compatErr *params.ConfigCompatError, err error) {
+	return loadChainConfigInternal(db, genesis, true, allowBuiltInCustomRecovery, policy)
 }
 
 // resolveHeadCompatibleChainConfig checks whether candidateCfg can be used at the current head.
-func resolveHeadCompatibleChainConfig(db ethdb.Database, storedCfg, candidateCfg *params.ChainConfig, trustedOverride bool, builtin *params.ChainConfig) (*params.ChainConfig, *params.ConfigCompatError, error) {
+func resolveHeadCompatibleChainConfig(db ethdb.Database, storedCfg, candidateCfg *params.ChainConfig, trustedOverride bool, builtin *params.ChainConfig, policy ChainConfigMismatchPolicy) (*params.ChainConfig, *params.ConfigCompatError, error) {
 	head, err := loadStartupHead(db)
 	if err != nil {
 		return nil, nil, err
@@ -330,8 +347,12 @@ func resolveHeadCompatibleChainConfig(db ethdb.Database, storedCfg, candidateCfg
 			trustedOverride:         trustedOverride,
 			storedMatchesBuiltIn:    storedEqual,
 			candidateMatchesBuiltIn: newEqual,
+			driftPolicy:             builtInDriftPolicyFor(policy),
 		})
 		if errors.Is(action.terminalError, startup.ErrGenesisConfigConflict) {
+			if newEqual {
+				return nil, nil, builtInStoredDriftConflictError(rawdb.ReadCanonicalHash(db, 0))
+			}
 			return nil, nil, builtInGenesisConfigConflictError(rawdb.ReadCanonicalHash(db, 0))
 		}
 		if action.canonicalizeToBuiltIn {

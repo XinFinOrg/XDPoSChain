@@ -109,7 +109,7 @@ func TestResolveSetupStoredConfigResultRejectsInvalidScheduleBeforeWrite(t *test
 	newCfg := storedCfg.Clone()
 	newCfg.XDPoS.Epoch = 0
 
-	if _, _, err := resolveSetupStoredConfigResult(db, params.TestnetGenesisHash, storedCfg, newCfg, nil, &types.Header{Number: new(big.Int)}, setupStoredOverrideState{trustedOverride: true}); !errors.Is(err, ErrInvalidEpochGap) {
+	if _, _, err := resolveSetupStoredConfigResult(db, params.TestnetGenesisHash, storedCfg, newCfg, nil, &types.Header{Number: new(big.Int)}, setupStoredOverrideState{trustedOverride: true}, DefaultChainConfigMismatchPolicy); !errors.Is(err, ErrInvalidEpochGap) {
 		t.Fatalf("resolveSetupStoredConfigResult error = %v, want ErrInvalidEpochGap", err)
 	}
 	if _, err := rawdb.ReadChainConfig(db, params.TestnetGenesisHash); !errors.Is(err, rawdb.ErrChainConfigNotFound) {

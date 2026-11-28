@@ -143,13 +143,26 @@ func builtInNetworkName(hash common.Hash) string {
 	}
 }
 
-// builtInGenesisConfigConflictError wraps built-in conflicts with remediation guidance.
+// builtInGenesisConfigConflictError wraps same-hash custom override conflicts
+// with remediation guidance.
 func builtInGenesisConfigConflictError(hash common.Hash) error {
 	cfg := builtInChainConfigByHash(hash)
 	if cfg == nil {
 		return errGenesisConfigConflict
 	}
-	return fmt.Errorf("%w: same-hash custom overrides on built-in networks require --allow-builtin-config-override; builtin=%s chainId=%d; repair by starting from a fresh datadir: delete chaindata and reinitialize with the intended genesis, or rerun with --allow-builtin-config-override using the matching explicit genesis", errGenesisConfigConflict, builtInNetworkName(hash), cfg.ChainID)
+	return fmt.Errorf("%w: same-hash custom overrides on built-in networks require --allow-builtin-config-override; builtin=%s chainId=%d; repair by starting from a fresh datadir: delete chaindata and reinitialize with the intended genesis, or rerun with --allow-builtin-config-override", errGenesisConfigConflict, builtInNetworkName(hash), cfg.ChainID)
+}
+
+// builtInStoredDriftConflictError wraps a stored built-in config that differs
+// from the bundled one, naming only the remediations that can change the
+// outcome. --allow-builtin-config-override is deliberately not one of them: it
+// keeps a custom config, it does not adopt an updated bundled one.
+func builtInStoredDriftConflictError(hash common.Hash) error {
+	cfg := builtInChainConfigByHash(hash)
+	if cfg == nil {
+		return errGenesisConfigConflict
+	}
+	return fmt.Errorf("%w: the stored chain config for builtin=%s chainId=%d differs from this binary's bundled config and was left untouched; adopt the bundled config with --chain-config-mismatch-policy=update-config-only (or rewind-and-update; no rewind is required while every changed fork is above the head), or delete the ethereum-config-%s blob and restart so it is rebuilt from the bundled genesis. --allow-builtin-config-override does not apply: it keeps a same-hash custom config, it does not adopt an updated bundled one", errGenesisConfigConflict, builtInNetworkName(hash), cfg.ChainID, hash.Hex())
 }
 
 // resolveProvidedChainConfig resolves a caller-supplied chain config for the
@@ -490,20 +503,55 @@ func annotateResolvedCustomBuiltInConfig(hash common.Hash, cfg *params.ChainConf
 	}
 }
 
+// builtInDriftPolicy is the operator-authorized disposition of a stored
+// built-in config that differs from the bundled one.
+type builtInDriftPolicy uint8
+
+const (
+	// builtInDriftReject keeps the terminal conflict: unmarked drift may be an
+	// intentionally maintained same-hash custom config.
+	builtInDriftReject builtInDriftPolicy = iota
+	// builtInDriftAdopt replaces the stored config with the bundled one and
+	// persists it.
+	builtInDriftAdopt
+	// builtInDriftAdoptInMemory runs with the bundled config but leaves the
+	// stored blob untouched, mirroring ignore-mismatch.
+	builtInDriftAdoptInMemory
+)
+
+// builtInDriftPolicyFor maps the startup mismatch policy onto built-in drift.
+// Only policies that already let the resolved runtime config win authorize the
+// adoption; exit keeps the conflict, ignore-mismatch never writes.
+func builtInDriftPolicyFor(policy ChainConfigMismatchPolicy) builtInDriftPolicy {
+	switch NormalizeChainConfigMismatchPolicy(policy) {
+	case MismatchUpdateConfigOnly, MismatchRewindAndUpdate:
+		return builtInDriftAdopt
+	case MismatchIgnoreMismatch:
+		return builtInDriftAdoptInMemory
+	default:
+		return builtInDriftReject
+	}
+}
+
 type builtInChainConfigFacts struct {
 	hasBuiltInConfig        bool
 	trustedOverride         bool
 	storedMatchesBuiltIn    bool
 	candidateMatchesBuiltIn bool
 	allowStoredDriftRepair  bool
+	driftPolicy             builtInDriftPolicy
 }
 
 type builtInChainConfigAction struct {
 	canonicalizeToBuiltIn bool
+	persistCanonical      bool
 	terminalError         error
 }
 
 // decideBuiltInChainConfigAction resolves built-in canonicalization vs conflict outcomes.
+// The drift policy only releases the stored-versus-bundled conflict: a
+// candidate that itself differs from the bundled config stays terminal, so no
+// policy can discard an explicit custom genesis.
 func decideBuiltInChainConfigAction(facts builtInChainConfigFacts) builtInChainConfigAction {
 	if !facts.hasBuiltInConfig || facts.trustedOverride {
 		return builtInChainConfigAction{}
@@ -512,9 +560,16 @@ func decideBuiltInChainConfigAction(facts builtInChainConfigFacts) builtInChainC
 		return builtInChainConfigAction{terminalError: startup.ErrGenesisConfigConflict}
 	}
 	if facts.storedMatchesBuiltIn || facts.allowStoredDriftRepair {
-		return builtInChainConfigAction{canonicalizeToBuiltIn: true}
+		return builtInChainConfigAction{canonicalizeToBuiltIn: true, persistCanonical: true}
 	}
-	return builtInChainConfigAction{terminalError: startup.ErrGenesisConfigConflict}
+	switch facts.driftPolicy {
+	case builtInDriftAdopt:
+		return builtInChainConfigAction{canonicalizeToBuiltIn: true, persistCanonical: true}
+	case builtInDriftAdoptInMemory:
+		return builtInChainConfigAction{canonicalizeToBuiltIn: true}
+	default:
+		return builtInChainConfigAction{terminalError: startup.ErrGenesisConfigConflict}
+	}
 }
 
 // normalizeProvidedGenesisConfig clones and normalizes a caller-provided genesis config.

@@ -132,7 +132,7 @@ func TestSetupGenesisBlockUsesGenesisHash(t *testing.T) {
 		Difficulty: big.NewInt(1),
 	}
 
-	cfg, hash, compatErr, err := setupGenesisBlock(db, genesis, false)
+	cfg, hash, compatErr, err := setupGenesisBlock(db, genesis, false, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		t.Fatalf("setupGenesisBlock failed: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestSetupGenesisBackfillsMissingXDPoSMaxMasternodesV2ForBuiltInNetworks(t *
 		t.Fatalf("failed to write modified raw chain config: %v", err)
 	}
 	rawBefore := append([]byte(nil), updatedRawCfg...)
-	cfg, _, _, err := setupGenesisBlock(db, nil, false)
+	cfg, _, _, err := setupGenesisBlock(db, nil, false, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		t.Fatalf("expected nil, got %v", err)
 	}
@@ -856,7 +856,7 @@ func TestSetupGenesisRestartWithoutRewriteDoesNotNeedJSONMarshal(t *testing.T) {
 		t.Fatalf("initial SetupGenesisBlock failed: %v", err)
 	}
 
-	restartedCfg, restartedHash, _, err := setupGenesisBlock(db, nil, false)
+	restartedCfg, restartedHash, _, err := setupGenesisBlock(db, nil, false, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		t.Fatalf("restart SetupGenesisBlock failed: %v", err)
 	}

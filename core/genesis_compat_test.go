@@ -559,6 +559,107 @@ func TestSetupGenesisRejectsStoredBuiltInHashFutureDriftWithExistingHead(t *test
 	}
 }
 
+// futureDriftTestnetDB seeds a testnet database whose stored config schedules
+// Prague far in the future and whose head is block 1, below every changed fork.
+func futureDriftTestnetDB(t *testing.T) (ethdb.Database, common.Hash) {
+	t.Helper()
+
+	db := rawdb.NewMemoryDatabase()
+	genesisBlock := DefaultTestnetGenesisBlock().MustCommit(db)
+
+	head := types.NewBlockWithHeader(&types.Header{
+		Number:     big.NewInt(1),
+		ParentHash: genesisBlock.Hash(),
+	})
+	rawdb.WriteBlock(db, head)
+	rawdb.WriteCanonicalHash(db, genesisBlock.Hash(), 0)
+	rawdb.WriteCanonicalHash(db, head.Hash(), 1)
+	rawdb.WriteHeadHeaderHash(db, head.Hash())
+	rawdb.WriteHeadBlockHash(db, head.Hash())
+	rawdb.WriteHeadFastBlockHash(db, head.Hash())
+
+	storedCfg := params.TestnetChainConfig.Clone()
+	storedCfg.PragueBlock = big.NewInt(99999999)
+	overwriteStoredChainConfig(t, db, params.TestnetGenesisHash, storedCfg)
+	return db, head.Hash()
+}
+
+// TestSetupGenesisKeepsStoredBuiltInFutureDriftConflictByDefault pins the
+// default policy: the stale-schedule drift still stops startup and names the
+// remediation that can change the outcome.
+func TestSetupGenesisKeepsStoredBuiltInFutureDriftConflictByDefault(t *testing.T) {
+	db, _ := futureDriftTestnetDB(t)
+
+	cfg, hash, compatErr, err := SetupGenesisBlockWithPolicy(db, nil, false, MismatchExit)
+	if !errors.Is(err, errGenesisConfigConflict) {
+		t.Fatalf("unexpected error: have %v want %v", err, errGenesisConfigConflict)
+	}
+	if !strings.Contains(err.Error(), "--chain-config-mismatch-policy=update-config-only") {
+		t.Fatalf("expected the conflict to name the policy remediation, have %q", err)
+	}
+	if strings.Contains(err.Error(), "using the matching explicit genesis") {
+		t.Fatalf("expected the conflict to drop the unreachable explicit-genesis advice, have %q", err)
+	}
+	if compatErr != nil {
+		t.Fatalf("unexpected compatibility error: %v", compatErr)
+	}
+	if hash != params.TestnetGenesisHash {
+		t.Fatalf("unexpected hash: have %s want %s", hash.Hex(), params.TestnetGenesisHash.Hex())
+	}
+	if cfg != nil {
+		t.Fatalf("expected nil config on built-in future drift, have %v", cfg)
+	}
+}
+
+// TestSetupGenesisAdoptsStoredBuiltInFutureDriftWithPolicy tests that the
+// startup policy can adopt the bundled config when the stored built-in config
+// is a stale snapshot and every changed fork sits above the head.
+func TestSetupGenesisAdoptsStoredBuiltInFutureDriftWithPolicy(t *testing.T) {
+	tests := []struct {
+		name          string
+		policy        ChainConfigMismatchPolicy
+		wantPersisted bool
+	}{
+		{name: "update-config-only", policy: MismatchUpdateConfigOnly, wantPersisted: true},
+		{name: "rewind-and-update", policy: MismatchRewindAndUpdate, wantPersisted: true},
+		{name: "ignore-mismatch", policy: MismatchIgnoreMismatch, wantPersisted: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db, headHash := futureDriftTestnetDB(t)
+
+			cfg, hash, compatErr, err := SetupGenesisBlockWithPolicy(db, nil, false, test.policy)
+			if err != nil {
+				t.Fatalf("SetupGenesisBlockWithPolicy failed: %v", err)
+			}
+			if compatErr != nil {
+				t.Fatalf("unexpected compatibility error: %v", compatErr)
+			}
+			if hash != params.TestnetGenesisHash {
+				t.Fatalf("unexpected hash: have %s want %s", hash.Hex(), params.TestnetGenesisHash.Hex())
+			}
+			equal, err := chainConfigJSONEqual(cfg, params.TestnetChainConfig)
+			if err != nil {
+				t.Fatalf("failed to compare the adopted config: %v", err)
+			}
+			if !equal {
+				t.Fatalf("expected the adopted config to equal the bundled testnet config, have %v", cfg)
+			}
+			if got := rawdb.ReadHeadBlockHash(db); got != headHash {
+				t.Fatalf("expected the head to stay at %s, have %s", headHash.Hex(), got.Hex())
+			}
+			stored, err := rawdb.ReadChainConfig(db, params.TestnetGenesisHash)
+			if err != nil {
+				t.Fatalf("failed to read the stored chain config: %v", err)
+			}
+			persisted := stored != nil && stored.PragueBlock != nil && stored.PragueBlock.Cmp(params.TestnetChainConfig.PragueBlock) == 0
+			if persisted != test.wantPersisted {
+				t.Fatalf("unexpected persistence: have %v want %v (stored PragueBlock=%v)", persisted, test.wantPersisted, stored.PragueBlock)
+			}
+		})
+	}
+}
+
 // TestSetupGenesis tests setup genesis.
 func TestSetupGenesis(t *testing.T) {
 	var (

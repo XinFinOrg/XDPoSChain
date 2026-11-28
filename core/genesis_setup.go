@@ -69,7 +69,10 @@ func prepareSetupStoredConfigOverrides(db ethdb.Database, ghash common.Hash, sto
 // Setup-path execution helpers consume precomputed decisions and state.
 
 // resolveSetupStoredConfigResult finalizes writable stored-config reconciliation and persistence.
-func resolveSetupStoredConfigResult(db ethdb.Database, ghash common.Hash, storedCfg, newCfg *params.ChainConfig, genesis *Genesis, head *types.Header, state setupStoredOverrideState) (cfg *params.ChainConfig, compatErr *params.ConfigCompatError, err error) {
+// policy decides whether a stored built-in config that differs from the bundled
+// one is adopted (update-config-only / rewind-and-update), adopted in memory
+// only (ignore-mismatch), or rejected (exit) when no fork crosses the head.
+func resolveSetupStoredConfigResult(db ethdb.Database, ghash common.Hash, storedCfg, newCfg *params.ChainConfig, genesis *Genesis, head *types.Header, state setupStoredOverrideState, policy ChainConfigMismatchPolicy) (cfg *params.ChainConfig, compatErr *params.ConfigCompatError, err error) {
 	if err := newCfg.CheckConfigForkOrder(); err != nil {
 		return nil, nil, err
 	}
@@ -91,6 +94,8 @@ func resolveSetupStoredConfigResult(db ethdb.Database, ghash common.Hash, stored
 		}
 		return newCfg, compatErr, nil
 	}
+	persistCanonical := true
+	persistReason := "reconcile_stored_chain_config"
 	if builtin := builtInChainConfigByHash(ghash); builtin != nil && !state.trustedOverride {
 		storedEqual, err := chainConfigJSONEqual(storedCfg, builtin)
 		if err != nil {
@@ -106,12 +111,21 @@ func resolveSetupStoredConfigResult(db ethdb.Database, ghash common.Hash, stored
 			storedMatchesBuiltIn:    storedEqual,
 			candidateMatchesBuiltIn: newEqual,
 			allowStoredDriftRepair:  head.Number.Uint64() == 0 && genesis != nil,
+			driftPolicy:             builtInDriftPolicyFor(policy),
 		})
 		if errors.Is(action.terminalError, startup.ErrGenesisConfigConflict) {
+			if newEqual {
+				return nil, nil, builtInStoredDriftConflictError(ghash)
+			}
 			return nil, nil, builtInGenesisConfigConflictError(ghash)
 		}
 		if action.canonicalizeToBuiltIn {
 			newCfg = builtin.Clone()
+			persistCanonical = action.persistCanonical
+			if !storedEqual {
+				persistReason = "adopt_builtin_chain_config"
+				log.Warn("Adopted bundled built-in chain config", "builtin", builtInNetworkName(ghash), "policy", NormalizeChainConfigMismatchPolicy(policy), "persisted", action.persistCanonical)
+			}
 		}
 	}
 	persistResolvedConfig := state.legacyStoredOverride && !state.markerPresent
@@ -119,7 +133,7 @@ func resolveSetupStoredConfigResult(db ethdb.Database, ghash common.Hash, stored
 	if err != nil {
 		return nil, nil, err
 	}
-	writeResolvedConfig := !resolvedEqual || persistResolvedConfig
+	writeResolvedConfig := (!resolvedEqual || persistResolvedConfig) && persistCanonical
 	writeOverrideMarker := state.legacyStoredOverride && !state.markerPresent
 	if writeResolvedConfig || writeOverrideMarker {
 		batch := db.NewBatch()
@@ -132,7 +146,7 @@ func resolveSetupStoredConfigResult(db ethdb.Database, ghash common.Hash, stored
 		if err := batch.Write(); err != nil {
 			return nil, nil, err
 		}
-		logPersistedChainConfig("reconcile_stored_chain_config", ghash, newCfg, writeOverrideMarker)
+		logPersistedChainConfig(persistReason, ghash, newCfg, writeOverrideMarker)
 	}
 	return newCfg, nil, nil
 }
@@ -185,14 +199,21 @@ func loadStartupHead(db ethdb.Database) (*types.Header, error) {
 // - compatErr: compatibility rewind metadata for the caller to apply if needed
 // - err: other errors (e.g. missing config, DB errors)
 func SetupGenesisBlock(db ethdb.Database, genesis *Genesis) (chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, err error) {
-	return SetupGenesisBlockWithOverride(db, genesis, false)
+	return SetupGenesisBlockWithPolicy(db, genesis, false, DefaultChainConfigMismatchPolicy)
 }
 
 func SetupGenesisBlockWithOverride(db ethdb.Database, genesis *Genesis, allowBuiltInCustomRecovery bool) (chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, err error) {
-	return setupGenesisBlock(db, genesis, allowBuiltInCustomRecovery)
+	return SetupGenesisBlockWithPolicy(db, genesis, allowBuiltInCustomRecovery, DefaultChainConfigMismatchPolicy)
 }
 
-func setupGenesisBlock(db ethdb.Database, genesis *Genesis, allowBuiltInCustomRecovery bool) (chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, err error) {
+// SetupGenesisBlockWithPolicy is SetupGenesisBlock with an explicit startup
+// policy. The policy authorizes adopting a stored built-in config that differs
+// from the bundled one when no changed fork crosses the head.
+func SetupGenesisBlockWithPolicy(db ethdb.Database, genesis *Genesis, allowBuiltInCustomRecovery bool, policy ChainConfigMismatchPolicy) (chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, err error) {
+	return setupGenesisBlock(db, genesis, allowBuiltInCustomRecovery, policy)
+}
+
+func setupGenesisBlock(db ethdb.Database, genesis *Genesis, allowBuiltInCustomRecovery bool, policy ChainConfigMismatchPolicy) (chainConfig *params.ChainConfig, genesisHash common.Hash, compatErr *params.ConfigCompatError, err error) {
 	defer func() {
 		annotateResolvedCustomBuiltInConfig(genesisHash, chainConfig)
 		logResolvedChainConfig(err, chainConfig, genesisHash, compatErr)
@@ -325,7 +346,7 @@ func setupGenesisBlock(db ethdb.Database, genesis *Genesis, allowBuiltInCustomRe
 		return nil, common.Hash{}, nil, err
 	}
 	newCfg := genesis.chainConfigOrDefault(ghash, storedCfg, overrideState.trustedOverride)
-	resolvedCfg, compatErr, err := resolveSetupStoredConfigResult(db, ghash, storedCfg, newCfg, genesis, head, overrideState)
+	resolvedCfg, compatErr, err := resolveSetupStoredConfigResult(db, ghash, storedCfg, newCfg, genesis, head, overrideState, policy)
 	if err != nil {
 		if errors.Is(err, errGenesisConfigConflict) {
 			return nil, ghash, nil, err
