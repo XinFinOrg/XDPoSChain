@@ -416,7 +416,7 @@ func (l *list) Filter(costLimit *big.Int, gasLimit uint64, trc21Issuers map[comm
 		maximum := costLimit
 		if tx.To() != nil {
 			if feeCapacity, ok := trc21Issuers[*tx.To()]; ok {
-				return tx.Gas() > gasLimit || new(big.Int).Add(costLimit, feeCapacity).Cmp(tx.TxCost(number, cfg)) < 0
+				return tx.Gas() > gasLimit || unaffordableTRC21Tx(tx, costLimit, feeCapacity, number, cfg)
 			}
 		}
 		return tx.Gas() > gasLimit || tx.Cost().Cmp(maximum) > 0
@@ -478,11 +478,22 @@ func (l *list) hasUnaffordableTRC21Tx(costLimit *big.Int, trc21Issuers map[commo
 		if !ok {
 			continue
 		}
-		if new(big.Int).Add(costLimit, feeCapacity).Cmp(tx.TxCost(number, cfg)) < 0 {
+		if unaffordableTRC21Tx(tx, costLimit, feeCapacity, number, cfg) {
 			return true
 		}
 	}
 	return false
+}
+
+// unaffordableTRC21Tx reports whether a TRC21-sponsored transaction can no
+// longer pay: the balance plus the issuer's fee capacity must cover fee and
+// value, and since the capacity pays only the fee, the sender's own balance
+// must cover the value, as at admission.
+func unaffordableTRC21Tx(tx *types.Transaction, balance, feeCapacity, number *big.Int, cfg *params.ChainConfig) bool {
+	if tx.Value().Cmp(balance) > 0 {
+		return true
+	}
+	return new(big.Int).Add(balance, feeCapacity).Cmp(tx.TxCost(number, cfg)) < 0
 }
 
 // Cap places a hard limit on the number of items, returning all transactions

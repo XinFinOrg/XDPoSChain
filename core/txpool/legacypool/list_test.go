@@ -188,6 +188,46 @@ func TestListFilterDoesNotShortCircuitTokenFeeTransactions(t *testing.T) {
 	}
 }
 
+// TestListFilterTRC21ValueNeedsOwnBalance checks that the issuer's fee
+// capacity covers only the fee of a TRC21 transaction: the sender must hold the
+// value itself, as at admission, or the transaction is evicted.
+func TestListFilterTRC21ValueNeedsOwnBalance(t *testing.T) {
+	to := common.HexToAddress("0x1000000000000000000000000000000000000003")
+	cfg := &params.ChainConfig{}
+	// Far more fee capacity than the transaction cost, value included.
+	issuers := map[common.Address]*big.Int{to: new(big.Int).Mul(big.NewInt(params.Ether), big.NewInt(1000))}
+
+	for _, tc := range []struct {
+		name    string
+		balance int64
+		value   int64
+		removed bool
+	}{
+		{name: "no value, no balance", balance: 0, value: 0},
+		{name: "value held by sender", balance: 5, value: 5},
+		{name: "value above sender balance", balance: 4, value: 5, removed: true},
+		{name: "value with empty sender", balance: 0, value: 1, removed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := types.NewTransaction(0, to, big.NewInt(tc.value), params.TxGas, big.NewInt(1), nil)
+			list := newList(true)
+			list.Add(tx, DefaultConfig.PriceBump)
+
+			unaffordable := list.hasUnaffordableTRC21Tx(big.NewInt(tc.balance), issuers, big.NewInt(1), cfg)
+			removed, _ := list.Filter(big.NewInt(tc.balance), tx.Gas(), issuers, big.NewInt(1), cfg)
+			if have := len(removed) == 1; have != tc.removed {
+				t.Errorf("unexpected filter result: have removed %v want %v", have, tc.removed)
+			}
+			if unaffordable != tc.removed {
+				t.Errorf("unexpected unaffordable check: have %v want %v", unaffordable, tc.removed)
+			}
+			if have := list.Len() == 0; have != tc.removed {
+				t.Fatalf("unexpected list length %d", list.Len())
+			}
+		})
+	}
+}
+
 func TestListHasTRC21ReceiverCacheTracksMutations(t *testing.T) {
 	issuer := common.HexToAddress("0x1000000000000000000000000000000000000010")
 	other := common.HexToAddress("0x1000000000000000000000000000000000000020")

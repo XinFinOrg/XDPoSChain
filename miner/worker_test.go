@@ -17,6 +17,7 @@
 package miner
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	"math/big"
 	"testing"
@@ -870,4 +871,167 @@ func mustSignDynamicBoundaryTx(t *testing.T, key *ecdsa.PrivateKey, signer types
 		t.Fatalf("failed to sign dynamic fee tx: %v", err)
 	}
 	return signed
+}
+
+// restoredGasWorker builds a worker on a fresh chain whose next block holds
+// blockGas gas, for the tests that check the gas a failed transaction gives back.
+func restoredGasWorker(t *testing.T, chainConfig *params.ChainConfig, alloc types.GenesisAlloc, blockGas uint64, baseFee *big.Int) (*worker, *core.BlockChain) {
+	t.Helper()
+	genesis := &core.Genesis{
+		Config:     chainConfig,
+		Alloc:      alloc,
+		Difficulty: big.NewInt(1),
+		GasLimit:   params.XDCGenesisGasLimit,
+	}
+	engine := ethash.NewFaker()
+	chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), nil, genesis, engine, vm.Config{})
+	if err != nil {
+		t.Fatalf("failed to create blockchain: %v", err)
+	}
+	t.Cleanup(chain.Stop)
+
+	parent := chain.GetBlockByNumber(0)
+	if parent == nil {
+		t.Fatal("expected genesis block")
+	}
+	header := &types.Header{
+		ParentHash: parent.Hash(),
+		Difficulty: big.NewInt(1),
+		Number:     big.NewInt(1),
+		Time:       parent.Time() + 1,
+		GasLimit:   blockGas,
+		BaseFee:    baseFee,
+	}
+	worker := &worker{
+		config:      &Config{GasCeil: params.XDCGenesisGasLimit, GasPrice: big.NewInt(1)},
+		chainConfig: chainConfig,
+		engine:      engine,
+		chain:       chain,
+	}
+	if err := worker.makeCurrent(parent, header); err != nil {
+		t.Fatalf("failed to create current work: %v", err)
+	}
+	return worker, chain
+}
+
+// commitFailedThenTransfer packs failing ahead of transfer and checks that only
+// the transfer is included and that it found the block gas the failing
+// transaction had bought before it failed.
+func commitFailedThenTransfer(t *testing.T, worker *worker, chain *core.BlockChain, feeCapacity map[common.Address]*big.Int, failingFrom common.Address, failing *types.Transaction, transferFrom common.Address, transfer *types.Transaction) {
+	t.Helper()
+	lazy := func(tx *types.Transaction) *txpool.LazyTransaction {
+		fee := uint256.MustFromBig(tx.GasPrice())
+		return &txpool.LazyTransaction{Hash: tx.Hash(), Tx: tx, Time: time.Now(), GasFeeCap: fee, GasTipCap: fee, Gas: tx.Gas()}
+	}
+	txs, specialTxs := newTransactionsByPriceAndNonce(worker.current.signer, map[common.Address][]*txpool.LazyTransaction{
+		failingFrom:  {lazy(failing)},
+		transferFrom: {lazy(transfer)},
+	}, nil, worker.current.header.BaseFee)
+
+	worker.current.commitTransactions(new(event.TypeMux), feeCapacity, txs, specialTxs, chain, &event.Feed{})
+	if len(worker.current.txs) != 1 || worker.current.txs[0].Hash() != transfer.Hash() {
+		t.Fatalf("committed %d transactions, want only the transfer behind the failed one", len(worker.current.txs))
+	}
+	if have := worker.current.header.GasUsed; have != params.TxGas {
+		t.Fatalf("block gas used %d, want %d", have, params.TxGas)
+	}
+}
+
+// TestWorkerCommitTransactionsRestoresGasOfFailedTx checks that a transaction the
+// miner does not include gives back the block gas it bought before failing, so
+// the transaction behind it still finds the whole block gas left over. Both
+// cases buy their gas and then fail a later execution check.
+func TestWorkerCommitTransactionsRestoresGasOfFailedTx(t *testing.T) {
+	richKey, err := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	if err != nil {
+		t.Fatalf("failed to create test key: %v", err)
+	}
+	rich := crypto.PubkeyToAddress(richKey.PublicKey)
+	recipient := common.HexToAddress("0x00000000000000000000000000000000000000aa")
+
+	// A TRC21-sponsored transaction buys its gas from the issuer's fee capacity,
+	// then fails on a value the sender does not hold.
+	t.Run("trc21 value above sender balance", func(t *testing.T) {
+		poorKey, err := crypto.GenerateKey()
+		if err != nil {
+			t.Fatalf("failed to create test key: %v", err)
+		}
+		poor := crypto.PubkeyToAddress(poorKey.PublicKey)
+		token := common.HexToAddress("0x00000000000000000000000000000000000000cc")
+		chainConfig := &params.ChainConfig{
+			ChainID:                big.NewInt(1338),
+			HomesteadBlock:         new(big.Int),
+			TIPTRC21FeeBlock:       new(big.Int),
+			Gas50xBlock:            new(big.Int),
+			TRC21IssuerSMC:         params.TestnetChainConfig.TRC21IssuerSMC,
+			XDCXListingSMC:         params.TestnetChainConfig.XDCXListingSMC,
+			RelayerRegistrationSMC: params.TestnetChainConfig.RelayerRegistrationSMC,
+			LendingRegistrationSMC: params.TestnetChainConfig.LendingRegistrationSMC,
+			Ethash:                 new(params.EthashConfig),
+		}
+		const blockGas = 100_000
+		worker, chain := restoredGasWorker(t, chainConfig, types.GenesisAlloc{rich: {Balance: big.NewInt(params.Ether)}}, blockGas, nil)
+
+		signer := types.HomesteadSigner{}
+		// Buys all but 10,000 gas of the block.
+		failing, err := types.SignTx(types.NewTransaction(0, token, big.NewInt(1), blockGas-10_000, big.NewInt(2), nil), signer, poorKey)
+		if err != nil {
+			t.Fatalf("failed to sign failing tx: %v", err)
+		}
+		transfer, err := types.SignTx(types.NewTransaction(0, recipient, big.NewInt(1), params.TxGas, big.NewInt(1), nil), signer, richKey)
+		if err != nil {
+			t.Fatalf("failed to sign transfer: %v", err)
+		}
+		feeCapacity := map[common.Address]*big.Int{token: new(big.Int).Mul(big.NewInt(params.Ether), big.NewInt(1000))}
+		commitFailedThenTransfer(t, worker, chain, feeCapacity, poor, failing, rich, transfer)
+	})
+
+	// After Prague a calldata-heavy transaction whose gas limit covers the
+	// intrinsic gas but not the calldata floor fails after buying its gas.
+	t.Run("prague calldata floor", func(t *testing.T) {
+		otherKey, err := crypto.GenerateKey()
+		if err != nil {
+			t.Fatalf("failed to create test key: %v", err)
+		}
+		other := crypto.PubkeyToAddress(otherKey.PublicKey)
+		chainConfig := &params.ChainConfig{
+			ChainID:             big.NewInt(1338),
+			HomesteadBlock:      new(big.Int),
+			EIP150Block:         new(big.Int),
+			EIP155Block:         new(big.Int),
+			EIP158Block:         new(big.Int),
+			ByzantiumBlock:      new(big.Int),
+			ConstantinopleBlock: new(big.Int),
+			PetersburgBlock:     new(big.Int),
+			IstanbulBlock:       new(big.Int),
+			BerlinBlock:         new(big.Int),
+			LondonBlock:         new(big.Int),
+			EIP1559Block:        new(big.Int),
+			MergeBlock:          new(big.Int),
+			ShanghaiBlock:       new(big.Int),
+			CancunBlock:         new(big.Int),
+			PragueBlock:         new(big.Int),
+			Ethash:              new(params.EthashConfig),
+		}
+		alloc := types.GenesisAlloc{
+			rich:  {Balance: big.NewInt(params.Ether)},
+			other: {Balance: big.NewInt(params.Ether)},
+		}
+		// 1,000 non-zero bytes: intrinsic 37,000 gas, calldata floor 61,000 gas.
+		data := bytes.Repeat([]byte{0xff}, 1000)
+		const failingGas = 50_000
+		const blockGas = failingGas + 10_000
+		worker, chain := restoredGasWorker(t, chainConfig, alloc, blockGas, new(big.Int))
+
+		signer := types.LatestSigner(chainConfig)
+		failing, err := types.SignTx(types.NewTransaction(0, recipient, new(big.Int), failingGas, big.NewInt(2), data), signer, otherKey)
+		if err != nil {
+			t.Fatalf("failed to sign failing tx: %v", err)
+		}
+		transfer, err := types.SignTx(types.NewTransaction(0, recipient, big.NewInt(1), params.TxGas, big.NewInt(1), nil), signer, richKey)
+		if err != nil {
+			t.Fatalf("failed to sign transfer: %v", err)
+		}
+		commitFailedThenTransfer(t, worker, chain, map[common.Address]*big.Int{}, other, failing, rich, transfer)
+	})
 }

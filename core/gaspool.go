@@ -44,6 +44,11 @@ func (gp *GasPool) SubGas(amount uint64) error {
 	return nil
 }
 
+// SetGas sets the amount of gas with the provided number.
+func (gp *GasPool) SetGas(gas uint64) {
+	*(*uint64)(gp) = gas
+}
+
 // Gas returns the amount of gas remaining in the pool.
 func (gp *GasPool) Gas() uint64 {
 	return uint64(*gp)
