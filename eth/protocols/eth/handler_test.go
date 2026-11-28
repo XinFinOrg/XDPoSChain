@@ -1612,6 +1612,18 @@ func TestHandlerTables(t *testing.T) {
 		{XDC165, eth165, 20},
 		{XDC166, eth166, 20},
 	}
+	covered := make(map[uint]bool, len(tables))
+	for _, tt := range tables {
+		covered[tt.version] = true
+	}
+	for _, version := range ProtocolVersions {
+		if !covered[version] {
+			t.Errorf("handler table fixture misses xdc/%d", version)
+		}
+	}
+	if len(tables) != len(ProtocolVersions) {
+		t.Errorf("handler table fixture covers %d versions, want %d", len(tables), len(ProtocolVersions))
+	}
 	for _, tt := range tables {
 		got := handlersFor(tt.version)
 		if len(got) != tt.codes {
@@ -1679,7 +1691,7 @@ func TestHandlerTables(t *testing.T) {
 // arriving after the handshake must be rejected as an extra status message on
 // every version, not fall through to the invalid-code path.
 func TestExtraStatusMsgRejected(t *testing.T) {
-	for _, version := range []uint{XDC100, XDC164, XDC165, XDC166} {
+	for _, version := range ProtocolVersions {
 		t.Run(fmt.Sprintf("%d", version), func(t *testing.T) {
 			backend := newTestBackend(t, 1, nil)
 			peer := newTestPeer(t, "peer", version, backend)
