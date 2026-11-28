@@ -22,6 +22,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"runtime"
+	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -223,6 +226,13 @@ func (f *fetcherTester) watchImports(imported chan *types.Block) *importBudget {
 		b.lastInsertCall.Store(time.Now().UnixNano())
 		err := insertBlock(block)
 		if err == nil {
+			// Insert goroutines overlap, so a height delta credits the wrong call.
+			// The helper records the block under the tester's write lock; this read
+			// after it returns decides the no-op by hash, so overlapping inserts
+			// cannot swap credit.
+			if f.getBlock(block.Hash()) == nil {
+				atomic.AddInt32(&b.noopInserts, 1)
+			}
 			atomic.AddInt32(&b.inSend, 1)
 			imported <- block
 			atomic.AddInt32(&b.inSend, -1)
@@ -380,14 +390,30 @@ type importBudget struct {
 	insertCalls int32
 	insertSends int32
 	inSend      int32
+	noopInserts int32
 
 	lastInsertCall  atomic.Int64
 	lastInsertSend  atomic.Int64
 	lastQueueChange atomic.Int64
+
+	dropMu    sync.Mutex
+	drops     map[string]int
+	dropPeers map[string]string // first peer seen per reason
+	lastDrop  dropRecord
+}
+
+// dropRecord is the last block the fetcher dropped before it could call insertBlock.
+type dropRecord struct {
+	hash      common.Hash
+	peer      string
+	reason    string
+	peerQueue int
+	queued    int
+	at        time.Time
 }
 
 func newImportBudget(f *BlockFetcher) *importBudget {
-	b := &importBudget{}
+	b := &importBudget{drops: make(map[string]int), dropPeers: make(map[string]string)}
 	f.queueChangeHook = func(hash common.Hash, added bool) {
 		b.lastQueueChange.Store(time.Now().UnixNano())
 		if added {
@@ -398,7 +424,92 @@ func newImportBudget(f *BlockFetcher) *importBudget {
 			atomic.AddInt32(&b.removed, 1)
 		}
 	}
+	f.queueDropHook = func(hash common.Hash, peer, reason string, peerQueue, queued int) {
+		b.dropMu.Lock()
+		b.drops[reason]++
+		if _, seen := b.dropPeers[reason]; !seen {
+			b.dropPeers[reason] = peer
+		}
+		b.lastDrop = dropRecord{hash: hash, peer: peer, reason: reason, peerQueue: peerQueue, queued: queued, at: time.Now()}
+		b.dropMu.Unlock()
+	}
 	return b
+}
+
+// dropSnapshot copies the drop bookkeeping: the hook runs on the fetcher loop.
+func (b *importBudget) dropSnapshot() (map[string]int, dropRecord) {
+	b.dropMu.Lock()
+	defer b.dropMu.Unlock()
+
+	drops := make(map[string]int, len(b.drops))
+	for reason, count := range b.drops {
+		drops[reason] = count
+	}
+	return drops, b.lastDrop
+}
+
+// dropPeer reports the first peer seen for a drop reason, empty if none.
+func (b *importBudget) dropPeer(reason string) string {
+	b.dropMu.Lock()
+	defer b.dropMu.Unlock()
+
+	return b.dropPeers[reason]
+}
+
+// refusalReasons are deliveries the fetcher refused: the block may still be
+// queued or already in the chain, so they must not be read as lost blocks.
+var refusalReasons = []string{
+	dropReasonKnown,
+	dropReasonAllowance,
+	dropReasonWindow,
+	dropReasonDuplicate,
+}
+
+// blockDropReasons are blocks that left the pipeline before insertBlock.
+var blockDropReasons = []string{
+	dropReasonStale,
+	dropReasonImported,
+	dropReasonUnknownParent,
+	dropReasonM2Append,
+	dropReasonHeaderInvalid,
+}
+
+// formatDropGroup renders one group's counters as "reason:count;". The trailing
+// semicolon keeps assertions unambiguous: allowance:8; cannot match allowance:87;.
+func formatDropGroup(reasons []string, drops map[string]int) string {
+	parts := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
+		parts = append(parts, fmt.Sprintf("%s:%d;", reason, drops[reason]))
+	}
+	return strings.Join(parts, " ")
+}
+
+// formatDrops renders the refusal and drop groups separately, plus any reason
+// missing from both tables, so a new drop path cannot vanish from the dump.
+func formatDrops(drops map[string]int) string {
+	out := fmt.Sprintf("refused{%s} dropped{%s}",
+		formatDropGroup(refusalReasons, drops), formatDropGroup(blockDropReasons, drops))
+
+	var other []string
+	for reason := range drops {
+		if !containsReason(refusalReasons, reason) && !containsReason(blockDropReasons, reason) {
+			other = append(other, reason)
+		}
+	}
+	if len(other) > 0 {
+		sort.Strings(other)
+		out += fmt.Sprintf(" other{%s}", formatDropGroup(other, drops))
+	}
+	return out
+}
+
+func containsReason(reasons []string, want string) bool {
+	for _, reason := range reasons {
+		if reason == want {
+			return true
+		}
+	}
+	return false
 }
 
 // arm starts the phase clock at the first wait, so setup is not charged to the budget.
@@ -489,14 +600,189 @@ func TestImportBudgetResetBound(t *testing.T) {
 	}
 }
 
+// waitDrop blocks until the budget records a drop for the given reason from the
+// given peer, so the assertions do not depend on how soon the fetcher loop gets
+// to the enqueue.
+func waitDrop(t *testing.T, budget *importBudget, reason, peer string) map[string]int {
+	t.Helper()
+
+	deadline := time.Now().Add(fetchWait)
+	for {
+		drops, last := budget.dropSnapshot()
+		if drops[reason] > 0 {
+			if have := budget.dropPeer(reason); have != peer {
+				t.Fatalf("%q drop came from peer %q, want %q: %s", reason, have, peer, budget.state())
+			}
+			return drops
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no %q drop recorded, last drop %s@%s %s: %s", reason, last.reason, last.peer, last.hash.TerminalString(), budget.state())
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// TestImportBudgetReportsDrops drives every path that drops a block before
+// insertBlock and checks the timeout dump accounts for each of them.
+func TestImportBudgetReportsDrops(t *testing.T) {
+	tester := newTester()
+	defer tester.fetcher.Stop()
+
+	imported := make(chan *types.Block)
+	budget := tester.watchImports(imported)
+
+	hashes, blocks := makeChain(40, 0x01, genesis)
+	ordered := make(types.Blocks, 0, 40)
+	for i := len(hashes) - 2; i >= 0; i-- { // hashes[39] is block 1, hashes[0] is block 40
+		ordered = append(ordered, blocks[hashes[i]])
+	}
+	// known: a hash already queued is refused before it can be queued again.
+	queued := blocks[hashes[35]] // block 5, above the head so it never imports
+	tester.fetcher.Enqueue("known", queued)
+	tester.fetcher.Enqueue("known", queued)
+
+	// window: a block above the plausibility window is refused up front.
+	tester.fetcher.Enqueue("window", blocks[hashes[0]]) // block 40, head is genesis
+
+	// allowance: the peer allowance counts live queue entries, so 64 dangling
+	// blocks fill it and the next delivery is refused.
+	for seed := byte(0x10); seed < 0x13; seed++ {
+		attack, attackBlocks := makeChain(31, seed, unknownBlock)
+		for _, hash := range attack[:30] { // blocks 31..2, all above head+1
+			tester.fetcher.Enqueue("dos", attackBlocks[hash])
+		}
+	}
+	// duplicate: those 64 blocks evicted the queued hash from the known cache,
+	// but the queue still holds it. Waiting here also keeps the head at genesis
+	// until the delivery is classified, or it would drop as out of window.
+	tester.fetcher.Enqueue("dup", queued)
+	waitDrop(t, budget, dropReasonDuplicate, "dup")
+
+	// stale, imported and unknown-parent need the head to move past the queue.
+	if n, err := tester.insertChain(ordered); err != nil || n != 0 {
+		t.Fatalf("chain insert stopped at block %d: %v", n, err)
+	}
+	tester.fetcher.Enqueue("imported", blocks[hashes[0]])      // block 40, already in the chain
+	orphans, orphanBlocks := makeChain(41, 0x20, unknownBlock) // block 41 at head+1
+	tester.fetcher.Enqueue("orphan", orphanBlocks[orphans[0]]) // parent this chain lacks
+
+	var drops map[string]int
+	for _, want := range []struct{ reason, peer string }{
+		{dropReasonKnown, "known"},
+		{dropReasonWindow, "window"},
+		{dropReasonAllowance, "dos"},
+		{dropReasonImported, "imported"},
+		{dropReasonStale, "dos"},
+		{dropReasonUnknownParent, "orphan"},
+	} {
+		waitDrop(t, budget, want.reason, want.peer)
+	}
+	// header-invalid and m2-append also leave insert before insertBlock: the
+	// header verifier rejects the block (dropping the peer), or the M2 rewrite
+	// fails. Both blocks sit at head+1 on a parent the tester already has.
+	child := func(parent *types.Block, seed byte) *types.Block {
+		return types.NewBlock(&types.Header{
+			ParentHash: parent.Hash(),
+			Number:     big.NewInt(41),
+			Root:       types.EmptyRootHash,
+			GasLimit:   params.GenesisGasLimit,
+			Coinbase:   common.Address{seed},
+		}, nil, nil, trie.NewStackTrie(nil))
+	}
+	tester.fetcher.verifyHeader = func(*types.Header) error { return errors.New("bad header") }
+	tester.fetcher.Enqueue("invalid", child(blocks[hashes[0]], 0x30))
+	waitDrop(t, budget, dropReasonHeaderInvalid, "invalid")
+
+	tester.fetcher.verifyHeader = func(*types.Header) error { return consensus.ErrNoValidatorSignature }
+	tester.fetcher.SetAppendM2HeaderHook(func(*types.Block) (*types.Block, bool, error) {
+		return nil, false, errors.New("m2 rewrite failed")
+	})
+	tester.fetcher.Enqueue("m2", child(blocks[hashes[0]], 0x31))
+	drops = waitDrop(t, budget, dropReasonM2Append, "m2")
+
+	state := budget.state()
+	// The dump must keep refused deliveries and lost blocks in separate groups.
+	for _, want := range []string{"refused{known:", "dropped{stale:"} {
+		if !strings.Contains(state, want) {
+			t.Fatalf("state dump does not carry %q: %s", want, state)
+		}
+	}
+	for reason, count := range drops {
+		if want := fmt.Sprintf("%s:%d;", reason, count); !strings.Contains(state, want) {
+			t.Fatalf("state dump does not carry %q: %s", want, state)
+		}
+	}
+}
+
+// TestImportBudgetCountsNoopInserts checks a no-op insert is counted when inserts
+// overlap, which the fetcher allows because every propagated block runs on its own
+// goroutine. All callers enter before the first block lands, so exactly one call
+// advances the chain and the rest are no-ops at that height.
+func TestImportBudgetCountsNoopInserts(t *testing.T) {
+	tester := newIdleTester()
+	defer tester.fetcher.Stop()
+
+	imported := make(chan *types.Block, 64)
+	budget := tester.watchImports(imported)
+
+	const siblings = 32
+	blocks := make([]*types.Block, 0, siblings)
+	for seed := byte(0x40); seed < 0x40+siblings; seed++ {
+		hashes, blockm := makeChain(1, seed, genesis)
+		blocks = append(blocks, blockm[hashes[0]])
+	}
+
+	// Holding the tester lock parks every caller before the first append; the
+	// barrier waits for each goroutine to reach the insert call instead of
+	// betting on a sleep.
+	tester.lock.Lock()
+	var (
+		wg    sync.WaitGroup
+		ready atomic.Int32
+	)
+	for _, block := range blocks {
+		wg.Add(1)
+		go func(block *types.Block) {
+			defer wg.Done()
+			ready.Add(1)
+			_ = tester.fetcher.insertBlock(block)
+		}(block)
+	}
+	for ready.Load() < siblings {
+		runtime.Gosched()
+	}
+	tester.lock.Unlock()
+	wg.Wait()
+
+	if height := tester.chainHeight(); height != 1 {
+		t.Fatalf("chain height %d, want 1", height)
+	}
+	if state := budget.state(); !strings.Contains(state, fmt.Sprintf("noop:%d;", siblings-1)) {
+		t.Fatalf("state dump does not carry noop:%d;: %s", siblings-1, state)
+	}
+}
+
 func (b *importBudget) state() string {
-	return fmt.Sprintf("imports %d, queue depth %d (added %d, removed %d), inserts %d/%d (in send %d), last insert call/send/queue %s/%s/%s, %v elapsed",
+	drops, last := b.dropSnapshot()
+
+	lastDrop := "never"
+	if !last.at.IsZero() {
+		lastDrop = fmt.Sprintf("%s %s@%s (peer queued %d, queued %d) %v ago",
+			last.hash.TerminalString(), last.reason, last.peer, last.peerQueue, last.queued, time.Since(last.at))
+	}
+	elapsed := "not armed"
+	if !b.started.IsZero() {
+		elapsed = time.Since(b.started).String()
+	}
+	return fmt.Sprintf("imports %d, queue depth %d (added %d, removed %d), inserts %d/%d (in send %d, noop:%d;), last insert call/send/queue %s/%s/%s, %s, last drop %s, %s elapsed",
 		atomic.LoadInt32(&b.imports), atomic.LoadInt32(&b.enqueued),
 		atomic.LoadInt32(&b.added), atomic.LoadInt32(&b.removed),
 		atomic.LoadInt32(&b.insertCalls), atomic.LoadInt32(&b.insertSends),
-		atomic.LoadInt32(&b.inSend),
+		atomic.LoadInt32(&b.inSend), atomic.LoadInt32(&b.noopInserts),
 		sinceNano(b.lastInsertCall.Load()), sinceNano(b.lastInsertSend.Load()),
-		sinceNano(b.lastQueueChange.Load()), time.Since(b.started))
+		sinceNano(b.lastQueueChange.Load()),
+		formatDrops(drops),
+		lastDrop, elapsed)
 }
 
 func (b *importBudget) verifyImportEvent(t *testing.T, imported chan *types.Block, arrive bool) {

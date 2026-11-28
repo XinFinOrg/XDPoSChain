@@ -46,6 +46,21 @@ const (
 	blockLimit   = 64  // Maximum number of unique blocks a peer may have delivered
 )
 
+// Drop reasons reported through queueDropHook. The first four refuse a
+// delivery (the block may still be queued or already in the chain), the rest
+// are blocks that left the pipeline before insertBlock.
+const (
+	dropReasonKnown         = "known"
+	dropReasonAllowance     = "allowance"
+	dropReasonWindow        = "window"
+	dropReasonDuplicate     = "duplicate"
+	dropReasonStale         = "stale"
+	dropReasonImported      = "imported"
+	dropReasonUnknownParent = "unknown-parent"
+	dropReasonM2Append      = "m2-append"
+	dropReasonHeaderInvalid = "header-invalid"
+)
+
 const (
 	parkedImportTimeout      = 90 * time.Second
 	parkedImportPollInterval = 100 * time.Millisecond // same cadence as futureBlocksLoop's ticker in core/blockchain.go
@@ -242,10 +257,11 @@ type BlockFetcher struct {
 	signerGate    func() bool                     // Reports whether parking is worthwhile; nil means always ready
 
 	// Testing hooks
-	announceChangeHook func(common.Hash, bool) // Method to call upon adding or deleting a hash from the blockAnnounce list
-	queueChangeHook    func(common.Hash, bool) // Method to call upon adding or deleting a block from the import queue
-	fetchingHook       func([]common.Hash)     // Method to call upon starting a block (eth/61) or header (eth/62) fetch
-	completingHook     func([]common.Hash)     // Method to call upon starting a block body fetch (eth/62)
+	announceChangeHook func(common.Hash, bool)                     // Method to call upon adding or deleting a hash from the blockAnnounce list
+	queueChangeHook    func(common.Hash, bool)                     // Method to call upon adding or deleting a block from the import queue
+	queueDropHook      func(common.Hash, string, string, int, int) // Method to call upon dropping a block before insertBlock: hash, peer, dropReason*, peer queue count, queued length (-1 off the fetcher loop)
+	fetchingHook       func([]common.Hash)                         // Method to call upon starting a block (eth/61) or header (eth/62) fetch
+	completingHook     func([]common.Hash)                         // Method to call upon starting a block body fetch (eth/62)
 	signHook           func(*types.Block) error
 	appendM2HeaderHook func(*types.Block) (*types.Block, bool, error)
 }
@@ -419,7 +435,13 @@ func (f *BlockFetcher) loop() {
 			}
 			// Otherwise if fresh and still unknown, try and import
 			hash := op.block.Hash()
-			if number+maxUncleDist < height || f.getBlock(hash) != nil {
+			if number+maxUncleDist < height {
+				f.reportDrop(op.origin, hash, dropReasonStale)
+				f.forgetBlock(hash)
+				continue
+			}
+			if f.getBlock(hash) != nil {
+				f.reportDrop(op.origin, hash, dropReasonImported)
 				f.forgetBlock(hash)
 				continue
 			}
@@ -724,6 +746,7 @@ func (f *BlockFetcher) enqueue(peer string, block *types.Block) {
 	hash := block.Hash()
 	if f.knowns.Contains(hash) {
 		log.Trace("Discarded propagated block, known block", "peer", peer, "number", block.Number(), "hash", hash, "limit", blockLimit)
+		f.reportDrop(peer, hash, dropReasonKnown)
 		return
 	}
 	// Ensure the peer isn't DOSing us
@@ -731,6 +754,7 @@ func (f *BlockFetcher) enqueue(peer string, block *types.Block) {
 	if count > blockLimit {
 		log.Debug("Discarded propagated block, exceeded allowance", "peer", peer, "number", block.Number(), "hash", hash, "limit", blockLimit)
 		blockBroadcastDOSMeter.Mark(1)
+		f.reportDrop(peer, hash, dropReasonAllowance)
 		f.forgetHash(hash)
 		return
 	}
@@ -740,6 +764,7 @@ func (f *BlockFetcher) enqueue(peer string, block *types.Block) {
 	if !IsPlausibleAnnouncement(block.NumberU64(), f.chainHeight()) {
 		log.Debug("Discarded propagated block, too far away", "peer", peer, "number", block.Number(), "hash", hash)
 		blockBroadcastDropMeter.Mark(1)
+		f.reportDrop(peer, hash, dropReasonWindow)
 		f.forgetHash(hash)
 		return
 	}
@@ -757,6 +782,8 @@ func (f *BlockFetcher) enqueue(peer string, block *types.Block) {
 			f.queueChangeHook(op.block.Hash(), true)
 		}
 		log.Debug("Queued propagated block", "peer", peer, "number", block.Number(), "hash", hash, "queued", f.queue.Size())
+	} else {
+		f.reportDrop(peer, hash, dropReasonDuplicate)
 	}
 }
 
@@ -774,6 +801,9 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 		// If the parent's unknown, abort insertion
 		parent := f.getBlock(block.ParentHash())
 		if parent == nil {
+			if f.queueDropHook != nil {
+				f.queueDropHook(hash, peer, dropReasonUnknownParent, -1, -1)
+			}
 			log.Debug("Unknown parent of propagated block", "peer", peer, "number", block.Number(), "hash", hash, "parent", block.ParentHash())
 			return
 		}
@@ -798,6 +828,9 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 			var errM2 error
 			if f.appendM2HeaderHook != nil {
 				if newBlock, isM2, errM2 = f.appendM2HeaderHook(block); errM2 != nil {
+					if f.queueDropHook != nil {
+						f.queueDropHook(hash, peer, dropReasonM2Append, -1, -1)
+					}
 					log.Error("Append m2 to block header fail", "err", errM2)
 					return
 				}
@@ -821,6 +854,9 @@ func (f *BlockFetcher) insert(peer string, block *types.Block) {
 			goto again
 		default:
 			// Something went very wrong, drop the peer
+			if f.queueDropHook != nil {
+				f.queueDropHook(hash, peer, dropReasonHeaderInvalid, -1, -1)
+			}
 			log.Warn("Propagated block verification failed", "peer", peer, "number", block.Number(), "hash", hash, "err", err)
 			f.dropPeer(peer)
 			return
@@ -1626,6 +1662,14 @@ func (f *BlockFetcher) forgetBlock(hash common.Hash) {
 			delete(f.queues, insert.origin)
 		}
 		delete(f.queued, hash)
+	}
+}
+
+// reportDrop flags a block that left the pipeline before reaching insertBlock,
+// carrying the dropping peer and the queue bookkeeping of the fetcher loop.
+func (f *BlockFetcher) reportDrop(peer string, hash common.Hash, reason string) {
+	if f.queueDropHook != nil {
+		f.queueDropHook(hash, peer, reason, f.queues[peer], len(f.queued))
 	}
 }
 
