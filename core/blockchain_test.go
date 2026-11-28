@@ -3185,6 +3185,51 @@ func TestGetResultBlockReportsMissingLocalTd(t *testing.T) {
 	}
 }
 
+// TestGetResultBlockReportsMissingAncestorBody covers the walk that gathers the stateless
+// ancestors of a competing block. A body missing from that ancestry used to hand a nil
+// block to HasFullState, which crashed the node; it is a fault of this node's database,
+// so it has to be reported as a local condition and leave the head where it is.
+func TestGetResultBlockReportsMissingAncestorBody(t *testing.T) {
+	t.Parallel()
+
+	chain, blocks, engine, genDb := newMissingTdChain(t, 4, 3) // head at #3, #4 is unknown
+	head := chain.CurrentBlock()
+
+	// Two stateless side blocks over #2, stored with the head's total difficulty so that
+	// the competitor on top of them outweighs the head.
+	side, _ := GenerateChain(params.TestChainConfig, blocks[1], engine, genDb, 2, func(i int, b *BlockGen) {
+		// A different coinbase keeps the side blocks from reproducing canonical children.
+		b.SetCoinbase(common.Address{2})
+	})
+	competitor, _ := GenerateChain(params.TestChainConfig, side[1], engine, genDb, 1, nil)
+	localTd := chain.GetTd(head.Hash(), head.Number.Uint64())
+	if localTd == nil {
+		t.Fatal("precondition: the head's total difficulty is not readable")
+	}
+	for _, b := range side {
+		if err := chain.writeBlockWithoutState(b, localTd); err != nil {
+			t.Fatalf("failed to store side block #%d: %v", b.NumberU64(), err)
+		}
+	}
+
+	// The lower side block loses its body, the way a corrupt or partially pruned database
+	// loses one, and the caches must not answer for it either.
+	rawdb.DeleteBody(chain.ChainDb(), side[0].Hash(), side[0].NumberU64())
+	chain.blockCache.Purge()
+	chain.bodyCache.Purge()
+	chain.bodyRLPCache.Purge()
+	if chain.GetBlock(side[0].Hash(), side[0].NumberU64()) != nil {
+		t.Fatal("precondition: the lower side block is still readable")
+	}
+
+	if _, _, _, err := chain.getResultBlock(competitor[0], false); !errors.Is(err, ErrLocalInsertCondition) {
+		t.Fatalf("unexpected error: have %v want %v", err, ErrLocalInsertCondition)
+	}
+	if h := chain.CurrentBlock(); h.Hash() != head.Hash() {
+		t.Fatalf("unexpected head: have #%d want the unchanged #%d", h.Number.Uint64(), head.Number.Uint64())
+	}
+}
+
 // TestGetResultBlockRebuildNeedsTheChainMutex covers the import the pruned-ancestor
 // branch of getResultBlock runs. Those ancestors are executed, the head they produce is
 // adopted and a gap block among them refreshes the masternode set, so the segment goes
