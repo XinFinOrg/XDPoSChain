@@ -962,15 +962,16 @@ func TestMalformedPayload(t *testing.T) {
 	}
 }
 
-// Tests that a message larger than the protocol cap is rejected without being
-// decoded.
+// Tests that a message larger than the protocol cap is rejected and its payload
+// discarded before the handler returns.
 func TestOversizeMessage(t *testing.T) {
 	backend := newTestBackend(t, 1, nil)
 	peer := newTestPeer(t, "peer", XDC165, backend)
 
-	// The payload is larger than the protocol cap, so it is never read by the
-	// serving side; send it from a goroutine and let the pipe teardown release it.
-	go p2p.Send(peer.app, NodeDataMsg, make([]byte, protocolMaxMsgSize+1))
+	// The serving side discards the payload before returning the size error, so
+	// the writer completes while the pipe is still open.
+	sendErr := make(chan error, 1)
+	go func() { sendErr <- p2p.Send(peer.app, NodeDataMsg, make([]byte, protocolMaxMsgSize+1)) }()
 
 	select {
 	case err := <-peer.errc:
@@ -982,6 +983,14 @@ func TestOversizeMessage(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("oversize message was not rejected within 2 seconds")
+	}
+	select {
+	case err := <-sendErr:
+		if err != nil {
+			t.Fatalf("oversized message send failed: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("oversized message payload was not discarded before the size error")
 	}
 }
 
