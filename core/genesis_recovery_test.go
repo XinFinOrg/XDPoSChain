@@ -475,7 +475,7 @@ func TestSetupGenesisBlockPropagatesChainConfigOverrideReadError(t *testing.T) {
 	db := &overrideReadErrorDB{Database: rawdb.NewMemoryDatabase(), err: errors.New("boom")}
 	DefaultGenesisBlock().MustCommit(db)
 
-	_, _, _, err := setupGenesisBlock(db, nil, false)
+	_, _, _, err := setupGenesisBlock(db, nil, false, DefaultChainConfigMismatchPolicy)
 	if !errors.Is(err, db.err) {
 		t.Fatalf("expected override marker read error, got %v", err)
 	}
@@ -843,7 +843,7 @@ func TestSetupGenesisBlockRestoresMissingChainConfigForStoredSameHashCustomChain
 		t.Fatal("expected same-hash custom config override marker to remain set")
 	}
 
-	loadedCfg, loadedHash, _, err := loadChainConfigInternal(db, nil, false, true)
+	loadedCfg, loadedHash, _, err := loadChainConfigInternal(db, nil, false, true, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		t.Fatalf("LoadChainConfig failed: %v", err)
 	}
@@ -1049,7 +1049,7 @@ func TestResolveSetupStoredConfigResultWritesConfigAndMarkerAtomically(t *testin
 	_, _, _ = resolveSetupStoredConfigResult(db, params.TestnetGenesisHash, storedCfg, newCfg, nil, &types.Header{Number: new(big.Int)}, setupStoredOverrideState{
 		legacyStoredOverride: true,
 		trustedOverride:      true,
-	})
+	}, DefaultChainConfigMismatchPolicy)
 }
 
 func TestResolveSetupStoredConfigResultUsesChainConfigJSONEqualForPersistDecision(t *testing.T) {
@@ -1059,7 +1059,7 @@ func TestResolveSetupStoredConfigResultUsesChainConfigJSONEqualForPersistDecisio
 
 	resolvedCfg, compatErr, err := resolveSetupStoredConfigResult(db, common.HexToHash("0x1234"), storedCfg, newCfg, nil, &types.Header{Number: new(big.Int)}, setupStoredOverrideState{
 		trustedOverride: true,
-	})
+	}, DefaultChainConfigMismatchPolicy)
 	if err != nil {
 		t.Fatalf("resolveSetupStoredConfigResult failed: %v", err)
 	}

@@ -189,7 +189,7 @@ func initGenesis(ctx *cli.Context) error {
 	}
 
 	// Open and initialise both full and light databases
-	stack, _ := makeConfigNode(ctx)
+	stack, cfg := makeConfigNode(ctx)
 	defer stack.Close()
 
 	name := "chaindata"
@@ -197,7 +197,8 @@ func initGenesis(ctx *cli.Context) error {
 	if err != nil {
 		utils.Fatalf("Failed to open database: %v", err)
 	}
-	_, hash, compatErr, err := core.SetupGenesisBlockWithOverride(chaindb, genesis, ctx.Bool(utils.AllowBuiltInConfigOverrideFlag.Name))
+	policy := utils.ResolveChainConfigMismatchPolicyOrFatal(ctx, cfg.Eth.ChainConfigMismatchPolicy)
+	_, hash, compatErr, err := core.SetupGenesisBlockWithPolicy(chaindb, genesis, ctx.Bool(utils.AllowBuiltInConfigOverrideFlag.Name), policy)
 	if err != nil {
 		utils.Fatalf("Failed to write genesis block: %s", utils.FormatChainConfigError(err))
 	}

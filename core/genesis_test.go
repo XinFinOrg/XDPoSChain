@@ -473,13 +473,35 @@ func TestGenesisConfigConflictMatchesCoreSentinel(t *testing.T) {
 		"delete chaindata",
 		"reinitialize with the intended genesis",
 		"--allow-builtin-config-override",
-		"using the matching explicit genesis",
 	} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("expected conflict message %q to contain %q", message, want)
 		}
 	}
+	if strings.Contains(message, "using the matching explicit genesis") {
+		t.Fatalf("expected the custom-override conflict to drop the unreachable explicit-genesis advice, have %q", message)
+	}
+}
 
+func TestStoredDriftConflictNamesTheRealRemediations(t *testing.T) {
+	err := builtInStoredDriftConflictError(params.TestnetGenesisHash)
+	if !errors.Is(err, errGenesisConfigConflict) {
+		t.Fatalf("unexpected conflict classification: have %v want %v", err, errGenesisConfigConflict)
+	}
+	message := err.Error()
+	for _, want := range []string{
+		"--chain-config-mismatch-policy=update-config-only",
+		"rewind-and-update",
+		"ethereum-config-0x",
+		"--allow-builtin-config-override does not apply",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("expected stored-drift message %q to contain %q", message, want)
+		}
+	}
+}
+
+func TestResolveProvidedChainConfigConflictMatchesCoreSentinel(t *testing.T) {
 	_, resolveErr := resolveProvidedChainConfig(params.MainnetGenesisHash, &params.ChainConfig{
 		ChainID:        big.NewInt(7777),
 		HomesteadBlock: big.NewInt(1),
@@ -539,16 +561,36 @@ func TestDecideBuiltInChainConfigAction(t *testing.T) {
 				candidateMatchesBuiltIn: true,
 				allowStoredDriftRepair:  true,
 			},
-			want: builtInChainConfigAction{canonicalizeToBuiltIn: true},
+			want: builtInChainConfigAction{canonicalizeToBuiltIn: true, persistCanonical: true},
 		},
 		{
-			name: "stored drift after fork is conflict",
+			name: "stored drift after fork is conflict without a policy",
 			facts: builtInChainConfigFacts{
 				hasBuiltInConfig:        true,
 				storedMatchesBuiltIn:    false,
 				candidateMatchesBuiltIn: true,
 			},
 			want: builtInChainConfigAction{terminalError: startup.ErrGenesisConfigConflict},
+		},
+		{
+			name: "stored drift after fork is adopted with the policy",
+			facts: builtInChainConfigFacts{
+				hasBuiltInConfig:        true,
+				storedMatchesBuiltIn:    false,
+				candidateMatchesBuiltIn: true,
+				driftPolicy:             builtInDriftAdopt,
+			},
+			want: builtInChainConfigAction{canonicalizeToBuiltIn: true, persistCanonical: true},
+		},
+		{
+			name: "stored drift after fork stays in memory under ignore-mismatch",
+			facts: builtInChainConfigFacts{
+				hasBuiltInConfig:        true,
+				storedMatchesBuiltIn:    false,
+				candidateMatchesBuiltIn: true,
+				driftPolicy:             builtInDriftAdoptInMemory,
+			},
+			want: builtInChainConfigAction{canonicalizeToBuiltIn: true},
 		},
 		{
 			name: "candidate drift is conflict",
@@ -560,12 +602,23 @@ func TestDecideBuiltInChainConfigAction(t *testing.T) {
 			want: builtInChainConfigAction{terminalError: startup.ErrGenesisConfigConflict},
 		},
 		{
+			name: "candidate drift stays a conflict even with an adopting policy",
+			facts: builtInChainConfigFacts{
+				hasBuiltInConfig:        true,
+				storedMatchesBuiltIn:    false,
+				candidateMatchesBuiltIn: false,
+				driftPolicy:             builtInDriftAdopt,
+			},
+			want: builtInChainConfigAction{terminalError: startup.ErrGenesisConfigConflict},
+		},
+		{
 			name: "trusted override bypasses built-in canonicalization",
 			facts: builtInChainConfigFacts{
 				hasBuiltInConfig:        true,
 				trustedOverride:         true,
 				storedMatchesBuiltIn:    false,
 				candidateMatchesBuiltIn: false,
+				driftPolicy:             builtInDriftAdopt,
 			},
 			want: builtInChainConfigAction{},
 		},
@@ -574,7 +627,7 @@ func TestDecideBuiltInChainConfigAction(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			got := decideBuiltInChainConfigAction(test.facts)
-			if got.canonicalizeToBuiltIn != test.want.canonicalizeToBuiltIn || !errors.Is(got.terminalError, test.want.terminalError) {
+			if got.canonicalizeToBuiltIn != test.want.canonicalizeToBuiltIn || got.persistCanonical != test.want.persistCanonical || !errors.Is(got.terminalError, test.want.terminalError) {
 				t.Fatalf("unexpected built-in chain-config action:\n%#v\nwant:\n%#v", got, test.want)
 			}
 		})

@@ -127,7 +127,7 @@ var (
 	}
 	AllowBuiltInConfigOverrideFlag = &cli.BoolFlag{
 		Name:     "allow-builtin-config-override",
-		Usage:    "Allow same-hash custom overrides on built-in IDs to use custom chain config",
+		Usage:    "Allow same-hash custom overrides on built-in IDs to use custom chain config (does not adopt an updated builtin config)",
 		Category: flags.EthCategory,
 	}
 	ChainConfigMismatchPolicyFlag = &cli.StringFlag{
@@ -1987,12 +1987,12 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool, configuredComp
 		// Readonly startup still needs compatibility metadata so chain open can
 		// surface ErrReadOnlyConfigRewind instead of collapsing rewindable config
 		// drift into a generic config conflict.
-		config, ghash, compatErr, err = core.LoadChainConfigWithCompatWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
+		config, ghash, compatErr, err = core.LoadChainConfigWithCompatWithPolicy(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name), compatPolicy)
 		if err != nil {
 			makeChainFatalf("%s", FormatChainConfigError(err))
 		}
 	} else {
-		config, ghash, compatErr, err = core.SetupGenesisBlockWithOverride(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name))
+		config, ghash, compatErr, err = core.SetupGenesisBlockWithPolicy(chainDb, gspec, ctx.Bool(AllowBuiltInConfigOverrideFlag.Name), compatPolicy)
 		if err != nil {
 			makeChainFatalf("%s", FormatChainConfigError(err))
 		}
@@ -2053,6 +2053,12 @@ func resolveChainConfigMismatchPolicyOrFatal(ctx *cli.Context, configured string
 		makeChainFatalf("%v", err)
 	}
 	return policy
+}
+
+// ResolveChainConfigMismatchPolicyOrFatal exposes the validated startup policy
+// to commands that resolve startup metadata outside MakeChain.
+func ResolveChainConfigMismatchPolicyOrFatal(ctx *cli.Context, configured string) core.ChainConfigMismatchPolicy {
+	return core.ChainConfigMismatchPolicy(resolveChainConfigMismatchPolicyOrFatal(ctx, configured))
 }
 
 // MakeConsolePreloads retrieves the absolute paths for the console JavaScript

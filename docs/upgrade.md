@@ -182,7 +182,7 @@ In this context, "semantically different" means the two configs differ after ign
 
 Additional notes:
 
-- For built-in networks, adding a new future fork in `params/config.go` does not automatically rewrite an existing stored built-in `ChainConfig` during an ordinary restart if runtime hydration already makes the effective config match the bundled config.
+- For built-in networks, adding a new future fork in `params/config.go` does not automatically rewrite an existing stored built-in `ChainConfig` during an ordinary restart if runtime hydration already makes the effective config match the bundled config. If the effective configs do differ, the mismatch policy decides whether the bundled config is adopted; see the built-in drift section below.
 - For same-hash custom chains, first explicit initialization can also persist a chain-config override marker for that data directory.
 
 ## Chain Config Mismatch Policy (`--chain-config-mismatch-policy`)
@@ -212,6 +212,16 @@ Set the policy with the `--chain-config-mismatch-policy` flag (or the `ChainConf
   - Behavior on mismatch: keep running with the in-memory config; do not rewind and do not write.
   - Writable mode: runs; mismatch recurs on next restart.
   - Readonly mode: runs read-only with no database writes.
+
+Built-in drift (same genesis hash, same chain ID):
+
+A stored built-in config that no longer equals the bundled one (for example a fork schedule from a previous release) is not a `ConfigCompatError` while every changed fork stays above the head, but the policy still applies:
+
+- `exit`: startup stops, and the error names the two ways forward.
+- `rewind-and-update` / `update-config-only`: adopt the bundled config and persist it. No rewind happens, because no changed fork sits below the head.
+- `ignore-mismatch`: run with the bundled config but leave the stored blob untouched, so the drift is reported again on the next start.
+
+`--allow-builtin-config-override` does not apply here: it keeps a same-hash custom config, it does not adopt an updated bundled one. The policy only releases the stored-versus-bundled conflict; a supplied `genesis.json` that itself differs from the bundled config remains a hard conflict. Adoption always uses the bundled config of the running binary, so never combine it with a binary that trails the network's activated schedule.
 
 Behavior change relative to older startup logic:
 
@@ -303,6 +313,8 @@ The startup helpers now have distinct writable vs. readonly roles:
 | `LoadChainConfigWithCompat` | Readonly startup checks                                    | No database writes                                                                        | `(*params.ChainConfig, common.Hash, *params.ConfigCompatError, error)` | Mirrors writable normalization rules, but only reports what writable startup would need to repair or rewind.                                                       |
 | `LoadChainConfig`           | Legacy readonly callers that only need the resolved config | No database writes                                                                        | `(*params.ChainConfig, common.Hash, error)`                            | Compatibility rewind metadata is intentionally discarded. Callers that need to distinguish hard failure from required repair must use `LoadChainConfigWithCompat`. |
 
+`SetupGenesisBlockWithPolicy` and `LoadChainConfigWithCompatWithPolicy` are the policy-aware variants used by node startup and by the mismatch-policy paths below; the helpers in the table above keep the default `exit` policy.
+
 Important behavior changes relative to older startup logic:
 
 - `SetupGenesisBlock` no longer relies on a broad `params.AllEthashProtocolChanges` fallback for ambiguous stored metadata. Classification now follows the network classes and same-hash override rules described in this document.
@@ -370,6 +382,13 @@ Ordinary built-in Mainnet, Testnet, or Devnet database using the bundled config
   - State after successful upgrade or repair: Remains a built-in network database. Ordinary startup does not need to persist `chainConfigOverride` metadata for this path.
   - Can the same post-upgrade database be reopened by an older binary? Usually yes. The additive override-marker schema is not required for an ordinary built-in database, so rollback risk is much lower. Still take a backup before any downgrade.
   - Operator guidance: A normal rolling upgrade is acceptable. Keep the network selection explicit with `--mainnet`, `--testnet`, or `--devnet`.
+
+Ordinary built-in database whose stored config is a previous bundled schedule (same genesis hash and chain ID)
+
+  - First startup on the current binary: Stops with `errGenesisConfigConflict` under the default `exit` policy when every changed fork is still above the head, because no `ConfigCompatError` exists to rewind. Start with `--chain-config-mismatch-policy=update-config-only` (or `rewind-and-update`) to adopt the bundled config and persist it, or delete the `ethereum-config-<genesisHash>` blob so `repair_missing_chain_config` rebuilds it from the bundled genesis. `XDC init` against the existing data directory hits the same conflict under the default policy.
+  - State after successful upgrade or repair: The stored config equals the bundled one again. No `chainConfigOverride` marker is written, no block is rewound, and the head does not move.
+  - Can the same post-upgrade database be reopened by an older binary? No, not safely. The older binary bundles the previous schedule again, sees the same stored-versus-bundled drift, and refuses to start (or, under a mismatch policy, would adopt its own older schedule). Keep the upgraded binary or restore a pre-upgrade backup.
+  - Operator guidance: Prefer `update-config-only` on a synced node; it only adopts config slots above the head. `ignore-mismatch` also starts but leaves the stored blob stale. Reserve a fresh data directory for cases where no policy path is available.
 
 Legacy pre-marker same-hash custom database on a built-in genesis hash or chain ID, with no persisted override marker yet
 
